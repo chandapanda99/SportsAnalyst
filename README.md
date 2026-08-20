@@ -46,7 +46,9 @@ uv run sports-analyst data sync nfl --season 2024 --season 2025 `
   --dataset schedules --dataset nextgen_passing
 ```
 
-Supplemental packages are optional. Investigations continue with play-by-play tools and record a capability caveat when a requested context package is unavailable. The registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and `/api/sports/nfl/players`.
+Supplemental packages are optional. Investigations continue with play-by-play tools and record a capability caveat when a requested context package is unavailable. The
+registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and
+`/api/sports/nfl/players`.
 
 ## Example
 
@@ -62,8 +64,6 @@ The agent can compose registered analytical tools and constrained read-only Duck
 Algorithms outside the registered catalog are reported as unsupported and should be added as tested plugin tools.
 
 `CustomAnalysisRunner` is a documented extension protocol for future third-party sandbox implementations. Core v1 ships only `DisabledCustomAnalysisRunner`.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for plugin contracts and [NOTICE](NOTICE) for data attribution.
 
 ## Verification
 
