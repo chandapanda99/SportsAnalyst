@@ -87,7 +87,11 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
 
     @api.get("/api/dataset-jobs/{job_id}/events")
     async def dataset_events(job_id: str) -> StreamingResponse:
-        return StreamingResponse(_event_stream(service, job_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _event_stream(service, job_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @api.post("/api/investigations", status_code=202)
     def create_investigation(request: AnalysisRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
@@ -115,7 +119,11 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
 
     @api.get("/api/investigations/{investigation_id}/events")
     async def investigation_events(investigation_id: str) -> StreamingResponse:
-        return StreamingResponse(_event_stream(service, investigation_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _event_stream(service, investigation_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @api.post("/api/investigations/{investigation_id}/follow-ups", response_model=InvestigationBundle)
     def follow_up(investigation_id: str, request: FollowUpRequest) -> InvestigationBundle:
@@ -145,9 +153,19 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
     return api
 
 
-async def _event_stream(service: AnalystApplication, key: str):
+async def _event_stream(
+    service: AnalystApplication,
+    key: str,
+    timeout_seconds: float | None = None,
+    poll_interval: float = 0.1,
+    heartbeat_interval: float = 15.0,
+):
     offset = 0
-    for _ in range(600):
+    loop = asyncio.get_running_loop()
+    timeout = timeout_seconds if timeout_seconds is not None else service.settings.event_stream_timeout_seconds
+    deadline = loop.time() + timeout
+    next_heartbeat = loop.time() + heartbeat_interval
+    while loop.time() < deadline:
         events = service.events.events(key)
         while offset < len(events):
             event = events[offset]
@@ -155,8 +173,17 @@ async def _event_stream(service: AnalystApplication, key: str):
             yield _sse(event)
             if event["stage"] in {"complete", "failed"}:
                 return
-        await asyncio.sleep(0.1)
-    yield _sse({"stage": "failed", "message": "event stream timed out", "progress": 1.0})
+        if loop.time() >= next_heartbeat:
+            yield ": keep-alive\n\n"
+            next_heartbeat = loop.time() + heartbeat_interval
+        await asyncio.sleep(poll_interval)
+    yield _sse(
+        {
+            "stage": "timeout",
+            "message": "Live progress timed out; checking for a completed result",
+            "progress": 0.95,
+        }
+    )
 
 
 app = create_app()

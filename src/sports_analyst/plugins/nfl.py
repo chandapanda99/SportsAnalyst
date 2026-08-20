@@ -31,6 +31,8 @@ from sports_analyst.models import (
     stable_id,
 )
 
+LATEST_SYNCABLE_SEASON = 2025
+
 NFL_TEAMS = {
     "ARI": "Arizona Cardinals",
     "ATL": "Atlanta Falcons",
@@ -439,12 +441,11 @@ class NFLPlugin:
             )
             for value, metadata in SPLIT_DIMENSIONS.items()
         ]
-        latest_season = datetime.now(UTC).year
         return AnalysisOptions(
             sport=self.sport_id,
             teams=[TeamOption(value=code, label=label) for code, label in NFL_TEAMS.items()],
             available_seasons=available_seasons,
-            syncable_seasons=list(range(latest_season, 1998, -1)),
+            syncable_seasons=list(range(LATEST_SYNCABLE_SEASON, 1998, -1)),
             metrics=metrics,
             default_metrics=DEFAULT_METRICS,
             split_dimensions=splits,

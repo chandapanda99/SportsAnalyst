@@ -1,8 +1,9 @@
+import asyncio
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from sports_analyst.api import create_app
+from sports_analyst.api import _event_stream, create_app
 from sports_analyst.config import Settings
 from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.service import AnalystApplication
@@ -49,3 +50,24 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}").status_code == 200
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
+
+
+def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    assert application.settings.event_stream_timeout_seconds == 120
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in _event_stream(
+                application,
+                "pending-investigation",
+                timeout_seconds=0.005,
+                poll_interval=0.001,
+                heartbeat_interval=1.0,
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    assert any('"stage": "timeout"' in chunk for chunk in chunks)
+    assert not any('"stage": "failed"' in chunk for chunk in chunks)

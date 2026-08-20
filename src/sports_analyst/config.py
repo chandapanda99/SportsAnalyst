@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"
     sql_row_limit: int = Field(default=10_000, ge=1, le=100_000)
+    event_stream_timeout_seconds: int = Field(default=120, ge=30, le=3_600)
     log_level: str = "INFO"
 
     @field_validator("model_provider", "log_level", mode="before")

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from './api';
   import Chart from './Chart.svelte';
-  import type { AnalysisOptions, Capabilities, DatasetManifest, Evidence, Investigation, MetricOption } from './types';
+  import type { AnalysisOptions, Capabilities, DatasetManifest, Evidence, Investigation, MetricOption, TeamOption } from './types';
 
   let capabilities: Capabilities | null = null;
   let analysisOptions: AnalysisOptions | null = null;
@@ -10,9 +10,20 @@
   let history: Investigation[] = [];
   let active: Investigation | null = null;
   let selectedEvidence: Evidence | null = null;
-  let question = "Why did this team's passing efficiency change?";
-  let team = 'KC';
-  let teamInput = 'Kansas City Chiefs (KC)';
+  const exampleQuestions = [
+    "Why did this team's passing efficiency change?",
+    "How did this team's EPA per dropback and success rate differ between these periods?",
+    "Was the difference driven more by explosive passes or overall down-to-down efficiency?",
+    "Which games contributed most to the change between these periods?",
+    "How consistent was this team's passing performance across the two periods?",
+    "What evidence best explains the difference in this team's passing results?"
+  ];
+  let question = exampleQuestions[0];
+  let team = '';
+  let teamInput = '';
+  let teamFilter = '';
+  let teamComboboxOpen = false;
+  let activeTeamIndex = 0;
   let baseline = 2024;
   let comparison = 2025;
   let baselineStartWeek = 1;
@@ -36,6 +47,10 @@
 
   $: requiredSeasons = comparisonMode === 'before_after' ? [baseline] : [baseline, comparison];
   $: resolvedTeam = resolveTeam(teamInput);
+  $: filteredTeams = (analysisOptions?.teams ?? []).filter((option) => {
+    const query = teamFilter.trim().toUpperCase();
+    return !query || option.value.includes(query) || option.label.toUpperCase().includes(query);
+  });
   $: windowsDiffer = comparisonMode === 'before_after'
     || baseline !== comparison
     || baselineStartWeek !== comparisonStartWeek
@@ -75,6 +90,50 @@
     return `${label} (${value})`;
   }
 
+  function openTeamCombobox(event: FocusEvent) {
+    teamFilter = '';
+    teamComboboxOpen = true;
+    activeTeamIndex = Math.max(0, (analysisOptions?.teams ?? []).findIndex((option) => option.value === team));
+    (event.currentTarget as HTMLInputElement).select();
+  }
+
+  function updateTeamFilter() {
+    teamFilter = teamInput;
+    teamComboboxOpen = true;
+    activeTeamIndex = 0;
+  }
+
+  function selectTeam(option: TeamOption) {
+    team = option.value;
+    teamInput = teamDisplay(option.value, option.label);
+    teamFilter = '';
+    teamComboboxOpen = false;
+  }
+
+  function moveTeamHighlight(index: number) {
+    if (!filteredTeams.length) return;
+    activeTeamIndex = (index + filteredTeams.length) % filteredTeams.length;
+    requestAnimationFrame(() => document.getElementById(`team-option-${filteredTeams[activeTeamIndex]?.value}`)?.scrollIntoView({ block: 'nearest' }));
+  }
+
+  function handleTeamKeydown(event: KeyboardEvent) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (!teamComboboxOpen) teamComboboxOpen = true;
+      else moveTeamHighlight(activeTeamIndex + 1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!teamComboboxOpen) teamComboboxOpen = true;
+      else moveTeamHighlight(activeTeamIndex - 1);
+    } else if (event.key === 'Enter' && teamComboboxOpen && filteredTeams[activeTeamIndex]) {
+      event.preventDefault();
+      selectTeam(filteredTeams[activeTeamIndex]);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      teamComboboxOpen = false;
+    }
+  }
+
   function resolveTeam(value: string) {
     const token = value.trim().toUpperCase();
     const match = analysisOptions?.teams.find((option) =>
@@ -108,22 +167,79 @@
     selectedMetrics = [...(analysisOptions?.default_metrics ?? [])];
   }
 
+  function showAnotherExample() {
+    const alternatives = exampleQuestions.filter((example) => example !== question);
+    question = alternatives[Math.floor(Math.random() * alternatives.length)] ?? exampleQuestions[0];
+  }
+
   function toggleSyncDataset(dataset: string) {
     syncDatasets = syncDatasets.includes(dataset)
       ? syncDatasets.filter((value) => value !== dataset)
       : [...syncDatasets, dataset];
   }
 
-  function stream(url: string, complete: () => Promise<void>) {
+  function wait(milliseconds: number) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  async function pollInvestigation(investigationId: string) {
+    stage = 'Live progress interrupted · checking the saved investigation';
+    progress = Math.max(progress, 0.95);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        active = await api.investigation(investigationId);
+        await refresh();
+        return true;
+      } catch {
+        if (attempt < 29) await wait(2_000);
+      }
+    }
+    return false;
+  }
+
+  function stream(url: string, complete: () => Promise<void>, recover?: () => Promise<boolean>) {
     const source = new EventSource(url);
+    let settled = false;
+    let recovering = false;
+
+    async function recoverOrFail(message: string) {
+      if (settled || recovering) return;
+      recovering = true;
+      source.close();
+      if (recover && await recover()) {
+        settled = true;
+        busy = false;
+        return;
+      }
+      settled = true;
+      error = message;
+      busy = false;
+    }
+
     source.onmessage = async (message) => {
       const event = JSON.parse(message.data);
       stage = event.message;
       progress = event.progress;
-      if (event.stage === 'complete') { source.close(); await complete(); busy = false; }
-      if (event.stage === 'failed') { source.close(); error = event.message; busy = false; }
+      if (event.stage === 'complete') {
+        settled = true;
+        source.close();
+        try { await complete(); }
+        catch (problem) { error = String(problem); }
+        busy = false;
+      }
+      if (event.stage === 'failed') {
+        settled = true;
+        source.close();
+        error = event.message;
+        busy = false;
+      }
+      if (event.stage === 'timeout') {
+        await recoverOrFail('The investigation is still unavailable after the progress stream timed out. Refresh to check again.');
+      }
     };
-    source.onerror = () => { source.close(); error = 'The progress stream disconnected.'; busy = false; };
+    source.onerror = () => {
+      void recoverOrFail('The progress stream disconnected and the investigation could not be recovered. Refresh to check again.');
+    };
   }
 
   async function runAnalysis() {
@@ -153,7 +269,11 @@
         metrics,
         splits
       });
-      stream(`/api/investigations/${investigation_id}/events`, async () => { active = await api.investigation(investigation_id); await refresh(); });
+      stream(
+        `/api/investigations/${investigation_id}/events`,
+        async () => { active = await api.investigation(investigation_id); await refresh(); },
+        () => pollInvestigation(investigation_id)
+      );
     } catch (problem) { error = String(problem); busy = false; }
   }
 
@@ -184,9 +304,9 @@
 
 <div class="app-shell">
   <aside class="rail">
-    <div class="brand"><div class="mark">OSA</div><div><strong>Open Sports</strong><span>Analyst</span></div></div>
+    <div class="brand"><img class="mark" src="/favicon.svg" alt="" aria-hidden="true" /><div><strong>Open Sports</strong><span>Analyst</span></div></div>
     <nav aria-label="Primary">
-      <button class:active={!active} on:click={() => active = null}><span>⌁</span> New investigation</button>
+      <button class="new-investigation" class:active={!active} on:click={() => active = null}><span class="new-icon" aria-hidden="true">+</span> New investigation</button>
       <div class="nav-label">Recent film room</div>
       {#each history.slice(0, 8) as item}
         <button class:active={active?.run.investigation_id === item.run.investigation_id} on:click={() => active = item}>
@@ -210,15 +330,42 @@
 
     {#if !active && !busy}
       <section class="ask-panel">
-        <div class="ask-copy"><span class="eyebrow">START WITH THE EVIDENCE</span><h2>Turn play-by-play into an argument you can inspect.</h2><p>Choose the exact team, windows, and metrics. The analyst handles the football reasoning while every measurement stays tied to valid local data.</p></div>
+        <div class="intro-grid">
+          <div class="ask-copy"><span class="eyebrow">START WITH THE EVIDENCE</span><h2>Turn play-by-play into an argument you can inspect.</h2><p>Choose the exact team, windows, and metrics. The analyst handles the football reasoning while every measurement stays tied to valid local data.</p></div>
+          <details class="data-manager" open={indexedSeasonCount < 2}>
+            <summary><span><strong>Manage local nflverse data</strong><small>Choose the seasons and packages available to your investigations.</small></span><b>{datasets.length} synced <i aria-hidden="true">⌄</i></b></summary>
+            <div class="onboarding">
+              <div class="sync-guidance"><strong>Local data library</strong><span>Play-by-play is required. Add supporting packages when you need player, roster, injury, or context analysis.</span></div>
+              <div class="sync-fields">
+                <label class="season-picker">Seasons<select multiple bind:value={syncSeasons} aria-label="Seasons to sync">{#each analysisOptions?.syncable_seasons ?? [] as season}<option value={season}>{season}{analysisOptions?.available_seasons.includes(season) ? ' · PBP synced' : ''}</option>{/each}</select></label>
+                <fieldset class="dataset-picker"><legend>Packages</legend><div class="dataset-options">{#each analysisOptions?.syncable_datasets ?? [] as dataset}<label><input type="checkbox" checked={syncDatasets.includes(dataset)} on:change={() => toggleSyncDataset(dataset)} /><span>{dataset.replaceAll('_', ' ')}</span></label>{/each}</div></fieldset>
+              </div>
+              <button disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>Sync selected data <span aria-hidden="true">↗</span></button>
+            </div>
+          </details>
+        </div>
         <section class="scope-card" aria-labelledby="scope-heading">
           <div class="scope-heading"><div><span class="eyebrow">01 · SCOPE</span><h3 id="scope-heading">Define the comparison</h3></div><span>{analysisOptions?.available_seasons.length ?? 0} seasons available</span></div>
           <div class="scope-controls">
-            <label class="team-control">Team
-              <input list="nfl-team-options" bind:value={teamInput} aria-label="NFL team" aria-invalid={!resolvedTeam} autocomplete="off" />
-              <datalist id="nfl-team-options">{#each analysisOptions?.teams ?? [] as option}<option value={teamDisplay(option.value, option.label)}></option>{/each}</datalist>
+            <div class="team-control">
+              <label for="nfl-team">Team</label>
+              <div class="team-combobox">
+                <input id="nfl-team" role="combobox" bind:value={teamInput} aria-label="NFL team" aria-expanded={teamComboboxOpen} aria-controls="nfl-team-options" aria-autocomplete="list" aria-activedescendant={teamComboboxOpen && filteredTeams[activeTeamIndex] ? `team-option-${filteredTeams[activeTeamIndex].value}` : undefined} aria-invalid={Boolean(teamInput && !resolvedTeam)} autocomplete="off" placeholder="Search teams…" on:focus={openTeamCombobox} on:input={updateTeamFilter} on:keydown={handleTeamKeydown} on:blur={() => teamComboboxOpen = false} />
+                <button class="combobox-toggle" type="button" aria-label="Show NFL teams" tabindex="-1" on:mousedown|preventDefault={() => teamComboboxOpen = !teamComboboxOpen}>⌄</button>
+                {#if teamComboboxOpen}
+                  <div class="team-options" id="nfl-team-options" role="listbox" aria-label="NFL teams">
+                    {#each filteredTeams as option, index}
+                      <button id={`team-option-${option.value}`} type="button" role="option" aria-selected={team === option.value} class:active={index === activeTeamIndex} on:mousedown|preventDefault={() => selectTeam(option)} on:mouseenter={() => activeTeamIndex = index}>
+                        <span>{option.label}</span><b>{option.value}</b>
+                      </button>
+                    {:else}
+                      <div class="no-team-results">No teams match “{teamFilter}”</div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
               {#if teamInput && !resolvedTeam}<small class="validation">Choose a team from the list.</small>{/if}
-            </label>
+            </div>
             <label>Comparison design
               <select bind:value={comparisonMode}>
                 {#each analysisOptions?.comparison_windows ?? [] as option}
@@ -290,12 +437,14 @@
           </div>
         </section>
 
-        <label class="question-label">Your question<textarea bind:value={question} rows="3"></textarea></label>
+        <div class="question-field">
+          <div class="question-heading">
+            <label for="investigation-question">Your question</label>
+            <button type="button" on:click={showAnotherExample} aria-label="Show another example question"><span aria-hidden="true">↻</span> Another example</button>
+          </div>
+          <textarea id="investigation-question" bind:value={question} rows="3"></textarea>
+        </div>
         <button class="primary" disabled={!canRun} on:click={runAnalysis}>Run investigation <span>↗</span></button>
-        <details class="data-manager" open={indexedSeasonCount < 2}>
-          <summary><span><strong>Manage local nflverse data</strong><small>Play-by-play plus optional player, roster, injury, schedule, snap, and Next Gen Stats packages.</small></span><b>{datasets.length} synced ↘</b></summary>
-          <div class="onboarding"><div><strong>Select seasons and packages</strong><span>Supplemental tools run only when their packages are available for both windows.</span></div><select multiple bind:value={syncSeasons} aria-label="Seasons to sync">{#each analysisOptions?.syncable_seasons ?? [] as season}<option value={season}>{season}{analysisOptions?.available_seasons.includes(season) ? ' · PBP synced' : ''}</option>{/each}</select><div class="dataset-options">{#each analysisOptions?.syncable_datasets ?? [] as dataset}<label><input type="checkbox" checked={syncDatasets.includes(dataset)} on:change={() => toggleSyncDataset(dataset)} /><span>{dataset.replaceAll('_', ' ')}</span></label>{/each}</div><button disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>Sync selected</button></div>
-        </details>
       </section>
       <section class="promise-grid">
         <article><span>01</span><h3>Measured first</h3><p>EPA, success, explosives, pressure outcomes, and situational splits run through tested tools.</p></article>

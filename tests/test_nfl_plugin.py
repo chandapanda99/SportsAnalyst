@@ -84,6 +84,7 @@ def test_options_report_season_specific_field_availability(pbp_pair) -> None:
     no_huddle = next(item for item in options.split_dimensions if item.value == "no_huddle")
     assert formation.available_seasons == [2024, 2025]
     assert no_huddle.available_seasons == []
+    assert options.syncable_seasons[0] == 2025
 
 
 def test_selected_split_limits_decomposition_dimensions(pbp_pair) -> None:
