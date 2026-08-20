@@ -44,29 +44,135 @@ class DatasetManifest(BaseModel):
     local_path: str
 
 
+class AnalysisWindow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    season: int = Field(ge=1999, le=2100)
+    weeks: tuple[int, int] = (1, 22)
+
+    @field_validator("weeks", mode="before")
+    @classmethod
+    def normalize_weeks(cls, value: object) -> object:
+        if value is None:
+            return (1, 22)
+        return value
+
+    @model_validator(mode="after")
+    def validate_weeks(self) -> AnalysisWindow:
+        start, end = self.weeks
+        if not 1 <= start <= end <= 22:
+            raise ValueError("weeks must be an inclusive range between 1 and 22")
+        return self
+
+
 class AnalysisScope(BaseModel):
     model_config = ConfigDict(frozen=True)
     team: str = Field(min_length=2, max_length=64)
-    baseline_season: int = Field(ge=1999, le=2100)
-    comparison_season: int = Field(ge=1999, le=2100)
+    baseline: AnalysisWindow
+    comparison: AnalysisWindow
     season_type: Literal["REG", "POST", "ALL"] = "REG"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_seasons(cls, value: object) -> object:
+        if not isinstance(value, dict) or "baseline" in value or "comparison" in value:
+            return value
+        migrated = dict(value)
+        baseline_season = migrated.pop("baseline_season", None)
+        comparison_season = migrated.pop("comparison_season", None)
+        if baseline_season is not None:
+            migrated["baseline"] = {"season": baseline_season, "weeks": [1, 22]}
+        if comparison_season is not None:
+            migrated["comparison"] = {"season": comparison_season, "weeks": [1, 22]}
+        return migrated
 
     @field_validator("team", mode="before")
     @classmethod
     def normalize_team(cls, value: object) -> str:
         return str(value).strip().upper()
 
+    @property
+    def baseline_season(self) -> int:
+        return self.baseline.season
+
+    @property
+    def comparison_season(self) -> int:
+        return self.comparison.season
+
     @model_validator(mode="after")
     def validate_windows(self) -> AnalysisScope:
-        if self.baseline_season == self.comparison_season:
-            raise ValueError("comparison seasons must differ")
+        if self.baseline == self.comparison:
+            raise ValueError("comparison windows must differ")
         return self
 
 
 class AnalysisRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2_000)
     scope: AnalysisScope
+    metrics: list[str] = Field(default_factory=list)
+    splits: list[str] = Field(default_factory=list)
     parent_investigation_id: str | None = None
+
+    @field_validator("metrics", "splits")
+    @classmethod
+    def normalize_metrics(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item.strip().lower() for item in value if item.strip()))
+
+
+class TeamOption(BaseModel):
+    value: str
+    label: str
+
+
+class MetricOption(BaseModel):
+    value: str
+    label: str
+    category: str
+    description: str
+    available_seasons: list[int] = Field(default_factory=list)
+
+
+class MetricDefinition(BaseModel):
+    value: str
+    label: str
+    category: str
+    description: str
+    formula: str
+    qualifying_plays: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class PlayerOption(BaseModel):
+    player_id: str
+    name: str
+    teams: list[str] = Field(default_factory=list)
+    positions: list[str] = Field(default_factory=list)
+    seasons: list[int] = Field(default_factory=list)
+
+
+class SplitDimensionOption(BaseModel):
+    value: str
+    label: str
+    description: str
+    available_seasons: list[int] = Field(default_factory=list)
+
+
+class ComparisonWindowOption(BaseModel):
+    value: str
+    label: str
+    description: str
+
+
+class AnalysisOptions(BaseModel):
+    sport: str
+    teams: list[TeamOption]
+    available_seasons: list[int]
+    syncable_seasons: list[int]
+    metrics: list[MetricOption]
+    default_metrics: list[str]
+    split_dimensions: list[SplitDimensionOption]
+    comparison_windows: list[ComparisonWindowOption]
+    week_values: list[int] = Field(default_factory=lambda: list(range(1, 23)))
+    syncable_datasets: list[str] = Field(default_factory=list)
 
 
 class PlannedToolCall(BaseModel):
@@ -131,6 +237,7 @@ class PlayEvidence(BaseModel):
     epa: float | None = None
     supporting: bool = True
     dataset_manifest_id: str
+    tool_execution_id: str | None = None
 
 
 class Claim(BaseModel):

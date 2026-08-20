@@ -12,6 +12,8 @@ def synthetic_pbp(season: int, epa_shift: float = 0.0) -> pl.DataFrame:
         for play in range(1, 41):
             epa = 0.18 + epa_shift + (play % 7 - 3) * 0.08 - (0.3 if play % 13 == 0 else 0)
             yards = 22 if play % 9 == 0 else 5 + play % 8
+            receiver = "Travis Kelce" if play % 3 else "Rashee Rice"
+            receiver_id = "00-0030506" if receiver == "Travis Kelce" else "00-0039064"
             rows.append(
                 {
                     "season": season,
@@ -31,6 +33,10 @@ def synthetic_pbp(season: int, epa_shift: float = 0.0) -> pl.DataFrame:
                     "interception": int(play % 37 == 0),
                     "air_yards": 7 + play % 5,
                     "yards_after_catch": 3 + play % 4,
+                    "passer_player_id": "00-0033873",
+                    "passer_player_name": "Patrick Mahomes",
+                    "receiver_player_id": receiver_id,
+                    "receiver_player_name": receiver,
                     "down": 1 + play % 3,
                     "offense_formation": formations[play % 2],
                     "offense_personnel": personnel[play % 2],

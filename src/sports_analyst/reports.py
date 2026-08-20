@@ -6,6 +6,10 @@ import json
 from sports_analyst.models import InvestigationBundle
 
 
+def _window_label(season: int, weeks: tuple[int, int]) -> str:
+    return f"{season} W{weeks[0]}–{weeks[1]}"
+
+
 def render_markdown(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
     lines = [
@@ -14,7 +18,8 @@ def render_markdown(bundle: InvestigationBundle) -> str:
         bundle.summary,
         "",
         f"**Question:** {bundle.run.question}  ",
-        f"**Comparison:** {scope.baseline_season} → {scope.comparison_season} ({scope.season_type})  ",
+        f"**Comparison:** {_window_label(scope.baseline.season, scope.baseline.weeks)} → "
+        f"{_window_label(scope.comparison.season, scope.comparison.weeks)} ({scope.season_type})  ",
         f"**Investigation:** `{bundle.run.investigation_id}`",
         "",
         "## Findings",
@@ -26,9 +31,7 @@ def render_markdown(bundle: InvestigationBundle) -> str:
     lines.extend(["", "## Metrics", "", "| Metric | Baseline | Comparison | Change | N |", "|---|---:|---:|---:|---:|"])
     for item in bundle.aggregate_evidence:
         if item.baseline_value is not None and item.comparison_value is not None:
-            lines.append(
-                f"| {item.label} | {item.baseline_value:.4f} | {item.comparison_value:.4f} | {item.value} | {item.sample_size} |"
-            )
+            lines.append(f"| {item.label} | {item.baseline_value:.4f} | {item.comparison_value:.4f} | {item.value} | {item.sample_size} |")
     lines.extend(["", "## Representative plays", ""])
     for play in bundle.play_evidence:
         lines.append(f"- `{play.game_id}/{play.play_id}` — EPA {play.epa}: {play.description} (`{play.evidence_id}`)")
@@ -54,6 +57,9 @@ def _chart_svg(specification: dict) -> str:
 
 def render_html(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
+    comparison_label = (
+        f"{_window_label(scope.baseline.season, scope.baseline.weeks)} → {_window_label(scope.comparison.season, scope.comparison.weeks)}"
+    )
     claims = "".join(
         f'<article class="claim"><span>{html.escape(claim.claim_type.value)} · {claim.confidence}</span>'
         f"<p>{html.escape(claim.statement)}</p><code>{html.escape(', '.join(claim.evidence_ids))}</code></article>"
@@ -80,7 +86,7 @@ td,th{padding:10px;border-bottom:1px solid #24364d;text-align:left} svg{max-widt
 <title>{html.escape(scope.team)} efficiency investigation</title><style>{styles}</style></head><body>
 <header><div class="eyebrow">Open Sports Analyst · Evidence-bound report</div>
 <h1>{html.escape(scope.team)} passing efficiency</h1><p>{html.escape(bundle.summary)}</p>
-<small>{scope.baseline_season} → {scope.comparison_season} · {html.escape(bundle.run.investigation_id)}</small></header>
+<small>{comparison_label} · {html.escape(bundle.run.investigation_id)}</small></header>
 <main><h2>Findings</h2>{claims}{charts}<h2>Representative plays</h2><table><thead>
 <tr><th>Game</th><th>Play</th><th>EPA</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>
 <h2>Methodological caveats</h2><ul>{caveats}</ul></main>

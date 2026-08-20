@@ -1,4 +1,4 @@
-import type { Capabilities, DatasetManifest, Investigation } from './types';
+import type { AnalysisOptions, Capabilities, DatasetManifest, Investigation, InvestigationRequest } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -8,17 +8,18 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   capabilities: () => json<Capabilities>('/api/capabilities'),
+  analysisOptions: () => json<AnalysisOptions>('/api/sports/nfl/options'),
   datasets: () => json<DatasetManifest[]>('/api/datasets'),
   investigations: () => json<Investigation[]>('/api/investigations'),
   investigation: (id: string) => json<Investigation>(`/api/investigations/${id}`),
   evidence: (id: string, evidence: string) => json(`/api/investigations/${id}/evidence/${evidence}`),
-  sync: (seasons: number[]) => json<{ job_id: string }>('/api/datasets/nfl/sync', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons })
+  sync: (seasons: number[], datasets: string[]) => json<{ job_id: string }>('/api/datasets/nfl/sync', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
   }),
-  investigate: (question: string, team: string, baseline: number, comparison: number) =>
+  investigate: (request: InvestigationRequest) =>
     json<{ investigation_id: string }>('/api/investigations', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question, scope: { team, baseline_season: baseline, comparison_season: comparison, season_type: 'REG' } })
+      body: JSON.stringify(request)
     }),
   followUp: (id: string, question: string) => json<Investigation>(`/api/investigations/${id}/follow-ups`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question })

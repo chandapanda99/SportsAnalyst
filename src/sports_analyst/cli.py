@@ -23,14 +23,15 @@ app.add_typer(eval_app, name="eval")
 def data_sync(
     sport: Annotated[str, typer.Argument()] = "nfl",
     season: Annotated[list[int] | None, typer.Option("--season")] = None,
+    dataset: Annotated[list[str] | None, typer.Option("--dataset")] = None,
 ) -> None:
     if sport.lower() != "nfl":
         raise typer.BadParameter("v1 supports only nfl")
     if not season:
         raise typer.BadParameter("provide at least one --season")
-    manifests = AnalystApplication().sync(season)
+    manifests = AnalystApplication().sync(season, datasets=dataset)
     for manifest in manifests:
-        typer.echo(f"{manifest.season}: {manifest.row_count:,} plays · {manifest.manifest_id}")
+        typer.echo(f"{manifest.season} {manifest.dataset}: {manifest.row_count:,} rows · {manifest.manifest_id}")
 
 
 @data_app.command("list")

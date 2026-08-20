@@ -38,15 +38,16 @@ class LocalStore:
                 [manifest.manifest_id, manifest.season, manifest.acquired_at, manifest.model_dump_json()],
             )
 
-    def manifests(self) -> list[DatasetManifest]:
+    def manifests(self, dataset: str | None = None) -> list[DatasetManifest]:
         with self.connect(read_only=True) as db:
             rows = db.execute("SELECT payload FROM datasets ORDER BY season DESC").fetchall()
-        return [DatasetManifest.model_validate_json(row[0]) for row in rows]
+        manifests = [DatasetManifest.model_validate_json(row[0]) for row in rows]
+        return [manifest for manifest in manifests if dataset is None or manifest.dataset == dataset]
 
-    def manifest_for_season(self, season: int) -> DatasetManifest:
-        matches = [manifest for manifest in self.manifests() if manifest.season == season]
+    def manifest_for_season(self, season: int, dataset: str = "play_by_play") -> DatasetManifest:
+        matches = [manifest for manifest in self.manifests(dataset) if manifest.season == season]
         if not matches:
-            raise KeyError(f"season {season} has not been synced")
+            raise KeyError(f"{dataset} season {season} has not been synced")
         return matches[0]
 
     def save_investigation(self, bundle: InvestigationBundle) -> Path:

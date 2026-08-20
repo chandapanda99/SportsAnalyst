@@ -6,7 +6,7 @@ body {
     background: radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%), var(--color-canvas)
 }
 
-button, input, textarea {
+button, input, textarea, select {
     font: inherit
 }
 
@@ -202,6 +202,266 @@ main {
     max-width: 670px
 }
 
+.scope-card, .metric-card {
+    margin-top: 34px;
+    border: 1px solid var(--line);
+    background: var(--color-surface);
+    padding: 24px
+}
+
+.scope-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 22px
+}
+
+.scope-heading h3 {
+    margin: 6px 0 0;
+    font-size: 20px
+}
+
+.scope-heading > span, .section-help {
+    color: var(--muted);
+    font-size: 12px
+}
+
+.scope-controls {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    gap: 14px
+}
+
+.scope-controls label, .window-grid label {
+    font: 11px var(--font-mono);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .08em
+}
+
+.scope-controls input, .scope-controls select, .window-grid select, .onboarding select {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    background: var(--color-surface-input);
+    border: 1px solid var(--color-border-control);
+    color: var(--color-text-primary);
+    border-radius: 7px;
+    padding: 12px
+}
+
+.scope-controls input[aria-invalid="true"] {
+    border-color: var(--color-status-danger-border)
+}
+
+.window-grid {
+    display: grid;
+    grid-template-columns: 1fr 36px 1fr;
+    gap: 14px;
+    align-items: center;
+    margin-top: 22px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line)
+}
+
+.window-grid.before-after {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    align-items: end
+}
+
+.window-grid fieldset {
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    padding: 0
+}
+
+.window-grid legend {
+    margin-bottom: 12px;
+    font: 500 11px var(--font-mono);
+    color: var(--mint);
+    text-transform: uppercase;
+    letter-spacing: .1em
+}
+
+.week-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px
+}
+
+.window-summary {
+    min-height: 64px;
+    padding: 12px;
+    border: 1px solid var(--color-border-subtle);
+    background: var(--color-surface-evidence)
+}
+
+.window-summary span, .window-summary strong {
+    display: block
+}
+
+.window-summary span {
+    color: var(--muted);
+    font: 10px var(--font-mono);
+    text-transform: uppercase
+}
+
+.window-summary strong {
+    margin-top: 7px;
+    font-size: 13px
+}
+
+.validation {
+    display: block;
+    margin: 8px 0 0;
+    color: var(--color-status-counter);
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0
+}
+
+.empty-state {
+    margin: 22px 0 0;
+    padding: 18px;
+    border: 1px dashed var(--color-border-interactive);
+    color: var(--muted)
+}
+
+.metric-card {
+    margin-top: 16px
+}
+
+.section-help {
+    margin: -10px 0 20px
+}
+
+.metric-groups {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line)
+}
+
+.metric-group {
+    min-width: 0;
+    margin: 0;
+    padding: 18px;
+    background: var(--color-surface-raised)
+}
+
+.metric-group-title {
+    margin: 0 0 12px;
+    color: var(--mint);
+    font: 500 11px/1.2 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: .1em
+}
+
+.metric-groups label {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 10px;
+    padding: 10px 0;
+    cursor: pointer
+}
+
+.metric-groups label + label {
+    border-top: 1px solid var(--color-border-subtle)
+}
+
+.metric-groups label.unavailable {
+    opacity: .42;
+    cursor: not-allowed
+}
+
+.metric-groups input {
+    accent-color: var(--mint);
+    margin-top: 3px
+}
+
+.metric-groups strong, .metric-groups small {
+    display: block
+}
+
+.metric-groups strong {
+    font-size: 13px
+}
+
+.metric-groups small {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45
+}
+
+.text-button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--mint);
+    font: 11px var(--font-mono);
+    cursor: pointer
+}
+
+.clear-metrics {
+    margin-top: 16px;
+    color: var(--color-text-secondary)
+}
+
+.split-selector {
+    display: grid;
+    grid-template-columns: minmax(170px, .55fr) 1.45fr;
+    gap: 24px;
+    margin-top: 22px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line)
+}
+
+.split-selector h4 {
+    margin: 0 0 6px;
+    font-size: 14px
+}
+
+.split-selector p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5
+}
+
+.split-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px
+}
+
+.split-options label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid var(--color-border-control);
+    border-radius: 5px;
+    background: var(--color-surface-input);
+    color: var(--color-text-soft);
+    font-size: 11px;
+    cursor: pointer
+}
+
+.split-options label.unavailable {
+    opacity: .4;
+    cursor: not-allowed
+}
+
+.split-options input {
+    accent-color: var(--mint)
+}
+
 .scope-grid {
     display: grid;
     grid-template-columns:1fr 1fr 30px 1fr;
@@ -251,6 +511,11 @@ main {
     cursor: pointer
 }
 
+.primary:disabled, .onboarding button:disabled {
+    opacity: .42;
+    cursor: not-allowed
+}
+
 .primary span {
     margin-left: 24px
 }
@@ -260,10 +525,71 @@ main {
     border: 1px dashed var(--color-border-interactive);
     padding: 15px;
     display: grid;
-    grid-template-columns:1fr 180px auto;
+    grid-template-columns:1fr 150px 1.2fr auto;
     gap: 12px;
     align-items: center;
     border-radius: 8px
+}
+
+.data-manager {
+    margin-top: 28px;
+    border: 1px dashed var(--color-border-interactive);
+    border-radius: 8px;
+    background: var(--color-surface-low)
+}
+
+.data-manager summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 16px;
+    cursor: pointer;
+    list-style: none
+}
+
+.data-manager summary::-webkit-details-marker {
+    display: none
+}
+
+.data-manager summary span, .data-manager summary strong, .data-manager summary small {
+    display: block
+}
+
+.data-manager summary small {
+    margin-top: 4px;
+    color: var(--muted)
+}
+
+.data-manager summary b {
+    color: var(--mint);
+    font: 11px var(--font-mono);
+    white-space: nowrap
+}
+
+.data-manager .onboarding {
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0
+}
+
+.dataset-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px
+}
+
+.dataset-options label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--color-text-soft);
+    font-size: 10px;
+    text-transform: capitalize
+}
+
+.dataset-options input {
+    accent-color: var(--mint)
 }
 
 .onboarding strong, .onboarding span {
@@ -284,6 +610,11 @@ main {
     border-radius: 6px;
     text-decoration: none;
     cursor: pointer
+}
+
+.onboarding select {
+    min-height: 84px;
+    margin: 0
 }
 
 .promise-grid {
@@ -686,12 +1017,28 @@ main {
         grid-template-columns:1fr 1fr
     }
 
+    .scope-controls, .metric-groups, .window-grid, .window-grid.before-after {
+        grid-template-columns: 1fr
+    }
+
+    .split-selector {
+        grid-template-columns: 1fr
+    }
+
+    .window-grid > .arrow {
+        display: none
+    }
+
     .scope-grid .arrow {
         display: none
     }
 
     .onboarding {
         grid-template-columns:1fr
+    }
+
+    .dataset-options {
+        grid-template-columns: 1fr
     }
 
     .report-hero {

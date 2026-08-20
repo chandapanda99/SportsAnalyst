@@ -14,3 +14,5 @@ New analytical capabilities must:
 Provider adapters implement `ModelProvider`, return a LangChain-compatible chat model, and must not serialize credentials into configuration or report artifacts.
 
 Future sandbox packages may implement `CustomAnalysisRunner`, but that interface is not exposed to the v1 agent and is intentionally disabled in the core distribution.
+
+NFL tools are grouped into deterministic window/benchmark tools, decomposition and context tools, and optional player/roster tools. Supplemental connectors must use a distinct `DatasetManifest.dataset` value and must degrade to an explicit caveat when their package is not synced for every requested window.

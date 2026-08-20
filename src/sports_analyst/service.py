@@ -8,12 +8,16 @@ from sports_analyst.agents import EvidenceBoundAgent
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.models import (
+    AnalysisOptions,
     AnalysisRequest,
     DatasetManifest,
     InvestigationBundle,
     InvestigationRun,
+    MetricDefinition,
+    PlayerOption,
     RunStatus,
     RuntimeCapabilities,
+    ToolDefinition,
     stable_id,
 )
 from sports_analyst.plugins import NFLPlugin
@@ -37,13 +41,33 @@ class AnalystApplication:
             providers=provider_ids(), configured_provider=self.settings.model_provider, model_configured=configured, custom_analysis=False
         )
 
-    def sync(self, seasons: list[int], job_id: str | None = None) -> list[DatasetManifest]:
-        key = job_id or stable_id("sync", {"seasons": sorted(seasons), "time": datetime.now(UTC)})
+    def analysis_options(self) -> AnalysisOptions:
+        return self.plugin.analysis_options(self.store.manifests("play_by_play"))
+
+    def explain_metric(self, metric: str) -> MetricDefinition:
+        return self.plugin.explain_metric(metric)
+
+    def tool_definitions(self) -> list[ToolDefinition]:
+        return self.plugin.tools()
+
+    def resolve_players(self, query: str) -> list[PlayerOption]:
+        manifests = [manifest for manifest in self.store.manifests() if manifest.dataset in {"play_by_play", "rosters", "player_stats"}]
+        sources = [(manifest.season, self.connector.load(manifest)) for manifest in manifests]
+        return self.plugin.resolve_players(query, sources)
+
+    def sync(self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None) -> list[DatasetManifest]:
+        selected_datasets = datasets or ["play_by_play"]
+        key = job_id or stable_id("sync", {"seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)})
         self.events.emit(key, "starting", "Downloading selected nflverse seasons", 0.05)
-        manifests = self.connector.sync(seasons)
+        manifests = self.connector.sync(seasons, selected_datasets)
         for index, manifest in enumerate(manifests, start=1):
             self.store.save_manifest(manifest)
-            self.events.emit(key, "registering", f"Registered {manifest.season}", 0.1 + 0.8 * index / len(manifests))
+            self.events.emit(
+                key,
+                "registering",
+                f"Registered {manifest.dataset} {manifest.season}",
+                0.1 + 0.8 * index / len(manifests),
+            )
         self.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
         return manifests
 
@@ -54,17 +78,26 @@ class AnalystApplication:
         self.events.emit(identifier, "planning", "Resolving scope and analytical tools", 0.1)
         plan = self.plugin.default_plan(request)
         manifests = {
-            season: self.store.manifest_for_season(season)
+            season: self.store.manifest_for_season(season, "play_by_play")
             for season in (request.scope.baseline_season, request.scope.comparison_season)
         }
         datasets = {season: self.connector.load(manifest) for season, manifest in manifests.items()}
+        supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
+        for manifest in self.store.manifests():
+            if manifest.dataset == "play_by_play" or manifest.season not in manifests:
+                continue
+            supplemental_manifests.setdefault(manifest.dataset, {})[manifest.season] = manifest
+        supplemental = {
+            dataset: {season: self.connector.load(manifest) for season, manifest in season_manifests.items()}
+            for dataset, season_manifests in supplemental_manifests.items()
+        }
         self.events.emit(identifier, "analyzing", "Comparing efficiency and situational splits", 0.4)
-        result = self.plugin.analyze(request, datasets, manifests)
+        result = self.plugin.analyze(request, datasets, manifests, supplemental, supplemental_manifests)
         self.events.emit(identifier, "synthesizing", "Reviewing evidence and drafting findings", 0.75)
         draft, model_id, fallback = self.agent.synthesize(
             request.scope.team,
-            request.scope.baseline_season,
-            request.scope.comparison_season,
+            request.scope.baseline,
+            request.scope.comparison,
             result.aggregate_evidence,
             result.play_evidence,
         )
@@ -85,7 +118,10 @@ class AnalystApplication:
             play_evidence=result.play_evidence,
             charts=result.charts,
             executions=result.executions,
-            dataset_manifests=list(manifests.values()),
+            dataset_manifests=[
+                *manifests.values(),
+                *(manifest for season_manifests in supplemental_manifests.values() for manifest in season_manifests.values()),
+            ],
             methodological_caveats=result.caveats,
             model_id=model_id,
             fallback_used=fallback,
@@ -109,5 +145,9 @@ class AnalystApplication:
         manifests = self.store.manifests()
         if not manifests:
             raise ValueError("no datasets are registered")
-        rows, _duration = execute_read_only_sql(sql, {item.season: Path(item.local_path) for item in manifests}, self.settings.sql_row_limit)
+        rows, _duration = execute_read_only_sql(
+            sql,
+            {item.season: Path(item.local_path) for item in manifests},
+            self.settings.sql_row_limit,
+        )
         return rows

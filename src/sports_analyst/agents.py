@@ -7,10 +7,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from sports_analyst.config import Settings, get_settings
-from sports_analyst.models import AggregateEvidence, Claim, ClaimType, PlayEvidence, stable_id
+from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
 
 logger = logging.getLogger("sports_analyst.agents")
+POSITIVE_IS_BETTER = {"epa_per_dropback", "success_rate", "cpoe", "explosive_pass_rate", "yards_per_play", "yards_after_catch"}
+LOWER_IS_BETTER = {"sack_rate", "interception_rate"}
 
 
 class SynthesisDraft(BaseModel):
@@ -20,33 +22,42 @@ class SynthesisDraft(BaseModel):
 
 def _fallback_synthesis(
     team: str,
-    baseline_season: int,
-    comparison_season: int,
+    baseline: AnalysisWindow,
+    comparison: AnalysisWindow,
     aggregate: list[AggregateEvidence],
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
-    epa = next((item for item in metrics if item.metric == "epa_per_dropback"), metrics[0] if metrics else None)
-    if epa is None:
+    primary = next((item for item in metrics if item.metric == "epa_per_dropback"), metrics[0] if metrics else None)
+    if primary is None:
         raise ValueError("analysis produced no comparable metrics")
-    direction = "improved" if float(epa.value or 0) > 0 else "declined"
+    change = float(primary.value or 0)
+    if change == 0 or primary.metric not in POSITIVE_IS_BETTER | LOWER_IS_BETTER:
+        direction = "was unchanged" if change == 0 else "changed"
+    else:
+        improved = change > 0 if primary.metric in POSITIVE_IS_BETTER else change < 0
+        direction = "improved" if improved else "declined"
+    baseline_label = f"{baseline.season} weeks {baseline.weeks[0]}–{baseline.weeks[1]}"
+    comparison_label = f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
     summary = (
-        f"{team}'s measured passing efficiency {direction} from {baseline_season} to {comparison_season}. "
+        f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}. "
         "The findings below separate measured changes from football interpretation and link each statement to reproducible evidence."
     )
     claims = [
         Claim(
-            claim_id=stable_id("claim", {"metric": epa.metric, "statement": direction}),
+            claim_id=stable_id("claim", {"metric": primary.metric, "statement": direction}),
             claim_type=ClaimType.MEASURED,
             statement=(
-                f"EPA per dropback moved from {epa.baseline_value:.3f} to {epa.comparison_value:.3f}, "
-                f"a change of {float(epa.value or 0):+.3f} across {epa.sample_size} comparison-season dropbacks."
+                f"{primary.label} moved from {primary.baseline_value:.3f} to {primary.comparison_value:.3f}, "
+                f"a change of {float(primary.value or 0):+.3f} across {primary.sample_size} comparison-window dropbacks."
             ),
-            evidence_ids=[epa.evidence_id],
-            confidence="high" if epa.sample_size >= 100 else "medium",
+            evidence_ids=[primary.evidence_id],
+            confidence="high" if primary.sample_size >= 100 else "medium",
         )
     ]
     supporting = sorted(
-        [item for item in metrics if item.metric != "epa_per_dropback"], key=lambda item: abs(float(item.value or 0)), reverse=True
+        [item for item in metrics if item.evidence_id != primary.evidence_id],
+        key=lambda item: abs(float(item.value or 0)),
+        reverse=True,
     )[:3]
     for item in supporting:
         claims.append(
@@ -82,12 +93,12 @@ class EvidenceBoundAgent:
     def synthesize(
         self,
         team: str,
-        baseline_season: int,
-        comparison_season: int,
+        baseline: AnalysisWindow,
+        comparison: AnalysisWindow,
         aggregate: list[AggregateEvidence],
         plays: list[PlayEvidence],
     ) -> tuple[SynthesisDraft, str | None, bool]:
-        fallback = _fallback_synthesis(team, baseline_season, comparison_season, aggregate)
+        fallback = _fallback_synthesis(team, baseline, comparison, aggregate)
         if self.settings.model_provider == "azure_foundry" and not self.settings.foundry_endpoint:
             return fallback, None, True
         try:
@@ -141,7 +152,7 @@ class EvidenceBoundAgent:
                 tools=tools,
                 subagents=subagents,
                 system_prompt=(
-                    f"You coordinate an NFL analysis for {team}, comparing {baseline_season} with {comparison_season}. "
+                    f"You coordinate an NFL analysis for {team}, comparing {baseline.model_dump()} with {comparison.model_dump()}. "
                     "Delegate diagnosis and review. Produce concise analyst-style findings grounded in evidence. " + common
                 ),
                 response_format=SynthesisDraft,

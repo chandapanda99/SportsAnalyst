@@ -38,6 +38,16 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The API listens at `http://127.0.0.1:8767`.
 
+The web data manager can also sync supplemental packages used by player and context tools. The equivalent CLI form is:
+
+```powershell
+uv run sports-analyst data sync nfl --season 2024 --season 2025 `
+  --dataset play_by_play --dataset rosters --dataset injuries `
+  --dataset schedules --dataset nextgen_passing
+```
+
+Supplemental packages are optional. Investigations continue with play-by-play tools and record a capability caveat when a requested context package is unavailable. The registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and `/api/sports/nfl/players`.
+
 ## Example
 
 ```powershell

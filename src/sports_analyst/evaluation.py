@@ -20,7 +20,21 @@ def evaluation_cases() -> list[EvaluationCase]:
     return [
         EvaluationCase(
             question=pattern.format(team=team),
-            expected_tools=["compare_passing_efficiency", "decompose_situational_splits", "rank_representative_plays"],
+            expected_tools=[
+                "validate_analysis_scope",
+                "compare_time_windows",
+                "analyze_weekly_trends",
+                "rank_game_outliers",
+                "benchmark_against_league",
+                "analyze_situational_split",
+                "decompose_metric_change",
+                "adjust_for_opponents",
+                "compare_play_mix",
+                "identify_change_points",
+                "compare_player_usage",
+                "analyze_qb_receiver_pairs",
+                "find_representative_plays",
+            ],
             expected_dimensions=dimensions,
         )
         for team in teams

@@ -11,12 +11,23 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from sports_analyst.models import AnalysisRequest, DatasetManifest, InvestigationBundle, RuntimeCapabilities, stable_id
+from sports_analyst.models import (
+    AnalysisOptions,
+    AnalysisRequest,
+    DatasetManifest,
+    InvestigationBundle,
+    MetricDefinition,
+    PlayerOption,
+    RuntimeCapabilities,
+    ToolDefinition,
+    stable_id,
+)
 from sports_analyst.service import AnalystApplication
 
 
 class SyncRequest(BaseModel):
     seasons: list[int] = Field(min_length=1, max_length=27)
+    datasets: list[str] = Field(default_factory=lambda: ["play_by_play"], min_length=1, max_length=7)
 
 
 class FollowUpRequest(BaseModel):
@@ -39,13 +50,35 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
     def datasets() -> list[DatasetManifest]:
         return service.store.manifests()
 
+    @api.get("/api/sports/nfl/options", response_model=AnalysisOptions)
+    def nfl_analysis_options() -> AnalysisOptions:
+        return service.analysis_options()
+
+    @api.get("/api/sports/nfl/metrics/{metric}", response_model=MetricDefinition)
+    def metric_definition(metric: str) -> MetricDefinition:
+        try:
+            return service.explain_metric(metric)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @api.get("/api/sports/nfl/tools", response_model=list[ToolDefinition])
+    def nfl_tools() -> list[ToolDefinition]:
+        return service.tool_definitions()
+
+    @api.get("/api/sports/nfl/players", response_model=list[PlayerOption])
+    def players(query: str = "") -> list[PlayerOption]:
+        return service.resolve_players(query)
+
     @api.post("/api/datasets/nfl/sync", status_code=202)
     def sync_datasets(request: SyncRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
-        job_id = stable_id("sync", {"seasons": sorted(request.seasons), "time": datetime.now(UTC).isoformat()})
+        job_id = stable_id(
+            "sync",
+            {"seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+        )
 
         def execute() -> None:
             try:
-                service.sync(request.seasons, job_id)
+                service.sync(request.seasons, job_id, request.datasets)
             except Exception as error:
                 service.events.emit(job_id, "failed", str(error), 1.0)
 
@@ -58,9 +91,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
 
     @api.post("/api/investigations", status_code=202)
     def create_investigation(request: AnalysisRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
-        investigation_id = stable_id(
-            "investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()}
-        )
+        investigation_id = stable_id("investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()})
 
         def execute() -> None:
             try:
