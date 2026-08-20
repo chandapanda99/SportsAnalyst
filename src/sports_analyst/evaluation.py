@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from pydantic import BaseModel
+
+
+class EvaluationCase(BaseModel):
+    question: str
+    expected_tools: list[str]
+    expected_dimensions: list[str]
+
+
+def evaluation_cases() -> list[EvaluationCase]:
+    teams = ["KC", "BUF", "PHI", "SF", "DAL"]
+    patterns = [
+        ("Why did {team}'s passing efficiency decline?", ["epa_per_dropback", "success_rate", "sack_rate"]),
+        ("What drove the change in {team}'s explosive passing?", ["explosive_pass_rate", "air_yards", "yards_after_catch"]),
+        ("Did {team} improve because of situation mix or execution?", ["down", "offense_formation", "score_differential"]),
+        ("How stable was {team}'s passing performance across the season?", ["week", "epa_per_dropback", "confidence_interval"]),
+    ]
+    return [
+        EvaluationCase(
+            question=pattern.format(team=team),
+            expected_tools=["compare_passing_efficiency", "decompose_situational_splits", "rank_representative_plays"],
+            expected_dimensions=dimensions,
+        )
+        for team in teams
+        for pattern, dimensions in patterns
+    ]

@@ -1,0 +1,157 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap");
+
+:root {
+    color-scheme: dark;
+
+    /* Typography */
+    --font-sans: "Manrope", "Aptos", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+
+    /* Dark palette primitives */
+    --navy-1000: #000b21;
+    --navy-975: #030a23;
+    --navy-950: #041423;
+    --navy-925: #071428;
+    --navy-900: #091521;
+    --navy-875: #0a1932;
+    --navy-850: #0a192d;
+    --navy-825: #0f1e32;
+    --navy-800: #101f2d;
+    --navy-775: #10202e;
+    --navy-750: #102232;
+    --navy-725: #102638;
+    --navy-700: #122233;
+    --navy-650: #172b3e;
+    --navy-600: #1c3041;
+    --navy-550: #203142;
+    --navy-500: #263d50;
+    --navy-450: #28445a;
+    --navy-400: #294053;
+    --navy-350: #31506a;
+    --navy-glow: #173348;
+
+    --slate-700: #597283;
+    --slate-650: #617887;
+    --slate-600: #637987;
+    --slate-550: #718899;
+    --slate-500: #7f96a5;
+    --slate-450: #7fa9bf;
+    --slate-400: #8fa2af;
+    --slate-350: #9fb0bb;
+    --slate-300: #a8b7c1;
+    --slate-200: #dbe8ee;
+    --slate-100: #edf4f7;
+    --white: #fff;
+
+    --mint-400: #7ce4c2;
+    --gold-400: #f2c86f;
+    --amber-400: #f19767;
+    --amber-500: #df9c7c;
+    --amber-200: #c5b78f;
+    --red-900: #640f19;
+    --red-700: #a0141e;
+
+    /* Semantic colors: components consume these, not palette values. */
+    --color-canvas: var(--navy-1000);
+    --color-canvas-glow: var(--navy-glow);
+    --color-sidebar: var(--navy-975);
+    --color-surface-low: var(--navy-950);
+    --color-surface: var(--navy-925);
+    --color-surface-raised: var(--navy-900);
+    --color-surface-input: var(--navy-875);
+    --color-surface-panel: var(--navy-850);
+    --color-surface-panel-alt: var(--navy-825);
+    --color-surface-chip: var(--navy-800);
+    --color-surface-hover: var(--navy-775);
+    --color-surface-evidence: var(--navy-750);
+    --color-surface-accented: var(--navy-725);
+    --color-surface-active: var(--navy-700);
+    --color-surface-control: var(--navy-650);
+    --color-progress-track: var(--navy-600);
+    --color-border-subtle: var(--navy-550);
+    --color-border-strong: var(--navy-500);
+    --color-border-accent: var(--navy-450);
+    --color-border-control: var(--navy-400);
+    --color-border-interactive: var(--navy-350);
+    --color-text-primary: var(--slate-100);
+    --color-text-secondary: var(--slate-400);
+    --color-text-tertiary: var(--slate-550);
+    --color-text-soft: var(--slate-300);
+    --color-text-control: var(--slate-200);
+    --color-text-caution: var(--amber-200);
+    --color-accent-primary: var(--mint-400);
+    --color-accent-interpretation: var(--gold-400);
+    --color-status-warning: var(--amber-400);
+    --color-status-counter: var(--amber-500);
+    --color-status-danger-bg: var(--red-900);
+    --color-status-danger-border: var(--red-700);
+    --color-focus-ring: var(--mint-400);
+
+    /* Compatibility aliases retained for existing components. */
+    --ink: var(--color-text-primary);
+    --muted: var(--color-text-secondary);
+    --line: var(--color-border-subtle);
+    --panel: var(--color-surface-panel);
+    --mint: var(--color-accent-primary);
+    --gold: var(--color-accent-interpretation);
+
+    /* Spacing: 4px base grid */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+
+    --radius-xs: 3px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 14px;
+    --radius-pill: 999px;
+
+    --shadow-focus: 0 0 0 3px color-mix(in srgb, var(--color-focus-ring) 35%, transparent);
+    --shadow-status: 0 0 12px currentColor;
+    --duration-fast: 120ms;
+    --duration-standard: 200ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+    /* Data visualization */
+    --chart-series-1: #7ce4c2;
+    --chart-series-2: #f2c86f;
+    --chart-series-3: #7fa9bf;
+    --chart-series-4: #df9c7c;
+    --chart-positive: #7ce4c2;
+    --chart-negative: #f19767;
+    --chart-neutral: #8fa2af;
+
+    font-family: var(--font-sans), system-ui;
+    color: var(--color-text-primary);
+    background: var(--color-canvas);
+    font-synthesis: none;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    box-shadow: var(--shadow-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
+
