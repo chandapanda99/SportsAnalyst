@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -84,6 +85,22 @@ class LocalStore:
         with self.connect(read_only=True) as db:
             rows = db.execute("SELECT bundle_path FROM investigations ORDER BY created_at DESC").fetchall()
         return [InvestigationBundle.model_validate_json(Path(row[0]).read_text(encoding="utf-8")) for row in rows]
+
+    def delete_investigation(self, investigation_id: str) -> None:
+        with self.connect(read_only=True) as db:
+            row = db.execute("SELECT bundle_path FROM investigations WHERE investigation_id = ?", [investigation_id]).fetchone()
+        if not row:
+            raise KeyError(f"investigation not found: {investigation_id}")
+
+        root = self.settings.investigations_dir.resolve()
+        directory = Path(row[0]).parent.resolve()
+        if directory.parent != root or directory.name != investigation_id:
+            raise RuntimeError(f"invalid investigation storage path: {investigation_id}")
+
+        with self.connect() as db:
+            db.execute("DELETE FROM investigations WHERE investigation_id = ?", [investigation_id])
+        if directory.exists():
+            shutil.rmtree(directory)
 
     def export_path(self, investigation_id: str, output_format: str) -> Path:
         if output_format not in {"html", "markdown"}:

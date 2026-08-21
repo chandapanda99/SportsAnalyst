@@ -88,6 +88,7 @@ def _fallback_synthesis(
     baseline: AnalysisWindow,
     comparison: AnalysisWindow,
     aggregate: list[AggregateEvidence],
+    analysis_seasons: list[int] | None = None,
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     primary = next((item for item in metrics if item.metric == "epa_per_dropback"), metrics[0] if metrics else None)
@@ -101,8 +102,13 @@ def _fallback_synthesis(
         direction = "improved" if improved else "declined"
     baseline_label = f"{baseline.season} weeks {baseline.weeks[0]}–{baseline.weeks[1]}"
     comparison_label = f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
+    range_context = (
+        f" The analysis includes every full season from {analysis_seasons[0]} through {analysis_seasons[-1]}."
+        if analysis_seasons
+        else ""
+    )
     summary = (
-        f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}. "
+        f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "
         "The findings below separate measured changes from football interpretation and link each statement to reproducible evidence."
     )
     claims = [
@@ -117,6 +123,19 @@ def _fallback_synthesis(
             confidence="high" if primary.sample_size >= 100 else "medium",
         )
     ]
+    seasonal = [item for item in aggregate if item.metric == f"seasonal_{primary.metric}" and item.value is not None]
+    if analysis_seasons and seasonal:
+        seasonal.sort(key=lambda item: int(item.label.split(" ·", 1)[0]))
+        trajectory = ", ".join(f"{item.label.split(' ·', 1)[0]}: {float(item.value):.3f}" for item in seasonal)
+        claims.append(
+            Claim(
+                claim_id=stable_id("claim", {"metric": primary.metric, "seasons": analysis_seasons, "trajectory": trajectory}),
+                claim_type=ClaimType.MEASURED,
+                statement=f"Across the inclusive season range, {primary.label} measured {trajectory}.",
+                evidence_ids=[item.evidence_id for item in seasonal],
+                confidence="high" if min(item.sample_size for item in seasonal) >= 100 else "medium",
+            )
+        )
     supporting = sorted(
         [item for item in metrics if item.evidence_id != primary.evidence_id],
         key=lambda item: abs(float(item.value or 0)),
@@ -155,14 +174,23 @@ class EvidenceBoundAgent:
 
     def synthesize(
         self,
+        question: str,
         team: str,
         baseline: AnalysisWindow,
         comparison: AnalysisWindow,
         aggregate: list[AggregateEvidence],
         plays: list[PlayEvidence],
+        analysis_seasons: list[int] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
-        fallback = _fallback_synthesis(team, baseline, comparison, aggregate)
+        fallback = _fallback_synthesis(team, baseline, comparison, aggregate, analysis_seasons)
+        logger.debug(
+            "synthesis_requested provider=%s aggregate_count=%d play_count=%d",
+            self.settings.model_provider,
+            len(aggregate),
+            len(plays),
+        )
         if self.settings.model_provider == "azure_foundry" and not self.settings.foundry_endpoint:
+            logger.info("synthesis_fallback reason=model_not_configured provider=azure_foundry")
             return fallback, None, True
         try:
             from deepagents import create_deep_agent
@@ -171,6 +199,11 @@ class EvidenceBoundAgent:
 
             resolved = get_provider(self.settings.model_provider).build(self.settings)
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
+            logger.debug(
+                "citation_ledger_created aggregate_aliases=%d play_aliases=%d",
+                len(aggregate_payload),
+                len(play_payload),
+            )
             response_model = _citation_response_model(list(ledger))
             allowed_citations = ", ".join(ledger)
 
@@ -191,6 +224,11 @@ class EvidenceBoundAgent:
                 "explanations must be interpretation claims. Do not claim causality or invent players, schemes, injuries, citation keys, "
                 "or evidence IDs."
             )
+            if analysis_seasons:
+                common += (
+                    f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
+                    "not only the first and final seasons. Endpoint diagnostics should be identified as endpoint comparisons."
+                )
             subagents = [
                 {
                     "name": "efficiency-analyst",
@@ -233,18 +271,27 @@ class EvidenceBoundAgent:
                 return structured if isinstance(structured, response_model) else response_model.model_validate(structured)
 
             try:
+                logger.info("model_synthesis_started model_id=%s citation_aliases=%d", resolved.model_id, len(ledger))
                 aliased_draft = invoke(
-                    "Synthesize and verify this efficiency investigation. Use evidence_refs with exact citation keys from the tools."
+                    f"The user's analytical question is {json.dumps(question)}. Synthesize and verify an answer that directly "
+                    "addresses that question. Use evidence_refs with exact citation keys from the tools."
                 )
             except Exception as citation_error:
                 if not _is_citation_error(citation_error):
                     raise
-                logger.info("retrying model synthesis after invalid citation aliases")
+                logger.warning(
+                    "model_synthesis_citation_retry model_id=%s error_type=%s",
+                    resolved.model_id,
+                    type(citation_error).__name__,
+                )
                 aliased_draft = invoke(
-                    "Repair the prior synthesis. Re-inspect the evidence tools and use only these exact evidence_refs: "
+                    f"Repair the prior synthesis while directly answering {json.dumps(question)}. Re-inspect the evidence tools and "
+                    "use only these exact evidence_refs: "
                     f"{allowed_citations}. Do not write or infer canonical evidence IDs."
                 )
-            return _resolve_citation_draft(aliased_draft, ledger), resolved.model_id, False
+            resolved_draft = _resolve_citation_draft(aliased_draft, ledger)
+            logger.info("model_synthesis_completed model_id=%s claims=%d", resolved.model_id, len(resolved_draft.claims))
+            return resolved_draft, resolved.model_id, False
         except Exception as error:
-            logger.warning("model synthesis unavailable; using deterministic report: %s", " ".join(str(error).split())[:400])
+            logger.warning("model_synthesis_fallback error_type=%s", type(error).__name__)
             return fallback, None, True

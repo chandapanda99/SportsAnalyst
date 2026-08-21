@@ -1,15 +1,14 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap");
-
 :root {
     color-scheme: dark;
 
     /* Typography */
-    --font-sans: "Manrope", "Aptos", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: "Aptos", "Manrope", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+    --font-weight-strong: 600;
 
     /* Dark palette primitives */
-    --navy-1000: #000b21;
-    --navy-975: #030a23;
+    --navy-1000: #00050f;
+    --navy-975: #000f1e;
     --navy-950: #041423;
     --navy-925: #071428;
     --navy-900: #091521;
@@ -28,7 +27,7 @@
     --navy-450: #28445a;
     --navy-400: #294053;
     --navy-350: #31506a;
-    --navy-glow: #173348;
+    --navy-glow: #05233c;
 
     --slate-700: #597283;
     --slate-650: #617887;
@@ -44,16 +43,17 @@
     --white: #fff;
 
     --mint-400: #7ce4c2;
-    --gold-400: #f2c86f;
+    --gold-400: #ebaf50;
     --amber-400: #f19767;
     --amber-500: #df9c7c;
     --amber-200: #c5b78f;
+    --red-400: #f06470;
     --red-900: #640f19;
     --red-700: #a0141e;
 
     /* Semantic colors: components consume these, not palette values. */
-    --color-canvas: var(--navy-1000);
-    --color-canvas-glow: var(--navy-glow);
+    --color-canvas: #000a14;
+    --color-canvas-glow: #05233CFF;
     --color-sidebar: var(--navy-975);
     --color-surface-low: var(--navy-950);
     --color-surface: var(--navy-925);
@@ -83,6 +83,7 @@
     --color-accent-interpretation: var(--gold-400);
     --color-status-warning: var(--amber-400);
     --color-status-counter: var(--amber-500);
+    --color-status-danger: var(--red-400);
     --color-status-danger-bg: var(--red-900);
     --color-status-danger-border: var(--red-700);
     --color-focus-ring: var(--mint-400);
@@ -132,10 +133,18 @@
     color: var(--color-text-primary);
     background: var(--color-canvas);
     font-synthesis: none;
+    font-kerning: normal;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
 }
 
 * {
     box-sizing: border-box;
+}
+
+h1, h2, h3, h4, strong, b {
+    font-weight: var(--font-weight-strong);
 }
 
 :focus-visible {
@@ -154,4 +163,3 @@
         animation-iteration-count: 1 !important;
     }
 }
-

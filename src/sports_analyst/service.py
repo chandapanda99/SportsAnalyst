@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from sports_analyst.agents import EvidenceBoundAgent
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import NFLVerseConnector
+from sports_analyst.log_config import configure_logging
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -25,10 +28,13 @@ from sports_analyst.providers import provider_ids
 from sports_analyst.sql import execute_read_only_sql
 from sports_analyst.storage import EventRegistry, LocalStore
 
+logger = logging.getLogger("sports_analyst.service")
+
 
 class AnalystApplication:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        configure_logging(self.settings.log_level)
         self.store = LocalStore(self.settings)
         self.connector = NFLVerseConnector(self.settings)
         self.plugin = NFLPlugin()
@@ -58,6 +64,13 @@ class AnalystApplication:
     def sync(self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None) -> list[DatasetManifest]:
         selected_datasets = datasets or ["play_by_play"]
         key = job_id or stable_id("sync", {"seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)})
+        started_at = perf_counter()
+        logger.info(
+            "dataset_sync_started job_id=%s seasons=%s datasets=%s",
+            key,
+            ",".join(str(season) for season in sorted(seasons)),
+            ",".join(selected_datasets),
+        )
         self.events.emit(key, "starting", "Downloading selected nflverse seasons", 0.05)
         manifests = self.connector.sync(seasons, selected_datasets)
         for index, manifest in enumerate(manifests, start=1):
@@ -69,17 +82,40 @@ class AnalystApplication:
                 0.1 + 0.8 * index / len(manifests),
             )
         self.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
+        logger.info(
+            "dataset_sync_completed job_id=%s manifests=%d duration_ms=%d",
+            key,
+            len(manifests),
+            round((perf_counter() - started_at) * 1000),
+        )
         return manifests
 
     def investigate(self, request: AnalysisRequest, investigation_id: str | None = None) -> InvestigationBundle:
+        started_at = perf_counter()
         identifier = investigation_id or stable_id(
             "investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()}
+        )
+        logger.info(
+            "investigation_started investigation_id=%s team=%s design=%s seasons=%s "
+            "baseline=%s:%s-%s comparison=%s:%s-%s metrics=%d splits=%d",
+            identifier,
+            request.scope.team,
+            request.scope.comparison_design,
+            ",".join(str(season) for season in request.scope.included_seasons),
+            request.scope.baseline_season,
+            request.scope.baseline.weeks[0],
+            request.scope.baseline.weeks[1],
+            request.scope.comparison_season,
+            request.scope.comparison.weeks[0],
+            request.scope.comparison.weeks[1],
+            len(request.metrics),
+            len(request.splits),
         )
         self.events.emit(identifier, "planning", "Resolving scope and analytical tools", 0.1)
         plan = self.plugin.default_plan(request)
         manifests = {
             season: self.store.manifest_for_season(season, "play_by_play")
-            for season in (request.scope.baseline_season, request.scope.comparison_season)
+            for season in request.scope.included_seasons
         }
         datasets = {season: self.connector.load(manifest) for season, manifest in manifests.items()}
         supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
@@ -92,14 +128,35 @@ class AnalystApplication:
             for dataset, season_manifests in supplemental_manifests.items()
         }
         self.events.emit(identifier, "analyzing", "Comparing efficiency and situational splits", 0.4)
+        analysis_started_at = perf_counter()
         result = self.plugin.analyze(request, datasets, manifests, supplemental, supplemental_manifests)
+        logger.info(
+            "analysis_completed investigation_id=%s aggregates=%d plays=%d executions=%d charts=%d duration_ms=%d",
+            identifier,
+            len(result.aggregate_evidence),
+            len(result.play_evidence),
+            len(result.executions),
+            len(result.charts),
+            round((perf_counter() - analysis_started_at) * 1000),
+        )
         self.events.emit(identifier, "synthesizing", "Reviewing evidence and drafting findings", 0.75)
+        synthesis_started_at = perf_counter()
         draft, model_id, fallback = self.agent.synthesize(
+            request.question,
             request.scope.team,
             request.scope.baseline,
             request.scope.comparison,
             result.aggregate_evidence,
             result.play_evidence,
+            request.scope.included_seasons if request.scope.comparison_design == "full_seasons" else None,
+        )
+        logger.info(
+            "synthesis_completed investigation_id=%s model_id=%s fallback=%s claims=%d duration_ms=%d",
+            identifier,
+            model_id or "deterministic",
+            str(fallback).lower(),
+            len(draft.claims),
+            round((perf_counter() - synthesis_started_at) * 1000),
         )
         run = InvestigationRun(
             investigation_id=identifier,
@@ -128,6 +185,11 @@ class AnalystApplication:
         )
         self.store.save_investigation(bundle)
         self.events.emit(identifier, "complete", "Investigation ready", 1.0, investigation_id=identifier)
+        logger.info(
+            "investigation_completed investigation_id=%s duration_ms=%d",
+            identifier,
+            round((perf_counter() - started_at) * 1000),
+        )
         return bundle
 
     def follow_up(self, parent_id: str, question: str) -> InvestigationBundle:

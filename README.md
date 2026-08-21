@@ -38,6 +38,8 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The API listens at `http://127.0.0.1:8767`.
 
+For additional backend diagnostics, set `LOG_LEVEL=DEBUG` in `.env` and restart the API. The default is `INFO`. Logs include sync and investigation IDs, lifecycle stages, durations, result counts, model/fallback outcomes, citation-repair attempts, and event-stream timeouts. They intentionally exclude questions, prompts, evidence contents, SQL, filesystem paths, credentials, and raw model responses.
+
 The web data manager can also sync supplemental packages used by player and context tools. The equivalent CLI form is:
 
 ```powershell
@@ -49,6 +51,8 @@ uv run sports-analyst data sync nfl --season 2024 --season 2025 `
 Supplemental packages are optional. Investigations continue with play-by-play tools and record a capability caveat when a requested context package is unavailable. The
 registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and
 `/api/sports/nfl/players`.
+
+The web app's **Full season range** mode is inclusive: selecting 2022 through 2025 loads and measures 2022, 2023, 2024, and 2025. Its season-trend evidence covers the complete range, while situational decomposition and representative-play diagnostics compare the first and final seasons. **Custom week ranges** remains the two-window workflow for targeted season or week comparisons.
 
 ## Example
 

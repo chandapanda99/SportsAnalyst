@@ -19,6 +19,24 @@ def test_scope_normalizes_team_and_rejects_same_season() -> None:
     assert same_season.baseline_season == same_season.comparison_season == 2025
 
 
+def test_full_season_scope_expands_to_an_inclusive_range() -> None:
+    scope = AnalysisScope(
+        team="CHI",
+        baseline_season=2022,
+        comparison_season=2025,
+        comparison_design="full_seasons",
+    )
+    assert scope.included_seasons == [2022, 2023, 2024, 2025]
+
+    with pytest.raises(ValidationError):
+        AnalysisScope(
+            team="CHI",
+            baseline_season=2025,
+            comparison_season=2022,
+            comparison_design="full_seasons",
+        )
+
+
 def test_custom_analysis_is_explicitly_disabled() -> None:
     result = DisabledCustomAnalysisRunner().execute(CustomAnalysisRequest(code="print('no')", input_manifest_ids=[]))
     assert not result.supported

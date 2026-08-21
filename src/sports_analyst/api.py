@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,8 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.service import AnalystApplication
+
+logger = logging.getLogger("sports_analyst.api")
 
 
 class SyncRequest(BaseModel):
@@ -80,6 +83,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             try:
                 service.sync(request.seasons, job_id, request.datasets)
             except Exception as error:
+                logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
                 service.events.emit(job_id, "failed", str(error), 1.0)
 
         background_tasks.add_task(execute)
@@ -101,6 +105,11 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             try:
                 service.investigate(request, investigation_id)
             except Exception as error:
+                logger.error(
+                    "investigation_failed investigation_id=%s error_type=%s",
+                    investigation_id,
+                    type(error).__name__,
+                )
                 service.events.emit(investigation_id, "failed", str(error), 1.0)
 
         background_tasks.add_task(execute)
@@ -116,6 +125,18 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             return service.store.get_investigation(investigation_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @api.delete("/api/investigations/{investigation_id}", status_code=204)
+    def delete_investigation(investigation_id: str) -> Response:
+        try:
+            service.store.delete_investigation(investigation_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            logger.error("investigation_delete_rejected investigation_id=%s", investigation_id)
+            raise HTTPException(status_code=500, detail=str(error)) from error
+        logger.info("investigation_deleted investigation_id=%s", investigation_id)
+        return Response(status_code=204)
 
     @api.get("/api/investigations/{investigation_id}/events")
     async def investigation_events(investigation_id: str) -> StreamingResponse:
@@ -140,12 +161,20 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.get("/api/investigations/{investigation_id}/export")
-    def export(investigation_id: str, format: str = "html") -> FileResponse:
+    def export(investigation_id: str, format: str = "html") -> Response:
+        if format not in {"html", "markdown"}:
+            raise HTTPException(status_code=400, detail="format must be html or markdown")
         try:
-            path = service.store.export_path(investigation_id, format)
-        except (KeyError, ValueError) as error:
-            raise HTTPException(status_code=404 if isinstance(error, KeyError) else 400, detail=str(error)) from error
-        return FileResponse(path, filename=path.name)
+            bundle = service.store.get_investigation(investigation_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        from sports_analyst.reports import render_html, render_markdown
+
+        is_html = format == "html"
+        content = render_html(bundle) if is_html else render_markdown(bundle)
+        filename = "report.html" if is_html else "report.md"
+        media_type = "text/html; charset=utf-8" if is_html else "text/markdown; charset=utf-8"
+        return Response(content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend.exists():
@@ -177,6 +206,7 @@ async def _event_stream(
             yield ": keep-alive\n\n"
             next_heartbeat = loop.time() + heartbeat_interval
         await asyncio.sleep(poll_interval)
+    logger.warning("event_stream_timeout key=%s timeout_seconds=%s", key, timeout)
     yield _sse(
         {
             "stage": "timeout",

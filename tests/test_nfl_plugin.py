@@ -38,6 +38,44 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert "analyze_situational_split" in {item.tool for item in first.executions}
 
 
+def test_full_season_range_analyzes_every_included_season(pbp_pair) -> None:
+    plugin = NFLPlugin()
+    frames: dict[int, pl.DataFrame] = {}
+    for season, shift in ((2022, 0.0), (2023, 0.04), (2024, -0.02), (2025, 0.08)):
+        frames[season] = pbp_pair[2024].with_columns(
+            pl.lit(season).alias("season"),
+            (pl.col("epa") + shift).alias("epa"),
+            pl.col("game_id").str.replace("2024", str(season)).alias("game_id"),
+        )
+    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
+    request = AnalysisRequest(
+        question="How did CHI perform from 2022 through 2025?",
+        scope=AnalysisScope(
+            team="KC",
+            baseline_season=2022,
+            comparison_season=2025,
+            comparison_design="full_seasons",
+        ),
+        metrics=["epa_per_dropback"],
+    )
+
+    result = plugin.analyze(request, frames, manifests)
+
+    seasonal = [item for item in result.aggregate_evidence if item.metric == "seasonal_epa_per_dropback"]
+    assert [int(item.label.split(" ·", 1)[0]) for item in seasonal] == [2022, 2023, 2024, 2025]
+    assert {item.tool for item in result.executions} >= {"analyze_season_trends", "compare_time_windows"}
+    assert {manifest_id for item in seasonal for manifest_id in item.dataset_manifest_ids} == {
+        "dataset-play_by_play-2022",
+        "dataset-play_by_play-2023",
+        "dataset-play_by_play-2024",
+        "dataset-play_by_play-2025",
+    }
+    assert any(chart.title == "Season-by-season EPA/dropback" for chart in result.charts)
+    comparison_chart = next(chart for chart in result.charts if chart.title == "All seasons · Passing efficiency comparison")
+    assert {row["season"] for row in comparison_chart.specification["data"]["values"]} == {2022, 2023, 2024, 2025}
+    assert comparison_chart.specification["encoding"]["color"]["field"] == "season"
+
+
 def test_plan_uses_only_registered_tools() -> None:
     plugin = NFLPlugin()
     request = AnalysisRequest(question="Why?", scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025))

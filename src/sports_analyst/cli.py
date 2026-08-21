@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from sports_analyst.config import get_settings
 from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.service import AnalystApplication
 
@@ -53,7 +54,13 @@ def ask(
         raise typer.BadParameter("--compare must look like 2024:2025") from error
     request = AnalysisRequest(
         question=question,
-        scope=AnalysisScope(team=team, baseline_season=baseline, comparison_season=comparison, season_type=season_type.upper()),
+        scope=AnalysisScope(
+            team=team,
+            baseline_season=baseline,
+            comparison_season=comparison,
+            season_type=season_type.upper(),
+            comparison_design="full_seasons",
+        ),
     )
     bundle = AnalystApplication().investigate(request)
     typer.echo(f"{bundle.run.investigation_id}\n{bundle.summary}")
@@ -91,4 +98,10 @@ def eval_run() -> None:
 def serve(host: str = "127.0.0.1", port: int = 8767) -> None:
     import uvicorn
 
-    uvicorn.run("sports_analyst.api:app", host=host, port=port, reload=False)
+    uvicorn.run(
+        "sports_analyst.api:app",
+        host=host,
+        port=port,
+        reload=False,
+        log_level=get_settings().log_level,
+    )

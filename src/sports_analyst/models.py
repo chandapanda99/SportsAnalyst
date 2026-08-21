@@ -70,6 +70,7 @@ class AnalysisScope(BaseModel):
     baseline: AnalysisWindow
     comparison: AnalysisWindow
     season_type: Literal["REG", "POST", "ALL"] = "REG"
+    comparison_design: Literal["full_seasons", "week_ranges", "before_after"] = "week_ranges"
 
     @model_validator(mode="before")
     @classmethod
@@ -98,10 +99,23 @@ class AnalysisScope(BaseModel):
     def comparison_season(self) -> int:
         return self.comparison.season
 
+    @property
+    def included_seasons(self) -> list[int]:
+        if self.comparison_design == "full_seasons":
+            return list(range(self.baseline.season, self.comparison.season + 1))
+        return list(dict.fromkeys((self.baseline.season, self.comparison.season)))
+
     @model_validator(mode="after")
     def validate_windows(self) -> AnalysisScope:
         if self.baseline == self.comparison:
             raise ValueError("comparison windows must differ")
+        if self.comparison_design == "full_seasons":
+            if self.baseline.weeks != (1, 22) or self.comparison.weeks != (1, 22):
+                raise ValueError("full-season ranges must use complete seasons")
+            if self.baseline.season >= self.comparison.season:
+                raise ValueError("full-season range end must be later than its start")
+        if self.comparison_design == "before_after" and self.baseline.season != self.comparison.season:
+            raise ValueError("before-and-after windows must use the same season")
         return self
 
 

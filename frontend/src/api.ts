@@ -6,12 +6,18 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function empty(url: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(url, init);
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+}
+
 export const api = {
   capabilities: () => json<Capabilities>('/api/capabilities'),
   analysisOptions: () => json<AnalysisOptions>('/api/sports/nfl/options'),
   datasets: () => json<DatasetManifest[]>('/api/datasets'),
   investigations: () => json<Investigation[]>('/api/investigations'),
   investigation: (id: string) => json<Investigation>(`/api/investigations/${id}`),
+  deleteInvestigation: (id: string) => empty(`/api/investigations/${id}`, { method: 'DELETE' }),
   evidence: (id: string, evidence: string) => json(`/api/investigations/${id}/evidence/${evidence}`),
   sync: (seasons: number[], datasets: string[]) => json<{ job_id: string }>('/api/datasets/nfl/sync', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })

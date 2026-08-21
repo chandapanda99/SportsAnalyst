@@ -389,6 +389,7 @@ class NFLPlugin:
             ),
             ToolDefinition(name="validate_analysis_scope", description="Validate entities, windows, fields, and sample requirements."),
             ToolDefinition(name="compare_time_windows", description="Compare versioned metrics across arbitrary season/week windows."),
+            ToolDefinition(name="analyze_season_trends", description="Measure every season in an inclusive full-season range."),
             ToolDefinition(name="analyze_weekly_trends", description="Measure week-level trends and uncertainty within each window."),
             ToolDefinition(name="rank_game_outliers", description="Rank games that most exceeded or trailed the baseline expectation."),
             ToolDefinition(name="benchmark_against_league", description="Calculate league ranks and percentiles for requested metrics."),
@@ -450,7 +451,11 @@ class NFLPlugin:
             default_metrics=DEFAULT_METRICS,
             split_dimensions=splits,
             comparison_windows=[
-                ComparisonWindowOption(value="full_seasons", label="Full seasons", description="Compare two complete seasons."),
+                ComparisonWindowOption(
+                    value="full_seasons",
+                    label="Full season range",
+                    description="Analyze every complete season from the selected start through end season.",
+                ),
                 ComparisonWindowOption(value="week_ranges", label="Custom week ranges", description="Compare two inclusive week ranges."),
                 ComparisonWindowOption(
                     value="before_after",
@@ -551,9 +556,13 @@ class NFLPlugin:
                 purpose="Measure the direction and size of the change.",
             ),
             PlannedToolCall(
-                tool="analyze_weekly_trends",
+                tool="analyze_season_trends" if request.scope.comparison_design == "full_seasons" else "analyze_weekly_trends",
                 arguments={"metric": request.metrics[0] if request.metrics else DEFAULT_METRICS[0]},
-                purpose="Determine whether the change was sustained or concentrated in a few weeks.",
+                purpose=(
+                    "Measure the trajectory across every season in the inclusive range."
+                    if request.scope.comparison_design == "full_seasons"
+                    else "Determine whether the change was sustained or concentrated in a few weeks."
+                ),
             ),
             PlannedToolCall(
                 tool="rank_game_outliers",
@@ -623,18 +632,28 @@ class NFLPlugin:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
         team = self.resolve_team(request.scope.team)
-        seasons = [request.scope.baseline_season, request.scope.comparison_season]
+        seasons = request.scope.included_seasons
+        endpoint_seasons = [request.scope.baseline_season, request.scope.comparison_season]
         missing = [season for season in seasons if season not in datasets]
         if missing:
             raise ValueError(f"missing synced seasons: {missing}")
         windows = [request.scope.baseline, request.scope.comparison]
-        for window, frame in zip(windows, (datasets[seasons[0]], datasets[seasons[1]]), strict=True):
+        for window, frame in zip(windows, (datasets[endpoint_seasons[0]], datasets[endpoint_seasons[1]]), strict=True):
             if window.weeks != (1, 22) and "week" not in frame.columns:
                 raise ValueError(f"season {window.season} does not contain the week field required for a custom window")
-        baseline = _dropbacks(datasets[seasons[0]], team, request.scope.season_type, windows[0].weeks)
-        comparison = _dropbacks(datasets[seasons[1]], team, request.scope.season_type, windows[1].weeks)
+        baseline = _dropbacks(datasets[endpoint_seasons[0]], team, request.scope.season_type, windows[0].weeks)
+        comparison = _dropbacks(datasets[endpoint_seasons[1]], team, request.scope.season_type, windows[1].weeks)
         if baseline.height < 30 or comparison.height < 30:
             raise ValueError("each comparison window requires at least 30 qualifying dropbacks")
+        season_frames = (
+            {season: _dropbacks(datasets[season], team, request.scope.season_type, (1, 22)) for season in seasons}
+            if request.scope.comparison_design == "full_seasons"
+            else None
+        )
+        if season_frames:
+            undersized = [season for season, frame in season_frames.items() if frame.height < 30]
+            if undersized:
+                raise ValueError(f"each season in a full-season range requires at least 30 qualifying dropbacks: {undersized}")
 
         unknown_metrics = sorted(set(request.metrics) - set(METRICS))
         if unknown_metrics:
@@ -683,7 +702,7 @@ class NFLPlugin:
             comp_value = _metric_value(comparison, source)
             if base_value is None or comp_value is None:
                 continue
-            low, high = _game_bootstrap(comparison, source, seed=seasons[1] * 100 + index)
+            low, high = _game_bootstrap(comparison, source, seed=endpoint_seasons[1] * 100 + index)
             payload = {
                 "metric": metric,
                 "team": team,
@@ -790,7 +809,8 @@ class NFLPlugin:
             )
 
         adjusted_values = [
-            _opponent_adjusted_epa(datasets[season], frame, team) for season, frame in zip(seasons, (baseline, comparison), strict=True)
+            _opponent_adjusted_epa(datasets[season], frame, team)
+            for season, frame in zip(endpoint_seasons, (baseline, comparison), strict=True)
         ]
         opponent_evidence: list[AggregateEvidence] = []
         opponent_parameters = {"metric": "epa_per_dropback", "windows": [window.model_dump() for window in windows]}
@@ -832,7 +852,12 @@ class NFLPlugin:
             )
         )
 
-        trend_evidence, trend_execution = self._weekly_trends([baseline, comparison], windows, primary_metric, selected_manifests)
+        if season_frames:
+            trend_evidence, trend_execution = self._season_trends(
+                season_frames, selected_metrics, selected_manifests, team, request.scope.season_type
+            )
+        else:
+            trend_evidence, trend_execution = self._weekly_trends([baseline, comparison], windows, primary_metric, selected_manifests)
         aggregate.extend(trend_evidence)
         executions.append(trend_execution)
 
@@ -913,7 +938,7 @@ class NFLPlugin:
         play_parameters = {"team": team, "window": windows[1].model_dump(), "supporting": 3, "counterexamples": 2}
         play_id = stable_id("execution", {"tool": "find_representative_plays", **play_parameters})
         play_started_at, play_started = datetime.now(UTC), perf_counter()
-        plays = self._representative_plays(comparison, team, manifests[seasons[1]], play_id)
+        plays = self._representative_plays(comparison, team, manifests[endpoint_seasons[1]], play_id)
         executions.append(
             _execution_record(
                 "find_representative_plays",
@@ -925,7 +950,7 @@ class NFLPlugin:
                 play_started,
             )
         )
-        charts = self._charts(aggregate, baseline, comparison, windows)
+        charts = self._charts(aggregate, baseline, comparison, windows, season_frames, primary_metric)
         caveats = [
             "The analysis is observational; football interpretations are not causal estimates.",
             "EPA and CPOE are nflverse model outputs and inherit their model assumptions.",
@@ -937,7 +962,49 @@ class NFLPlugin:
                 + ", ".join(missing_supplemental)
                 + "."
             )
+        if season_frames:
+            caveats.append(
+                "Season-range trends include every selected season; situational decompositions, representative plays, and contextual "
+                "diagnostics compare the range's first and final seasons."
+            )
         return NFLAnalysisResult(aggregate, plays, charts, executions, caveats)
+
+    def _season_trends(
+            self,
+            frames: dict[int, pl.DataFrame],
+            metrics: list[str],
+            manifests: list[DatasetManifest],
+            team: str,
+            season_type: str,
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord]:
+        parameters = {"team": team, "season_type": season_type, "seasons": sorted(frames), "metrics": metrics}
+        execution_id = stable_id("execution", {"tool": "analyze_season_trends", **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        evidence: list[AggregateEvidence] = []
+        for season, frame in sorted(frames.items()):
+            for index, metric in enumerate(metrics):
+                source, label = METRICS[metric]
+                value = _metric_value(frame, source)
+                if value is None:
+                    continue
+                low, high = _game_bootstrap(frame, source, seed=season * 100 + index)
+                payload = {"tool": "analyze_season_trends", "team": team, "season": season, "metric": metric}
+                evidence.append(
+                    AggregateEvidence(
+                        evidence_id=stable_id("evidence", payload),
+                        metric=f"seasonal_{metric}",
+                        label=f"{season} · {label}",
+                        value=round(value, 4),
+                        unit="rate" if "rate" in metric or metric in {"success_rate", "cpoe"} else "per play",
+                        sample_size=frame.height,
+                        confidence_low=round(low, 4) if low is not None else None,
+                        confidence_high=round(high, 4) if high is not None else None,
+                        row_set_sha256=_sha(payload),
+                        dataset_manifest_ids=[item.manifest_id for item in manifests if item.season == season],
+                        tool_execution_id=execution_id,
+                    )
+                )
+        return evidence, _execution_record("analyze_season_trends", execution_id, parameters, evidence, manifests, started_at, started)
 
     def _weekly_trends(
             self,
@@ -1610,21 +1677,46 @@ class NFLPlugin:
         return records
 
     def _charts(
-            self, evidence: list[AggregateEvidence], baseline: pl.DataFrame, comparison: pl.DataFrame, windows: list[AnalysisWindow]
+            self,
+            evidence: list[AggregateEvidence],
+            baseline: pl.DataFrame,
+            comparison: pl.DataFrame,
+            windows: list[AnalysisWindow],
+            season_frames: dict[int, pl.DataFrame] | None = None,
+            primary_metric: str = "epa_per_dropback",
     ) -> list[ChartArtifact]:
         window_labels = [f"{window.season} W{window.weeks[0]}–{window.weeks[1]}" for window in windows]
         metric_items = [item for item in evidence if item.metric in METRICS]
-        values = [
-            record
-            for item in metric_items
-            for record in (
-                {"metric": item.label, "window": window_labels[0], "value": item.baseline_value},
-                {"metric": item.label, "window": window_labels[1], "value": item.comparison_value},
-            )
-        ]
+        if season_frames:
+            values = [
+                {"metric": item.label, "season": season, "value": _metric_value(frame, METRICS[item.metric][0])}
+                for item in metric_items
+                for season, frame in sorted(season_frames.items())
+            ]
+            series_field = "season"
+            chart_title = "All seasons · Passing efficiency comparison"
+            chart_evidence_ids = [item.evidence_id for item in evidence if item.metric.startswith("seasonal_")]
+        else:
+            values = [
+                record
+                for item in metric_items
+                for record in (
+                    {"metric": item.label, "window": window_labels[0], "value": item.baseline_value},
+                    {"metric": item.label, "window": window_labels[1], "value": item.comparison_value},
+                )
+            ]
+            series_field = "window"
+            chart_title = "Passing efficiency comparison"
+            chart_evidence_ids = [item.evidence_id for item in metric_items]
         comparison_chart = ChartArtifact(
-            chart_id=stable_id("chart", {"type": "metric-comparison", "windows": [window.model_dump() for window in windows]}),
-            title="Passing efficiency comparison",
+            chart_id=stable_id(
+                "chart",
+                {
+                    "type": "season-metric-comparison" if season_frames else "metric-comparison",
+                    "windows": [window.model_dump() for window in windows],
+                },
+            ),
+            title=chart_title,
             specification={
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
                 "data": {"values": values},
@@ -1632,13 +1724,49 @@ class NFLPlugin:
                 "encoding": {
                     "x": {"field": "metric", "type": "nominal", "sort": None, "axis": {"labelAngle": -25}},
                     "y": {"field": "value", "type": "quantitative"},
-                    "color": {"field": "window", "type": "nominal"},
-                    "xOffset": {"field": "window"},
-                    "tooltip": [{"field": "metric"}, {"field": "window"}, {"field": "value", "format": ".3f"}],
+                    "color": {"field": series_field, "type": "nominal", "sort": "ascending"},
+                    "xOffset": {"field": series_field, "sort": "ascending"},
+                    "tooltip": [{"field": "metric"}, {"field": series_field}, {"field": "value", "format": ".3f"}],
                 },
             },
-            evidence_ids=[item.evidence_id for item in metric_items],
+            evidence_ids=chart_evidence_ids,
         )
+        if season_frames:
+            source, label = METRICS[primary_metric]
+            seasonal_values = [
+                {"series": label, "season": season, "value": _metric_value(frame, source)}
+                for season, frame in sorted(season_frames.items())
+            ]
+            seasonal_evidence = [item for item in evidence if item.metric == f"seasonal_{primary_metric}"]
+            season_trend = ChartArtifact(
+                chart_id=stable_id(
+                    "chart",
+                    {"type": "season-range-trend", "seasons": sorted(season_frames), "metric": primary_metric},
+                ),
+                title=f"Season-by-season {label}",
+                specification={
+                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                    "data": {"values": seasonal_values},
+                    "mark": {"type": "line", "point": True},
+                    "encoding": {
+                        "x": {
+                            "field": "season",
+                            "type": "ordinal",
+                            "sort": "ascending",
+                            "axis": {"labelAngle": 0, "title": "Season"},
+                        },
+                        "y": {"field": "value", "type": "quantitative", "axis": {"title": label}},
+                        "color": {"field": "series", "type": "nominal", "legend": None},
+                        "tooltip": [
+                            {"field": "season", "type": "ordinal"},
+                            {"field": "value", "title": label, "format": ".3f"},
+                        ],
+                    },
+                },
+                evidence_ids=[item.evidence_id for item in seasonal_evidence],
+            )
+            return [comparison_chart, season_trend]
+
         weekly_values = []
         for label, frame in zip(window_labels, (baseline, comparison), strict=True):
             if "week" in frame.columns:

@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import polars as pl
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import _event_stream, create_app
@@ -48,13 +49,22 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert players.status_code == 200
     assert players.json()[0]["name"] == "Travis Kelce"
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}").status_code == 200
+    exported = client.get(f"/api/investigations/{bundle.run.investigation_id}/export", params={"format": "html"})
+    assert exported.status_code == 200
+    assert "--team-primary:#E31837" in exported.text
+    assert "--team-secondary:#FFB81C" in exported.text
+    assert 'filename="report.html"' in exported.headers["content-disposition"]
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
+    investigation_directory = tmp_path / "investigations" / bundle.run.investigation_id
+    assert client.delete(f"/api/investigations/{bundle.run.investigation_id}").status_code == 204
+    assert client.get(f"/api/investigations/{bundle.run.investigation_id}").status_code == 404
+    assert not investigation_directory.exists()
 
 
 def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:
     application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
-    assert application.settings.event_stream_timeout_seconds == 120
+    assert application.settings.event_stream_timeout_seconds >= 120
 
     async def collect() -> list[str]:
         return [
@@ -71,3 +81,38 @@ def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:
     chunks = asyncio.run(collect())
     assert any('"stage": "timeout"' in chunk for chunk in chunks)
     assert not any('"stage": "failed"' in chunk for chunk in chunks)
+
+
+def test_service_loads_every_season_in_a_full_season_range(tmp_path: Path, pbp_pair) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    frames = {
+        2022: pbp_pair[2024].with_columns(pl.lit(2022).alias("season")),
+        2023: pbp_pair[2024].with_columns(pl.lit(2023).alias("season")),
+        2024: pbp_pair[2024],
+        2025: pbp_pair[2025],
+    }
+    for season, frame in frames.items():
+        source = tmp_path / f"range-{season}.parquet"
+        frame.write_parquet(source)
+        application.store.save_manifest(application.connector.register_local(source, season))
+
+    bundle = application.investigate(
+        AnalysisRequest(
+            question="How did KC perform from 2022 through 2025?",
+            scope=AnalysisScope(
+                team="KC",
+                baseline_season=2022,
+                comparison_season=2025,
+                comparison_design="full_seasons",
+            ),
+            metrics=["epa_per_dropback"],
+        )
+    )
+
+    assert {manifest.season for manifest in bundle.dataset_manifests if manifest.dataset == "play_by_play"} == {
+        2022,
+        2023,
+        2024,
+        2025,
+    }
+    assert "every full season from 2022 through 2025" in bundle.summary

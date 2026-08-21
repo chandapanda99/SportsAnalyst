@@ -14,8 +14,8 @@
       <stop offset="1" stop-color="#08a94e"/>
     </linearGradient>
     <linearGradient id="teal" x1="126" y1="364" x2="405" y2="153" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#11b6bd"/>
-      <stop offset="1" stop-color="#00aeb8"/>
+      <stop offset="0" stop-color="teal"/>
+      <stop offset="1" stop-color="#00c4ff"/>
     </linearGradient>
     <linearGradient id="football" x1="170" y1="148" x2="356" y2="278" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#d74a1c"/>
@@ -51,8 +51,8 @@
     <clipPath id="footballClip">
       <path d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"/>
     </clipPath>
-    <marker id="arrow" viewBox="0 0 12 12" refX="10.7" refY="6" markerWidth="4.8" markerHeight="4.8" orient="auto">
-      <path d="M0 0 12 6 0 12 3.2 6Z" fill="#00aeb8"/>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10.7" refY="6" markerWidth="5" markerHeight="10.8" orient="auto">
+      <path d="M0 0 12 6 0 12 3.6 6Z" fill="#00c4ff"/>
     </marker>
   </defs>
 

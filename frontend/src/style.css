@@ -10,6 +10,11 @@ button, input, textarea, select {
     font: inherit
 }
 
+.ui-icon {
+    display: block;
+    flex: 0 0 auto
+}
+
 .app-shell {
     display: grid;
     grid-template-columns:272px 1fr;
@@ -90,7 +95,8 @@ button, input, textarea, select {
 }
 
 .rail button > .new-icon {
-    font: 500 22px/1 var(--font-sans);
+    display: grid;
+    place-items: center;
     text-align: center
 }
 
@@ -108,6 +114,63 @@ button, input, textarea, select {
     font-size: 13px
 }
 
+.recent-report {
+    position: relative;
+    min-width: 0
+}
+
+.rail .recent-report-link {
+    width: 100%;
+    padding-right: 43px
+}
+
+.rail .delete-report {
+    position: absolute;
+    top: 50%;
+    right: 7px;
+    display: grid;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--color-status-danger) 55%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-status-danger) 16%, var(--color-surface-raised));
+    color: var(--color-status-danger);
+    opacity: 0;
+    transform: translateY(-50%) scale(.92);
+    transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease
+}
+
+.rail .delete-report svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8
+}
+
+.recent-report:hover .delete-report,
+.recent-report:focus-within .delete-report {
+    opacity: 1;
+    transform: translateY(-50%) scale(1)
+}
+
+.rail .delete-report:hover,
+.rail .delete-report:focus-visible {
+    background: var(--color-status-danger);
+    color: var(--color-canvas)
+}
+
+@media (hover: none) {
+    .rail .delete-report {
+        opacity: 1;
+        transform: translateY(-50%) scale(1)
+    }
+}
+
 .nav-label, .eyebrow {
     font: 500 12px var(--font-mono);
     letter-spacing: .14em;
@@ -116,6 +179,9 @@ button, input, textarea, select {
 }
 
 .nav-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 24px 10px 8px;
     color: var(--color-text-tertiary)
 }
@@ -129,25 +195,30 @@ button, input, textarea, select {
     align-items: center
 }
 
-.runtime i, .status-chip i {
-    width: 8px;
-    height: 8px;
+.runtime-icon {
+    display: grid;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    place-items: center;
+    border: 1px solid var(--color-border-strong);
     border-radius: 50%;
-    background: var(--color-status-warning);
-    box-shadow: 0 0 12px var(--color-status-warning)
+    color: var(--color-status-warning);
+    background: var(--color-surface-chip)
 }
 
-.runtime i.ready, .status-chip i {
-    background: var(--mint);
-    box-shadow: 0 0 12px var(--mint)
+.runtime-icon.ready {
+    color: var(--mint);
+    border-color: color-mix(in srgb, var(--mint) 38%, var(--color-border-strong))
 }
 
-.runtime strong, .runtime span {
+.runtime strong, .runtime > div span {
     display: block;
     font-size: 13px
 }
 
-.runtime span {
+.runtime > div span {
     color: var(--muted);
     margin-top: 2px
 }
@@ -168,7 +239,8 @@ main {
 
 .topbar h1 {
     font-size: clamp(28px, 4vw, 50px);
-    letter-spacing: -.045em;
+    line-height: 1.08;
+    letter-spacing: -.025em;
     margin: 8px 0 0;
     max-width: 800px
 }
@@ -182,6 +254,10 @@ main {
     border-radius: 99px;
     color: var(--muted);
     font: 12px var(--font-mono)
+}
+
+.status-chip .ui-icon {
+    color: var(--mint)
 }
 
 .error {
@@ -214,7 +290,7 @@ main {
 .ask-copy h2 {
     font-size: clamp(34px, 4vw, 52px);
     line-height: 1.06;
-    letter-spacing: -.055em;
+    letter-spacing: -.032em;
     margin: 14px 0 18px
 }
 
@@ -248,6 +324,30 @@ main {
 
 .scope-heading > span, .section-help {
     color: var(--muted);
+    font-size: 13px
+}
+
+.section-help strong {
+    color: var(--color-text-primary);
+    font-weight: 600
+}
+
+.metric-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px 18px
+}
+
+.metric-actions .text-button:disabled {
+    color: var(--color-status-counter);
+    cursor: default;
+    opacity: .65
+}
+
+.range-summary {
+    margin: 14px 0 0;
+    color: var(--color-text-secondary);
     font-size: 13px
 }
 
@@ -314,7 +414,9 @@ main {
     border-radius: 0 6px 6px 0;
     background: transparent;
     color: var(--color-text-secondary);
-    cursor: pointer
+    cursor: pointer;
+    display: grid;
+    place-items: center
 }
 
 .team-options {
@@ -525,6 +627,9 @@ main {
 }
 
 .text-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     padding: 0;
     border: 0;
     background: transparent;
@@ -615,6 +720,9 @@ main {
 }
 
 .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     padding: 14px 0;
     text-align: center;
     color: var(--mint)
@@ -647,10 +755,6 @@ main {
     color: var(--color-text-primary)
 }
 
-.question-heading button span {
-    font: 18px/1 var(--font-sans)
-}
-
 .question-field textarea {
     font: 500 20px var(--font-sans);
     resize: vertical;
@@ -658,6 +762,10 @@ main {
 }
 
 .primary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 11px;
     margin-top: 16px;
     background: var(--mint);
     color: var(--color-canvas);
@@ -666,17 +774,13 @@ main {
     padding: 14px 19px;
     border-radius: 6px;
     font-size: 15px;
-    font-weight: 700;
+    font-weight: var(--font-weight-strong);
     cursor: pointer
 }
 
 .primary:disabled, .onboarding button:disabled {
     opacity: .42;
     cursor: not-allowed
-}
-
-.primary span {
-    margin-left: 24px
 }
 
 .onboarding {
@@ -729,6 +833,7 @@ main {
 }
 
 .data-manager summary i {
+    display: block;
     font-style: normal;
     transition: transform var(--duration-standard) var(--ease-standard)
 }
@@ -790,8 +895,7 @@ main {
     color: var(--color-text-soft);
     min-width: 0;
     min-height: 25px;
-    font-size: 13px;
-    text-transform: capitalize
+    font-size: 13px
 }
 
 .dataset-options input {
@@ -805,8 +909,20 @@ main {
 }
 
 .dataset-options label span {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
     margin: 0;
     line-height: 1.15
+}
+
+.dataset-options label small {
+    color: var(--color-text-tertiary);
+    font: 10px var(--font-mono);
+    white-space: nowrap
 }
 
 .onboarding button, .export, .followup button {
@@ -819,6 +935,13 @@ main {
     font-size: 14px;
     text-decoration: none;
     cursor: pointer
+}
+
+.export, .followup button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px
 }
 
 .onboarding select {
@@ -867,17 +990,27 @@ main {
 }
 
 .working {
-    max-width: 760px;
-    margin: 16vh auto;
+    max-width: 1040px;
+    margin: clamp(70px, 12vh, 130px) auto;
     position: relative;
     border: 1px solid var(--line);
-    padding: 60px;
+    padding: clamp(30px, 4vw, 54px);
     background: var(--color-surface-raised);
     overflow: hidden
 }
 
+.working-layout {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns:minmax(0, 1.05fr) minmax(320px, .95fr);
+    gap: clamp(34px, 5vw, 68px);
+    align-items: center
+}
+
 .working h2 {
-    font-size: 36px;
+    font-size: clamp(28px, 3vw, 38px);
+    line-height: 1.2;
     margin: 16px 0
 }
 
@@ -886,16 +1019,30 @@ main {
 }
 
 .progress {
+    position: relative;
     height: 4px;
     background: var(--color-progress-track);
-    margin: 32px 0
+    margin: 32px 0;
+    overflow: hidden
 }
 
 .progress i {
+    position: relative;
     display: block;
     height: 100%;
     background: var(--mint);
     transition: width .4s
+}
+
+.progress::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -22%;
+    width: 22%;
+    content: "";
+    background: linear-gradient(90deg, transparent, rgb(120 220 202 / 15%) 20%, rgb(255 255 255 / 72%) 50%, rgb(120 220 202 / 15%) 80%, transparent);
+    animation: progress-scan 1.5s ease-in-out infinite
 }
 
 .field-lines {
@@ -905,20 +1052,193 @@ main {
     background: repeating-linear-gradient(90deg, transparent 0, transparent 9%, var(--color-text-primary) 9.2%, transparent 9.4%)
 }
 
-.report-hero {
+.play-visual {
+    position: relative;
+    min-height: 245px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: linear-gradient(90deg, transparent 49.7%, rgb(124 228 194 / 9%) 50%, transparent 50.3%),
+    repeating-linear-gradient(90deg, transparent 0, transparent 19.5%, rgb(237 244 247 / 9%) 20%, transparent 20.5%),
+    var(--color-surface-panel);
+    box-shadow: inset 0 0 40px rgb(0 0 0 / 18%);
+    overflow: hidden
+}
+
+.play-caption {
+    position: absolute;
+    z-index: 3;
+    top: 14px;
+    right: 16px;
+    left: 16px;
     display: flex;
     justify-content: space-between;
-    gap: 30px;
-    align-items: flex-start;
-    margin-bottom: 40px
+    color: var(--color-text-tertiary);
+    font: 500 10px var(--font-mono);
+    letter-spacing: .12em
+}
+
+.play-caption b {
+    color: var(--mint);
+    font: inherit;
+    letter-spacing: .04em
+}
+
+.play-route {
+    position: absolute;
+    inset: 37px 16px 42px;
+    width: calc(100% - 32px);
+    height: calc(100% - 79px);
+    overflow: visible
+}
+
+.play-route > path {
+    fill: none;
+    stroke: var(--mint);
+    stroke-dasharray: 8 8;
+    stroke-dashoffset: 64;
+    stroke-linecap: round;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+    animation: route-drive 2.6s linear infinite
+}
+
+.route-point {
+    fill: var(--color-surface-panel);
+    stroke: var(--mint);
+    stroke-width: 2;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: route-pulse 2.6s ease-in-out infinite
+}
+
+.point-two {
+    animation-delay: .55s
+}
+
+.point-three {
+    animation-delay: 1.2s
+}
+
+.point-four {
+    animation-delay: 1.85s
+}
+
+.moving-football {
+    filter: drop-shadow(0 4px 5px rgb(0 0 0 / 45%))
+}
+
+.football-body {
+    fill: #a9502a;
+    stroke: #f6cf9a;
+    stroke-width: 1.25;
+    vector-effect: non-scaling-stroke
+}
+
+.football-laces {
+    fill: none;
+    stroke: #f7e5c9;
+    stroke-linecap: round;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke
+}
+
+.analysis-live {
+    position: absolute;
+    right: 16px;
+    bottom: 13px;
+    display: flex;
+    gap: 7px;
+    align-items: center;
+    color: var(--color-text-secondary);
+    font-size: 11px
+}
+
+.analysis-live i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--mint);
+    box-shadow: 0 0 10px var(--mint);
+    animation: live-pulse 1.3s ease-in-out infinite
+}
+
+@keyframes progress-scan {
+    from {
+        left: -22%
+    }
+
+    to {
+        left: 100%
+    }
+}
+
+@keyframes route-drive {
+    to {
+        stroke-dashoffset: 0
+    }
+}
+
+@keyframes route-pulse {
+    0%, 70%, 100% {
+        transform: scale(1);
+        opacity: .75
+    }
+    82% {
+        transform: scale(1.65);
+        opacity: 1
+    }
+}
+
+@keyframes live-pulse {
+    50% {
+        opacity: .35;
+        transform: scale(.72)
+    }
+}
+
+.report-hero {
+    display: grid;
+    grid-template-columns:minmax(0, 1fr) auto;
+    gap: 36px;
+    align-items: start;
+    margin-bottom: 32px;
+    padding: 26px 28px;
+    border: 1px solid var(--line);
+    background: linear-gradient(135deg, var(--color-surface), var(--color-surface-low))
 }
 
 .report-hero h2 {
-    font-size: clamp(25px, 3.5vw, 43px);
-    line-height: 1.18;
-    letter-spacing: -.035em;
-    max-width: 900px;
-    margin: 12px 0
+    margin: 9px 0 0;
+    font-size: 24px;
+    line-height: 1.3;
+    letter-spacing: -.01em
+}
+
+.report-summary > p {
+    max-width: 1240px;
+    margin: 13px 0 0;
+    color: var(--color-text-soft);
+    font-size: 20px;
+    line-height: 1.65
+}
+
+.report-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 18px
+}
+
+.report-meta span {
+    padding: 5px 8px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-xs);
+    background: var(--color-surface-chip);
+    color: var(--color-text-secondary);
+    font-family: var(--font-sans), system-ui;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2
 }
 
 .report-grid {
@@ -949,9 +1269,58 @@ main {
 
 .finding {
     display: grid;
-    grid-template-columns:55px 1fr;
+    grid-template-columns:55px minmax(0, 1fr) 28px;
+    width: 100%;
     padding: 24px 20px;
-    border-bottom: 1px solid var(--line)
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--color-surface);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 150ms ease, box-shadow 150ms ease
+}
+
+.finding-inspect {
+    display: grid;
+    align-self: center;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-tertiary);
+    opacity: .55;
+    transition: color var(--duration-fast), border-color var(--duration-fast), opacity var(--duration-fast)
+}
+
+.finding:hover .finding-inspect,
+.finding:focus-visible .finding-inspect,
+.finding.selected .finding-inspect {
+    border-color: var(--color-border-interactive);
+    color: var(--mint);
+    opacity: 1
+}
+
+.finding:hover {
+    background: var(--color-surface-raised)
+}
+
+.finding.selected {
+    background: var(--color-surface-raised);
+    box-shadow: inset 3px 0 0 var(--mint)
+}
+
+.finding:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: -3px
+}
+
+.finding-content {
+    display: block;
+    min-width: 0
 }
 
 .finding-number {
@@ -984,7 +1353,8 @@ main {
     color: var(--muted)
 }
 
-.finding p {
+.finding-statement {
+    display: block;
     font-size: 18px;
     line-height: 1.55;
     margin: 12px 0
@@ -996,30 +1366,85 @@ main {
     gap: 6px
 }
 
-.citations button {
+.citations > span {
     font: 12px var(--font-mono);
     color: var(--chart-series-3);
     background: var(--color-surface-chip);
     border: 1px solid var(--color-border-strong);
     padding: 5px 7px;
-    border-radius: 3px;
-    cursor: pointer
+    border-radius: 3px
 }
 
 .evidence-panel {
     position: sticky;
     top: 24px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 48px);
     min-height: 400px;
-    padding-bottom: 20px
+    overflow: hidden
 }
 
 .evidence-panel > .section-title {
-    margin-bottom: 20px
+    flex: 0 0 auto;
+    margin-bottom: 0
 }
 
-.evidence-panel > h3, .evidence-panel > p, .evidence-panel > dl, .evidence-id, .delta {
-    margin-left: 20px;
-    margin-right: 20px
+.evidence-collection-heading {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--line)
+}
+
+.evidence-collection-heading strong {
+    font-size: 14px
+}
+
+.evidence-collection-heading span {
+    color: var(--mint);
+    font: 11px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: .08em
+}
+
+.evidence-list {
+    min-height: 0;
+    padding: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--color-border-strong) transparent
+}
+
+.evidence-record {
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-evidence)
+}
+
+.evidence-record + .evidence-record {
+    margin-top: 10px
+}
+
+.evidence-record-heading {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 8px
+}
+
+.evidence-record-heading > span {
+    color: var(--color-text-tertiary);
+    font: 12px var(--font-mono)
+}
+
+.evidence-record h3 {
+    margin: 5px 0 0;
+    font-size: 16px;
+    line-height: 1.35
 }
 
 .evidence-id {
@@ -1035,7 +1460,13 @@ main {
     align-items: center;
     background: var(--color-surface-evidence);
     padding: 14px;
-    margin-top: 20px
+    margin-top: 14px
+}
+
+.delta > b {
+    display: grid;
+    place-items: center;
+    color: var(--mint)
 }
 
 .delta span, .delta strong {
@@ -1053,19 +1484,27 @@ main {
     margin-top: 4px
 }
 
-.evidence-panel dl {
+.evidence-record > p {
+    margin: 14px 0 0;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    line-height: 1.55
+}
+
+.evidence-record dl {
     display: grid;
     grid-template-columns:1fr 1fr;
+    margin: 14px 0 0;
     font-size: 14px;
     border-top: 1px solid var(--line);
     padding-top: 15px
 }
 
-.evidence-panel dt {
+.evidence-record dt {
     color: var(--muted)
 }
 
-.evidence-panel dd {
+.evidence-record dd {
     text-align: right;
     margin: 0
 }
@@ -1083,8 +1522,33 @@ main {
     color: var(--muted)
 }
 
+.evidence-loading, .evidence-error {
+    margin: auto;
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--muted)
+}
+
+.evidence-loading span {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--color-border-strong);
+    border-top-color: var(--mint);
+    border-radius: 50%;
+    animation: evidence-spin .8s linear infinite
+}
+
+.evidence-error {
+    color: var(--color-text-caution)
+}
+
+@keyframes evidence-spin {
+    to { transform: rotate(360deg) }
+}
+
 .empty-evidence b {
-    font-size: 28px;
+    display: inline-flex;
     color: var(--mint)
 }
 
@@ -1100,17 +1564,64 @@ main {
 }
 
 .chart-grid article {
+    display: grid;
+    grid-template-rows:auto auto 1fr;
     background: var(--color-surface-raised);
     padding: 20px;
     overflow: hidden
 }
 
 .chart-grid h3 {
-    font-size: 16px
+    margin: 0 0 6px;
+    font-size: 17px;
+    line-height: 1.35
+}
+
+.chart-note {
+    min-height: 1.4em;
+    margin: 0 0 6px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.4
+}
+
+.chart-grid article:not(:has(.chart-note)) .chart {
+    grid-row: 2 / 4
 }
 
 .chart {
-    min-height: 280px
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    min-height: 340px;
+    max-height: 440px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden
+}
+
+.chart .vega-embed {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    max-width: 100%
+}
+
+.chart .vega-embed > div {
+    width: 100%;
+    height: 100%;
+    min-width: 0
+}
+
+.chart svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%
 }
 
 .play-list {
@@ -1120,7 +1631,7 @@ main {
 .play-list button {
     position: relative;
     display: grid;
-    grid-template-columns:80px 150px 1fr 75px;
+    grid-template-columns:84px 150px 1fr 88px;
     gap: 15px;
     align-items: center;
     background: transparent;
@@ -1136,18 +1647,33 @@ main {
     background: var(--color-surface-hover)
 }
 
-.play-list span {
-    font: 12px var(--font-mono);
+.play-list .play-tag {
+    justify-self: start;
+    padding: 4px 7px;
+    border: 1px solid color-mix(in srgb, var(--color-status-counter) 35%, transparent);
+    border-radius: var(--radius-xs);
+    background: color-mix(in srgb, var(--color-status-counter) 10%, transparent);
+    color: var(--color-status-counter);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: var(--font-weight-strong);
+    line-height: 1;
+    letter-spacing: .015em;
     text-transform: uppercase;
-    color: var(--color-status-counter)
+    white-space: nowrap
 }
 
-.play-list span.supporting {
-    color: var(--mint)
+.play-list .play-tag.supporting {
+    color: var(--mint);
+    border-color: color-mix(in srgb, var(--mint) 35%, transparent);
+    background: color-mix(in srgb, var(--mint) 9%, transparent)
 }
 
 .play-list strong {
-    font-size: 14px
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: var(--font-weight-strong);
+    line-height: 1.35
 }
 
 .play-list p {
@@ -1158,9 +1684,16 @@ main {
     text-overflow: ellipsis
 }
 
-.play-list b {
-    font: 13px var(--font-mono);
-    text-align: right
+.play-list .play-epa {
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-strong);
+    letter-spacing: .01em;
+    line-height: 1.2;
+    text-align: right;
+    white-space: nowrap
 }
 
 .followup {
@@ -1189,7 +1722,7 @@ main {
     white-space: nowrap;
     background: var(--mint);
     color: var(--color-canvas);
-    font-weight: 700
+    font-weight: var(--font-weight-strong)
 }
 
 .export {
@@ -1268,7 +1801,27 @@ main {
     }
 
     .report-hero {
-        display: block
+        grid-template-columns:1fr;
+        gap: 20px;
+        padding: 22px
+    }
+
+    .report-hero .export {
+        width: max-content
+    }
+
+    .working {
+        max-width: 700px;
+        margin: 56px auto
+    }
+
+    .working-layout {
+        grid-template-columns:1fr;
+        gap: 28px
+    }
+
+    .play-visual {
+        min-height: 220px
     }
 
     .play-list button {
@@ -1304,5 +1857,18 @@ main {
 
     .data-manager summary {
         display: grid
+    }
+
+    .working {
+        margin: 30px auto;
+        padding: 24px 20px
+    }
+
+    .working h2 {
+        font-size: 27px
+    }
+
+    .play-visual {
+        min-height: 195px
     }
 }
