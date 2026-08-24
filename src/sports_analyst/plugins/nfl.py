@@ -68,6 +68,9 @@ NFL_TEAMS = {
     "WAS": "Washington Commanders",
 }
 
+AFC_TEAMS = {"BAL", "BUF", "CIN", "CLE", "DEN", "HOU", "IND", "JAX", "KC", "LAC", "LV", "MIA", "NE", "NYJ", "PIT", "TEN"}
+TEAM_CONFERENCES = {team: ("AFC" if team in AFC_TEAMS else "NFC") for team in NFL_TEAMS}
+
 TEAM_ALIASES = {
     "ARIZONA": "ARI",
     "ATLANTA": "ATL",
@@ -142,6 +145,22 @@ METRIC_FORMULAS = {
     "air_yards": "mean(air_yards) on recorded pass attempts",
     "yards_after_catch": "mean(yards_after_catch) on recorded completions",
 }
+METRIC_INTERPRETATIONS = {
+    "epa_per_dropback": (
+        "Positive values indicate that the offense added expected points on an average dropback; higher is generally better."
+    ),
+    "success_rate": "Higher values indicate that a larger share of dropbacks improved the offense's expected-points position.",
+    "cpoe": "Positive values indicate completions above the model's expectation after accounting for throw difficulty.",
+    "explosive_pass_rate": "Higher values indicate a larger share of dropbacks gained at least 20 yards, but do not measure consistency.",
+    "yards_per_play": "Higher values indicate more yardage per qualifying dropback, without adjusting for game situation or opponent.",
+    "sack_rate": "Lower values are generally better because fewer dropbacks ended in a sack.",
+    "interception_rate": "Lower values are generally better because fewer dropbacks ended in an interception.",
+    "air_yards": "Higher values indicate a deeper average target, but are not inherently better without efficiency and completion context.",
+    "yards_after_catch": "Higher values indicate more yards after completed catches, combining receiver, scheme, and defensive effects.",
+}
+HIGHER_IS_BETTER: dict[str, bool | None] = {
+    metric: (False if metric in {"sack_rate", "interception_rate"} else None if metric == "air_yards" else True) for metric in METRICS
+}
 
 SPLIT_DIMENSIONS = {
     "down": ("Down", "Compare performance by down.", {"down"}),
@@ -154,6 +173,96 @@ SPLIT_DIMENSIONS = {
     "formation": ("Formation", "Compare recorded offensive formations.", {"offense_formation"}),
 }
 SPLIT_COLUMNS = {value: f"_split_{value}" for value in SPLIT_DIMENSIONS}
+
+WINDOW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "season": {"type": "integer", "minimum": 1999},
+        "weeks": {
+            "type": "array",
+            "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "maximum": 22}],
+            "minItems": 2,
+            "maxItems": 2,
+        },
+    },
+    "required": ["season", "weeks"],
+    "additionalProperties": False,
+}
+TOOL_INPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    "get_analysis_options": {"type": "object", "properties": {}, "additionalProperties": False},
+    "compare_time_windows": {
+        "type": "object",
+        "properties": {
+            "team": {"type": "string"},
+            "baseline": WINDOW_SCHEMA,
+            "comparison": WINDOW_SCHEMA,
+            "metrics": {"type": "array", "items": {"type": "string", "enum": list(METRICS)}},
+            "season_type": {"type": "string", "enum": ["REG", "POST", "ALL"]},
+        },
+        "required": ["team", "baseline", "comparison", "metrics"],
+        "additionalProperties": False,
+    },
+    "analyze_weekly_trends": {
+        "type": "object",
+        "properties": {
+            "team": {"type": "string"},
+            "windows": {"type": "array", "items": WINDOW_SCHEMA, "minItems": 1, "maxItems": 2},
+            "metric": {"type": "string", "enum": list(METRICS)},
+            "moving_average_weeks": {"type": "integer", "minimum": 2, "maximum": 6, "default": 3},
+        },
+        "required": ["team", "windows", "metric"],
+        "additionalProperties": False,
+    },
+    "rank_game_outliers": {
+        "type": "object",
+        "properties": {
+            "team": {"type": "string"},
+            "window": WINDOW_SCHEMA,
+            "metric": {"type": "string", "enum": list(METRICS)},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 6},
+        },
+        "required": ["team", "window", "metric"],
+        "additionalProperties": False,
+    },
+    "benchmark_against_league": {
+        "type": "object",
+        "properties": {
+            "team": {"type": "string"},
+            "windows": {"type": "array", "items": WINDOW_SCHEMA, "minItems": 1, "maxItems": 2},
+            "metrics": {"type": "array", "items": {"type": "string", "enum": list(METRICS)}},
+        },
+        "required": ["team", "windows", "metrics"],
+        "additionalProperties": False,
+    },
+    "analyze_situational_split": {
+        "type": "object",
+        "properties": {
+            "metric": {"type": "string", "enum": list(METRICS)},
+            "splits": {"type": "array", "items": {"type": "string", "enum": list(SPLIT_DIMENSIONS)}},
+            "minimum_subgroup_sample": {"type": "integer", "minimum": 10, "default": 10},
+        },
+        "required": ["metric", "splits"],
+        "additionalProperties": False,
+    },
+    "find_representative_plays": {
+        "type": "object",
+        "properties": {
+            "team": {"type": "string"},
+            "window": WINDOW_SCHEMA,
+            "supporting": {"type": "integer", "minimum": 0, "maximum": 10, "default": 3},
+            "counterexamples": {"type": "integer", "minimum": 0, "maximum": 10, "default": 2},
+            "minimum_absolute_epa": {"type": "number", "minimum": 0, "default": 0},
+        },
+        "required": ["team", "window"],
+        "additionalProperties": False,
+    },
+    "explain_metric": {
+        "type": "object",
+        "properties": {"metric": {"type": "string", "enum": list(METRICS)}},
+        "required": ["metric"],
+        "additionalProperties": False,
+    },
+}
 
 
 @dataclass
@@ -248,6 +357,7 @@ def _metric_value(frame: pl.DataFrame, source: str) -> float | None:
     column = f"_{source}"
     if column not in frame.columns or frame[column].drop_nulls().len() == 0:
         return None
+    # noinspection bad-argument-type
     return float(frame[column].drop_nulls().mean())
 
 
@@ -383,7 +493,7 @@ class NFLPlugin:
     display_name = "NFL"
 
     def tools(self) -> list[ToolDefinition]:
-        return [
+        tools = [
             ToolDefinition(
                 name="get_analysis_options", description="Return valid teams, datasets, metrics, splits, and comparison windows."
             ),
@@ -416,6 +526,7 @@ class NFLPlugin:
             ToolDefinition(name="rank_representative_plays", description="Compatibility alias for find_representative_plays."),
             ToolDefinition(name="query_play_by_play", description="Run constrained read-only SQL against registered play-by-play views."),
         ]
+        return [tool.model_copy(update={"input_schema": TOOL_INPUT_SCHEMAS.get(tool.name, tool.input_schema)}) for tool in tools]
 
     def analysis_options(self, manifests: list[DatasetManifest]) -> AnalysisOptions:
         available_seasons = sorted({manifest.season for manifest in manifests})
@@ -486,6 +597,8 @@ class NFLPlugin:
             description=description,
             formula=METRIC_FORMULAS[normalized],
             qualifying_plays="Team quarterback dropbacks within the selected season type and inclusive week window.",
+            interpretation=METRIC_INTERPRETATIONS[normalized],
+            higher_is_better=HIGHER_IS_BETTER[normalized],
             limitations=[
                 "Missing source values are excluded from the metric mean or rate denominator.",
                 "The metric is descriptive and does not by itself establish causality.",
@@ -935,10 +1048,24 @@ class NFLPlugin:
         else:
             missing_supplemental.append("schedules")
 
-        play_parameters = {"team": team, "window": windows[1].model_dump(), "supporting": 3, "counterexamples": 2}
+        play_parameters = {
+            "team": team,
+            "window": windows[1].model_dump(),
+            "supporting": 3,
+            "counterexamples": 2,
+            "minimum_absolute_epa": 0.0,
+        }
         play_id = stable_id("execution", {"tool": "find_representative_plays", **play_parameters})
         play_started_at, play_started = datetime.now(UTC), perf_counter()
-        plays = self._representative_plays(comparison, team, manifests[endpoint_seasons[1]], play_id)
+        plays = self._representative_plays(
+            comparison,
+            team,
+            manifests[endpoint_seasons[1]],
+            play_id,
+            supporting_count=int(play_parameters["supporting"]),
+            counterexample_count=int(play_parameters["counterexamples"]),
+            minimum_absolute_epa=float(play_parameters["minimum_absolute_epa"]),
+        )
         executions.append(
             _execution_record(
                 "find_representative_plays",
@@ -1013,16 +1140,26 @@ class NFLPlugin:
             metric: str,
             manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord]:
-        parameters = {"metric": metric, "windows": [window.model_dump() for window in windows]}
+        moving_average_weeks = 3
+        parameters = {
+            "metric": metric,
+            "windows": [window.model_dump() for window in windows],
+            "moving_average_weeks": moving_average_weeks,
+            "classification": "direction agreement across aligned weeks",
+        }
         execution_id = stable_id("execution", {"tool": "analyze_weekly_trends", **parameters})
         started_at, started = datetime.now(UTC), perf_counter()
         column = f"_{METRICS[metric][0]}"
         evidence: list[AggregateEvidence] = []
+        window_series: list[list[dict[str, Any]]] = []
         for window, frame in zip(windows, frames, strict=True):
             if "week" not in frame.columns or column not in frame.columns:
+                window_series.append([])
                 continue
             weekly = frame.group_by("week").agg(pl.col(column).mean().alias("value"), pl.col(column).count().alias("n")).sort("week")
-            for row in weekly.iter_rows(named=True):
+            rows = list(weekly.iter_rows(named=True))
+            window_series.append(rows)
+            for row_index, row in enumerate(rows):
                 values = [float(value) for value in frame.filter(pl.col("week") == row["week"])[column].drop_nulls().to_list()]
                 confidence_low, confidence_high = _bootstrap_mean(
                     values,
@@ -1045,6 +1182,68 @@ class NFLPlugin:
                         caveats=["Weekly subgroup has fewer than 10 plays."] if row["n"] < 10 else [],
                     )
                 )
+                if row_index + 1 >= moving_average_weeks:
+                    moving_rows = rows[row_index + 1 - moving_average_weeks: row_index + 1]
+                    moving_payload = {
+                        "tool": "analyze_weekly_trends",
+                        "kind": "moving_average",
+                        "metric": metric,
+                        "window": window.model_dump(),
+                        "through_week": row["week"],
+                        "weeks": [item["week"] for item in moving_rows],
+                    }
+                    evidence.append(
+                        AggregateEvidence(
+                            evidence_id=stable_id("evidence", moving_payload),
+                            metric=f"weekly_moving_average_{metric}",
+                            label=f"{window.season} through week {row['week']} · 3-week moving average",
+                            value=round(sum(float(item["value"]) for item in moving_rows) / moving_average_weeks, 4),
+                            unit=METRICS[metric][1],
+                            sample_size=sum(int(item["n"]) for item in moving_rows),
+                            row_set_sha256=_sha(moving_payload),
+                            dataset_manifest_ids=[item.manifest_id for item in manifests if item.season == window.season],
+                            tool_execution_id=execution_id,
+                        )
+                    )
+
+        if len(window_series) == 2 and all(window_series):
+            paired = list(zip(window_series[0], window_series[1], strict=False))
+            baseline_mean = sum(float(left["value"]) for left, _right in paired) / len(paired)
+            comparison_mean = sum(float(right["value"]) for _left, right in paired) / len(paired)
+            overall_change = comparison_mean - baseline_mean
+            agreements = [
+                (float(right["value"]) - float(left["value"])) * overall_change > 0
+                or (float(right["value"]) - float(left["value"]) == overall_change == 0)
+                for left, right in paired
+            ]
+            agreement_rate = sum(agreements) / len(agreements)
+            classification = "sustained" if agreement_rate >= 2 / 3 else "mixed" if agreement_rate >= 0.4 else "outlier-concentrated"
+            trend_payload = {
+                "tool": "analyze_weekly_trends",
+                "kind": "classification",
+                "metric": metric,
+                "windows": [window.model_dump() for window in windows],
+                "agreement_rate": agreement_rate,
+                "classification": classification,
+            }
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", trend_payload),
+                    metric=f"weekly_trend_classification_{metric}",
+                    label=f"Weekly change pattern: {classification}",
+                    value=round(agreement_rate, 4),
+                    baseline_value=round(baseline_mean, 4),
+                    comparison_value=round(comparison_mean, 4),
+                    unit="share of aligned weeks matching the overall direction",
+                    sample_size=sum(int(right["n"]) for _left, right in paired),
+                    row_set_sha256=_sha(trend_payload),
+                    dataset_manifest_ids=[item.manifest_id for item in manifests],
+                    tool_execution_id=execution_id,
+                    caveats=[
+                        "Weeks are aligned by their ordinal position within each window; this is descriptive, not a change-point test."
+                    ],
+                )
+            )
         return evidence, _execution_record("analyze_weekly_trends", execution_id, parameters, evidence, manifests, started_at, started)
 
     def _game_outliers(
@@ -1102,8 +1301,7 @@ class NFLPlugin:
         started_at, started = datetime.now(UTC), perf_counter()
         evidence: list[AggregateEvidence] = []
         for metric in metrics:
-            percentiles: list[float | None] = []
-            samples: list[int] = []
+            summaries: list[dict[str, float | int] | None] = []
             for window in windows:
                 raw = datasets[window.season]
                 teams = raw["posteam"].drop_nulls().unique().to_list() if "posteam" in raw.columns else []
@@ -1117,30 +1315,57 @@ class NFLPlugin:
                         counts[str(candidate)] = scoped.height
                 target = values.get(team)
                 if target is None or not values:
-                    percentiles.append(None)
-                    samples.append(0)
+                    summaries.append(None)
                     continue
-                percentile = 100 * sum(value <= target for value in values.values()) / len(values)
-                if metric in {"sack_rate", "interception_rate"}:
-                    percentile = 100 - percentile + (100 / len(values))
-                percentiles.append(percentile)
-                samples.append(counts[team])
-            if all(value is not None for value in percentiles):
-                baseline_percentile, comparison_percentile = (float(value) for value in percentiles if value is not None)
-                payload = {"tool": "benchmark_against_league", "metric": metric, **parameters}
+                higher_is_better = HIGHER_IS_BETTER[metric] is not False
+                ordered = sorted(values, key=values.get, reverse=higher_is_better)
+                conference = TEAM_CONFERENCES.get(team)
+                conference_values = {
+                    candidate: value for candidate, value in values.items() if TEAM_CONFERENCES.get(candidate) == conference
+                }
+                conference_ordered = sorted(conference_values, key=conference_values.get, reverse=higher_is_better)
+                percentile = 100 * sum(value <= target if higher_is_better else value >= target for value in values.values()) / len(values)
+                summaries.append(
+                    {
+                        "league_percentile": percentile,
+                        "league_rank": ordered.index(team) + 1,
+                        "conference_rank": conference_ordered.index(team) + 1,
+                        "league_average_delta": target - (sum(values.values()) / len(values)),
+                        "sample": counts[team],
+                        "league_teams": len(values),
+                        "conference_teams": len(conference_values),
+                    }
+                )
+            if not all(summary is not None for summary in summaries):
+                continue
+            baseline_summary, comparison_summary = (summary for summary in summaries if summary is not None)
+            benchmark_kinds = [
+                ("league_percentile", "league percentile", "percentile"),
+                ("league_rank", "league rank", "rank (1 is best)"),
+                ("conference_rank", f"{TEAM_CONFERENCES.get(team, 'conference')} rank", "rank (1 is best)"),
+                ("league_average_delta", "distance from league average", METRICS[metric][1]),
+            ]
+            for kind, label, unit in benchmark_kinds:
+                baseline_value = float(baseline_summary[kind])
+                comparison_value = float(comparison_summary[kind])
+                payload = {"tool": "benchmark_against_league", "metric": metric, "kind": kind, **parameters}
+                population = (
+                    int(comparison_summary["conference_teams"]) if kind == "conference_rank" else int(comparison_summary["league_teams"])
+                )
                 evidence.append(
                     AggregateEvidence(
                         evidence_id=stable_id("evidence", payload),
-                        metric=f"league_percentile_{metric}",
-                        label=f"{METRICS[metric][1]} league percentile",
-                        value=round(comparison_percentile - baseline_percentile, 2),
-                        baseline_value=round(baseline_percentile, 2),
-                        comparison_value=round(comparison_percentile, 2),
-                        unit="percentile",
-                        sample_size=samples[1],
+                        metric=f"{kind}_{metric}",
+                        label=f"{METRICS[metric][1]} {label}",
+                        value=round(comparison_value - baseline_value, 4),
+                        baseline_value=round(baseline_value, 4),
+                        comparison_value=round(comparison_value, 4),
+                        unit=unit,
+                        sample_size=int(comparison_summary["sample"]),
                         row_set_sha256=_sha(payload),
                         dataset_manifest_ids=[item.manifest_id for item in manifests],
                         tool_execution_id=execution_id,
+                        caveats=[f"Benchmark includes {population} teams with at least 30 qualifying dropbacks."],
                     )
                 )
         return evidence, _execution_record("benchmark_against_league", execution_id, parameters, evidence, manifests, started_at, started)
@@ -1652,11 +1877,23 @@ class NFLPlugin:
             "join_schedule_context", execution_id, parameters, evidence, selected_manifests, started_at, started
         )
 
-    def _representative_plays(self, frame: pl.DataFrame, team: str, manifest: DatasetManifest, execution_id: str) -> list[PlayEvidence]:
+    def _representative_plays(
+            self,
+            frame: pl.DataFrame,
+            team: str,
+            manifest: DatasetManifest,
+            execution_id: str,
+            supporting_count: int = 3,
+            counterexample_count: int = 2,
+            minimum_absolute_epa: float = 0,
+    ) -> list[PlayEvidence]:
         required = {"game_id", "play_id", "_epa"}
         if not required <= set(frame.columns):
             return []
-        selected = pl.concat([frame.sort("_epa", descending=True).head(3), frame.sort("_epa").head(2)])
+        candidates = frame.filter(pl.col("_epa").is_not_null() & (pl.col("_epa").abs() >= minimum_absolute_epa))
+        supporting = candidates.sort(["_epa", "game_id", "play_id"], descending=[True, False, False]).head(supporting_count)
+        counterexamples = candidates.sort(["_epa", "game_id", "play_id"], descending=[False, False, False]).head(counterexample_count)
+        selected = pl.concat([supporting, counterexamples]).unique(["game_id", "play_id"], keep="first", maintain_order=True)
         records = []
         for index, row in enumerate(selected.iter_rows(named=True)):
             payload = {"season": manifest.season, "game_id": row["game_id"], "play_id": row["play_id"]}
@@ -1669,7 +1906,7 @@ class NFLPlugin:
                     team=team,
                     description=str(row.get("desc") or "Play description unavailable"),
                     epa=round(float(row["_epa"]), 4) if row["_epa"] is not None else None,
-                    supporting=index < 3,
+                    supporting=index < supporting.height,
                     dataset_manifest_id=manifest.manifest_id,
                     tool_execution_id=execution_id,
                 )

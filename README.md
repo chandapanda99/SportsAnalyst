@@ -52,6 +52,11 @@ Supplemental packages are optional. Investigations continue with play-by-play to
 registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and
 `/api/sports/nfl/players`.
 
+The priority NFL tool set covers data-driven analysis options, typed time-window comparisons, weekly confidence intervals and three-week moving averages,
+sustained-versus-outlier trend classification, game outlier ranking, league and conference benchmarks, situational splits, representative plays, and metric guidance.
+League benchmarks report percentile, overall rank, conference rank, and distance from the league average. Tool catalog entries expose JSON input schemas so planners and
+other clients can validate arguments before execution.
+
 The web app's **Full season range** mode is inclusive: selecting 2022 through 2025 loads and measures 2022, 2023, 2024, and 2025. Its season-trend evidence covers the complete range, while situational decomposition and representative-play diagnostics compare the first and final seasons. **Custom week ranges** remains the two-window workflow for targeted season or week comparisons.
 
 ## Example

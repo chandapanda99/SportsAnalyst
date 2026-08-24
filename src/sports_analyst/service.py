@@ -141,6 +141,12 @@ class AnalystApplication:
         )
         self.events.emit(identifier, "synthesizing", "Reviewing evidence and drafting findings", 0.75)
         synthesis_started_at = perf_counter()
+        conversation_context = None
+        if request.parent_investigation_id:
+            conversation_context = [
+                {"question": item.run.question, "summary": item.summary}
+                for item in self.store.investigation_thread(request.parent_investigation_id)
+            ]
         draft, model_id, fallback = self.agent.synthesize(
             request.question,
             request.scope.team,
@@ -149,6 +155,7 @@ class AnalystApplication:
             result.aggregate_evidence,
             result.play_evidence,
             request.scope.included_seasons if request.scope.comparison_design == "full_seasons" else None,
+            conversation_context,
         )
         logger.info(
             "synthesis_completed investigation_id=%s model_id=%s fallback=%s claims=%d duration_ms=%d",
@@ -163,6 +170,8 @@ class AnalystApplication:
             parent_investigation_id=request.parent_investigation_id,
             question=request.question,
             scope=request.scope,
+            metrics=request.metrics,
+            splits=request.splits,
             status=RunStatus.COMPLETED,
             completed_at=datetime.now(UTC),
         )
@@ -192,9 +201,21 @@ class AnalystApplication:
         )
         return bundle
 
-    def follow_up(self, parent_id: str, question: str) -> InvestigationBundle:
-        parent = self.store.get_investigation(parent_id)
-        return self.investigate(AnalysisRequest(question=question, scope=parent.run.scope, parent_investigation_id=parent_id))
+    def follow_up(self, parent_id: str, question: str, investigation_id: str | None = None) -> InvestigationBundle:
+        source = self.store.get_investigation(parent_id)
+        root = source
+        while root.run.parent_investigation_id:
+            root = self.store.get_investigation(root.run.parent_investigation_id)
+        return self.investigate(
+            AnalysisRequest(
+                question=question,
+                scope=root.run.scope,
+                metrics=root.run.metrics,
+                splits=root.run.splits,
+                parent_investigation_id=root.run.investigation_id,
+            ),
+            investigation_id,
+        )
 
     def evidence(self, investigation_id: str, evidence_id: str) -> Any:
         bundle = self.store.get_investigation(investigation_id)

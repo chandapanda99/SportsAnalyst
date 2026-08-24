@@ -152,6 +152,8 @@ class MetricDefinition(BaseModel):
     description: str
     formula: str
     qualifying_plays: str
+    interpretation: str
+    higher_is_better: bool | None = None
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -280,6 +282,8 @@ class InvestigationRun(BaseModel):
     parent_investigation_id: str | None = None
     question: str
     scope: AnalysisScope
+    metrics: list[str] = Field(default_factory=list)
+    splits: list[str] = Field(default_factory=list)
     status: RunStatus = RunStatus.QUEUED
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None

@@ -20,6 +20,7 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     request = AnalysisRequest(
         question="Why did KC passing efficiency decline?",
         scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        metrics=["epa_per_dropback", "success_rate"],
     )
     bundle = application.investigate(request)
     assert bundle.fallback_used
@@ -37,6 +38,7 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     metric = client.get("/api/sports/nfl/metrics/epa_per_dropback")
     assert metric.status_code == 200
     assert "mean(epa)" in metric.json()["formula"]
+    assert metric.json()["interpretation"]
     tools = client.get("/api/sports/nfl/tools")
     assert tools.status_code == 200
     assert {item["name"] for item in tools.json()} >= {
@@ -45,6 +47,21 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
         "compare_player_usage",
         "analyze_starter_availability",
     }
+    assert all(
+        item["input_schema"].get("type") == "object"
+        for item in tools.json()
+        if item["name"]
+        in {
+            "get_analysis_options",
+            "compare_time_windows",
+            "analyze_weekly_trends",
+            "rank_game_outliers",
+            "benchmark_against_league",
+            "analyze_situational_split",
+            "find_representative_plays",
+            "explain_metric",
+        }
+    )
     players = client.get("/api/sports/nfl/players", params={"query": "kelce"})
     assert players.status_code == 200
     assert players.json()[0]["name"] == "Travis Kelce"
@@ -56,10 +73,28 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert 'filename="report.html"' in exported.headers["content-disposition"]
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
+    follow_up = client.post(
+        f"/api/investigations/{bundle.run.investigation_id}/follow-ups",
+        json={"question": "Was the change consistent across the full sample?"},
+    )
+    assert follow_up.status_code == 202
+    child = application.store.get_investigation(follow_up.json()["investigation_id"])
+    assert child.run.parent_investigation_id == bundle.run.investigation_id
+    assert child.run.scope == bundle.run.scope
+    assert child.run.metrics == bundle.run.metrics
+    assert child.summary.startswith("Follow-up:")
+    thread = client.get(f"/api/investigations/{child.run.investigation_id}/thread")
+    assert thread.status_code == 200
+    assert [item["run"]["investigation_id"] for item in thread.json()] == [
+        bundle.run.investigation_id,
+        child.run.investigation_id,
+    ]
     investigation_directory = tmp_path / "investigations" / bundle.run.investigation_id
+    child_directory = tmp_path / "investigations" / child.run.investigation_id
     assert client.delete(f"/api/investigations/{bundle.run.investigation_id}").status_code == 204
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}").status_code == 404
     assert not investigation_directory.exists()
+    assert not child_directory.exists()
 
 
 def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:

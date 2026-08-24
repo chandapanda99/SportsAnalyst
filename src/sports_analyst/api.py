@@ -126,6 +126,13 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @api.get("/api/investigations/{investigation_id}/thread", response_model=list[InvestigationBundle])
+    def investigation_thread(investigation_id: str) -> list[InvestigationBundle]:
+        try:
+            return service.store.investigation_thread(investigation_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @api.delete("/api/investigations/{investigation_id}", status_code=204)
     def delete_investigation(investigation_id: str) -> Response:
         try:
@@ -146,12 +153,26 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @api.post("/api/investigations/{investigation_id}/follow-ups", response_model=InvestigationBundle)
-    def follow_up(investigation_id: str, request: FollowUpRequest) -> InvestigationBundle:
+    @api.post("/api/investigations/{investigation_id}/follow-ups", status_code=202)
+    def follow_up(investigation_id: str, request: FollowUpRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
         try:
-            return service.follow_up(investigation_id, request.question)
+            service.store.get_investigation(investigation_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        child_id = stable_id(
+            "investigation",
+            {"parent": investigation_id, "question": request.question, "time": datetime.now(UTC).isoformat()},
+        )
+
+        def execute() -> None:
+            try:
+                service.follow_up(investigation_id, request.question, child_id)
+            except Exception as error:
+                logger.error("follow_up_failed investigation_id=%s error_type=%s", child_id, type(error).__name__)
+                service.events.emit(child_id, "failed", str(error), 1.0)
+
+        background_tasks.add_task(execute)
+        return {"investigation_id": child_id}
 
     @api.get("/api/investigations/{investigation_id}/evidence/{evidence_id}")
     def evidence(investigation_id: str, evidence_id: str) -> Any:

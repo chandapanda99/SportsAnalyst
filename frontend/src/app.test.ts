@@ -11,7 +11,9 @@ describe('Open Sports Analyst workbench', () => {
       const url = String(input);
       if (init?.method === 'DELETE' && url.includes('/api/investigations/')) {
         const identifier = url.split('/').at(-1);
-        mockInvestigations = mockInvestigations.filter((item: any) => item.run.investigation_id !== identifier);
+        mockInvestigations = mockInvestigations.filter((item: any) =>
+          item.run.investigation_id !== identifier && item.run.parent_investigation_id !== identifier
+        );
         return Promise.resolve(new Response(null, { status: 204 }));
       }
       if (url.includes('/evidence/')) {
@@ -104,18 +106,24 @@ describe('Open Sports Analyst workbench', () => {
     expect(question.value).toBe('Did this team become more consistent, or was the change concentrated in a few periods?');
   });
 
-  it('can select every available metric after clearing explicit selections', async () => {
+  it('supports explicit all-metric and recommended-metric selection', async () => {
     render(App);
     const epa = await screen.findByRole('checkbox', { name: /EPA\/dropback/ }) as HTMLInputElement;
     const successRate = screen.getByRole('checkbox', { name: /Success rate/ }) as HTMLInputElement;
+    expect(epa.checked).toBe(true);
+    expect(successRate.checked).toBe(false);
 
-    await fireEvent.click(screen.getByRole('button', { name: /Clear selections/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear All Metrics' }));
     expect(epa.checked).toBe(false);
     expect(successRate.checked).toBe(false);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select All Metrics' }));
     expect(epa.checked).toBe(true);
     expect(successRate.checked).toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Use Recommended Metrics' }));
+    expect(epa.checked).toBe(true);
+    expect(successRate.checked).toBe(false);
   });
 
   it('treats full seasons as an inclusive season range', async () => {
@@ -142,8 +150,18 @@ describe('Open Sports Analyst workbench', () => {
     expect(details.open).toBe(true);
   });
 
-  it('deletes a saved report from the recent film room', async () => {
+  it('groups follow-ups as a saved conversation and deletes the full thread', async () => {
     mockInvestigations = [{
+      run: {
+        investigation_id: 'investigation-follow-up', parent_investigation_id: 'investigation-delete-me',
+        question: 'Was it consistent across the sample?', created_at: '2026-08-21T13:00:00Z',
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 18] }, comparison: { season: 2025, weeks: [1, 18] }
+        }
+      },
+      summary: 'The follow-up found a consistent shift.', claims: [], aggregate_evidence: [], play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true
+    }, {
       run: {
         investigation_id: 'investigation-delete-me', question: 'Which games changed the most?', created_at: '2026-08-21T12:00:00Z',
         scope: {
@@ -156,13 +174,18 @@ describe('Open Sports Analyst workbench', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
 
     render(App);
-    const deleteButton = await screen.findByRole('button', { name: 'Delete saved report: Which games changed the most?' });
+    expect(await screen.findByText('Was it consistent across the sample?')).toBeTruthy();
+    expect(screen.getByText('The follow-up found a consistent shift.')).toBeTruthy();
+    expect(screen.getAllByText('1 follow-up').length).toBeGreaterThan(0);
+    const deleteButton = screen.getByRole('button', { name: 'Delete investigation thread: Which games changed the most?' });
     expect(deleteButton.classList.contains('delete-report')).toBe(true);
+    expect(screen.getAllByRole('button', { name: /Delete investigation thread/ })).toHaveLength(1);
 
     await fireEvent.click(deleteButton);
 
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', { method: 'DELETE' });
     expect(screen.queryByText('Which games changed the most?')).toBeNull();
+    expect(screen.queryByText('Was it consistent across the sample?')).toBeNull();
   });
 
   it('selects only the clicked finding and lists all of its cited evidence', async () => {

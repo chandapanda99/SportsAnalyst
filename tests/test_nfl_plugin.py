@@ -35,6 +35,20 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert first.charts
     weekly = [item for item in first.aggregate_evidence if item.metric == "weekly_epa_per_dropback"]
     assert weekly and all(item.confidence_low is not None and item.confidence_high is not None for item in weekly)
+    assert any(item.metric == "weekly_moving_average_epa_per_dropback" for item in first.aggregate_evidence)
+    trend = next(item for item in first.aggregate_evidence if item.metric == "weekly_trend_classification_epa_per_dropback")
+    assert trend.label in {
+        "Weekly change pattern: sustained",
+        "Weekly change pattern: mixed",
+        "Weekly change pattern: outlier-concentrated",
+    }
+    benchmark_metrics = {item.metric for item in first.aggregate_evidence}
+    assert {
+        "league_percentile_epa_per_dropback",
+        "league_rank_epa_per_dropback",
+        "conference_rank_epa_per_dropback",
+        "league_average_delta_epa_per_dropback",
+    } <= benchmark_metrics
     assert "analyze_situational_split" in {item.tool for item in first.executions}
 
 
@@ -82,6 +96,23 @@ def test_plan_uses_only_registered_tools() -> None:
     plan = plugin.default_plan(request)
     registered = {tool.name for tool in plugin.tools()}
     assert {call.tool for call in plan.calls} <= registered
+    priority_tools = {
+        tool.name: tool
+        for tool in plugin.tools()
+        if tool.name
+        in {
+            "get_analysis_options",
+            "compare_time_windows",
+            "analyze_weekly_trends",
+            "rank_game_outliers",
+            "benchmark_against_league",
+            "analyze_situational_split",
+            "find_representative_plays",
+            "explain_metric",
+        }
+    }
+    assert len(priority_tools) == 8
+    assert all(tool.input_schema.get("type") == "object" for tool in priority_tools.values())
 
 
 def test_selected_metrics_and_week_windows_constrain_analysis(pbp_pair) -> None:
@@ -208,5 +239,7 @@ def test_metric_explanation_and_player_resolution(pbp_pair) -> None:
     plugin = NFLPlugin()
     definition = plugin.explain_metric("epa_per_dropback")
     assert "mean(epa)" in definition.formula
+    assert definition.higher_is_better is True
+    assert "higher is generally better" in definition.interpretation
     players = plugin.resolve_players("kelce", [(2025, pbp_pair[2025])])
     assert players[0].name == "Travis Kelce"

@@ -86,21 +86,55 @@ class LocalStore:
             rows = db.execute("SELECT bundle_path FROM investigations ORDER BY created_at DESC").fetchall()
         return [InvestigationBundle.model_validate_json(Path(row[0]).read_text(encoding="utf-8")) for row in rows]
 
+    def investigation_thread(self, investigation_id: str) -> list[InvestigationBundle]:
+        root = self.get_investigation(investigation_id)
+        while root.run.parent_investigation_id:
+            root = self.get_investigation(root.run.parent_investigation_id)
+        with self.connect(read_only=True) as db:
+            rows = db.execute(
+                """
+                WITH RECURSIVE thread(investigation_id, bundle_path, created_at) AS (
+                    SELECT investigation_id, bundle_path, created_at
+                    FROM investigations WHERE investigation_id = ?
+                    UNION ALL
+                    SELECT child.investigation_id, child.bundle_path, child.created_at
+                    FROM investigations child
+                    JOIN thread parent ON child.parent_id = parent.investigation_id
+                )
+                SELECT bundle_path FROM thread ORDER BY created_at
+                """,
+                [root.run.investigation_id],
+            ).fetchall()
+        return [InvestigationBundle.model_validate_json(Path(row[0]).read_text(encoding="utf-8")) for row in rows]
+
     def delete_investigation(self, investigation_id: str) -> None:
         with self.connect(read_only=True) as db:
-            row = db.execute("SELECT bundle_path FROM investigations WHERE investigation_id = ?", [investigation_id]).fetchone()
-        if not row:
+            rows = db.execute(
+                """
+                WITH RECURSIVE descendants(investigation_id, bundle_path) AS (
+                    SELECT investigation_id, bundle_path FROM investigations WHERE investigation_id = ?
+                    UNION ALL
+                    SELECT child.investigation_id, child.bundle_path FROM investigations child
+                    JOIN descendants parent ON child.parent_id = parent.investigation_id
+                )
+                SELECT investigation_id, bundle_path FROM descendants
+                """,
+                [investigation_id],
+            ).fetchall()
+        if not rows:
             raise KeyError(f"investigation not found: {investigation_id}")
 
         root = self.settings.investigations_dir.resolve()
-        directory = Path(row[0]).parent.resolve()
-        if directory.parent != root or directory.name != investigation_id:
-            raise RuntimeError(f"invalid investigation storage path: {investigation_id}")
+        directories = [(identifier, Path(bundle_path).parent.resolve()) for identifier, bundle_path in rows]
+        for identifier, directory in directories:
+            if directory.parent != root or directory.name != identifier:
+                raise RuntimeError(f"invalid investigation storage path: {identifier}")
 
         with self.connect() as db:
-            db.execute("DELETE FROM investigations WHERE investigation_id = ?", [investigation_id])
-        if directory.exists():
-            shutil.rmtree(directory)
+            db.executemany("DELETE FROM investigations WHERE investigation_id = ?", [[identifier] for identifier, _ in directories])
+        for _identifier, directory in directories:
+            if directory.exists():
+                shutil.rmtree(directory)
 
     def export_path(self, investigation_id: str, output_format: str) -> Path:
         if output_format not in {"html", "markdown"}:

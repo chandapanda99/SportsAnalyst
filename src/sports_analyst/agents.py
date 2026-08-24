@@ -84,11 +84,13 @@ def _is_citation_error(error: Exception) -> bool:
 
 
 def _fallback_synthesis(
+    question: str,
     team: str,
     baseline: AnalysisWindow,
     comparison: AnalysisWindow,
     aggregate: list[AggregateEvidence],
     analysis_seasons: list[int] | None = None,
+    conversation_context: list[dict[str, str]] | None = None,
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     primary = next((item for item in metrics if item.metric == "epa_per_dropback"), metrics[0] if metrics else None)
@@ -111,6 +113,8 @@ def _fallback_synthesis(
         f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "
         "The findings below separate measured changes from football interpretation and link each statement to reproducible evidence."
     )
+    if conversation_context:
+        summary = f"Follow-up: {question} {summary}"
     claims = [
         Claim(
             claim_id=stable_id("claim", {"metric": primary.metric, "statement": direction}),
@@ -181,8 +185,9 @@ class EvidenceBoundAgent:
         aggregate: list[AggregateEvidence],
         plays: list[PlayEvidence],
         analysis_seasons: list[int] | None = None,
+        conversation_context: list[dict[str, str]] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
-        fallback = _fallback_synthesis(team, baseline, comparison, aggregate, analysis_seasons)
+        fallback = _fallback_synthesis(question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context)
         logger.debug(
             "synthesis_requested provider=%s aggregate_count=%d play_count=%d",
             self.settings.model_provider,
@@ -228,6 +233,12 @@ class EvidenceBoundAgent:
                 common += (
                     f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
                     "not only the first and final seasons. Endpoint diagnostics should be identified as endpoint comparisons."
+                )
+            if conversation_context:
+                common += (
+                    " This is a follow-up in an existing investigation thread. Use the prior conversation only as context, answer the "
+                    "new question directly, and ground all new claims in this run's evidence. Prior conversation: "
+                    f"{json.dumps(conversation_context, default=str)}"
                 )
             subagents = [
                 {

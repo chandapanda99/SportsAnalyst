@@ -10,6 +10,7 @@
     let datasets: DatasetManifest[] = [];
     let history: Investigation[] = [];
     let active: Investigation | null = null;
+    let conversationThread: Investigation[] = [];
     let selectedEvidenceItems: Evidence[] = [];
     let selectedClaimId: string | null = null;
     let evidenceLoading = false;
@@ -53,6 +54,8 @@
     let error = '';
     let busy = false;
     let followup = '';
+    let followupBusy = false;
+    let pendingFollowup = '';
     const metricCategories = ['Efficiency', 'Passing', 'Negative outcomes'];
 
     $: requiredSeasons = comparisonMode === 'before_after'
@@ -71,12 +74,15 @@
             || baselineEndWeek !== comparisonEndWeek);
     $: missingRequiredSeasons = requiredSeasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
     $: hasRequiredData = requiredSeasons.every((season) => analysisOptions?.available_seasons.includes(season));
-    $: canRun = Boolean(resolvedTeam && question.trim().length >= 3 && windowsDiffer && hasRequiredData);
+    $: canRun = Boolean(
+        resolvedTeam && question.trim().length >= 3 && windowsDiffer && hasRequiredData && selectedAvailableMetricCount > 0
+    );
     $: indexedSeasonCount = new Set(datasets.filter((dataset) => dataset.dataset === 'play_by_play').map((dataset) => dataset.season)).size;
     $: availableMetrics = (analysisOptions?.metrics ?? []).filter(metricAvailable);
     $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
     $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
     $: selectedClaim = active?.claims.find((claim) => claim.claim_id === selectedClaimId) ?? null;
+    $: rootHistory = history.filter((item) => !item.run.parent_investigation_id);
 
     onMount(refresh);
 
@@ -86,7 +92,10 @@
                 api.capabilities(), api.analysisOptions(), api.datasets(), api.investigations()
             ]);
             initializeSelections();
-            if (!active && history.length) active = history[0];
+            const roots = history.filter((item) => !item.run.parent_investigation_id);
+            if (active) active = history.find((item) => item.run.investigation_id === active?.run.investigation_id) ?? active;
+            if (!active && roots.length) active = roots[0];
+            if (active) conversationThread = threadFor(active);
         } catch (problem) {
             error = String(problem);
         }
@@ -185,7 +194,8 @@
     }
 
     function useRecommendedMetrics() {
-        selectedMetrics = [...(analysisOptions?.default_metrics ?? [])];
+        const recommended = new Set(analysisOptions?.default_metrics ?? []);
+        selectedMetrics = availableMetrics.filter((metric) => recommended.has(metric.value)).map((metric) => metric.value);
     }
 
     function selectAllMetrics() {
@@ -266,7 +276,7 @@
         return false;
     }
 
-    function stream(url: string, complete: () => Promise<void>, recover?: () => Promise<boolean>) {
+    function stream(url: string, complete: () => Promise<void>, recover?: () => Promise<boolean>, onSettled?: () => void) {
         const source = new EventSource(url);
         let settled = false;
         let recovering = false;
@@ -278,11 +288,13 @@
             if (recover && await recover()) {
                 settled = true;
                 busy = false;
+                onSettled?.();
                 return;
             }
             settled = true;
             error = message;
             busy = false;
+            onSettled?.();
         }
 
         source.onmessage = async (message) => {
@@ -298,12 +310,14 @@
                     error = String(problem);
                 }
                 busy = false;
+                onSettled?.();
             }
             if (event.stage === 'failed') {
                 settled = true;
                 source.close();
                 error = event.message;
                 busy = false;
+                onSettled?.();
             }
             if (event.stage === 'timeout') {
                 await recoverOrFail('The investigation is still unavailable after the progress stream timed out. Refresh to check again.');
@@ -390,9 +404,34 @@
         evidenceError = '';
     }
 
+    function rootIdFor(investigation: Investigation) {
+        let current = investigation;
+        const visited = new Set<string>();
+        while (current.run.parent_investigation_id && !visited.has(current.run.investigation_id)) {
+            visited.add(current.run.investigation_id);
+            const parent = history.find((item) => item.run.investigation_id === current.run.parent_investigation_id);
+            if (!parent) return current.run.parent_investigation_id;
+            current = parent;
+        }
+        return current.run.investigation_id;
+    }
+
+    function threadFor(investigation: Investigation) {
+        const rootId = rootIdFor(investigation);
+        return history
+            .filter((item) => rootIdFor(item) === rootId)
+            .sort((left, right) => new Date(left.run.created_at).getTime() - new Date(right.run.created_at).getTime());
+    }
+
     function openInvestigation(investigation: Investigation | null) {
         active = investigation;
+        conversationThread = investigation ? threadFor(investigation) : [];
         clearEvidenceSelection();
+    }
+
+    function startNewAnalysis() {
+        openInvestigation(null);
+        useRecommendedMetrics();
     }
 
     async function inspect(identifier: string) {
@@ -434,17 +473,36 @@
     }
 
     async function sendFollowup() {
-        if (!active || !followup.trim()) return;
-        busy = true;
+        if (!active || !followup.trim() || followupBusy) return;
+        const question = followup.trim();
+        const root = conversationThread[0] ?? active;
+        followupBusy = true;
+        pendingFollowup = question;
+        followup = '';
         clearEvidenceSelection();
         try {
-            active = await api.followUp(active.run.investigation_id, followup);
-            followup = '';
-            await refresh();
+            const {investigation_id} = await api.followUp(root.run.investigation_id, question);
+            stream(
+                `/api/investigations/${investigation_id}/events`,
+                async () => {
+                    active = await api.investigation(investigation_id);
+                    await refresh();
+                    conversationThread = threadFor(active);
+                },
+                async () => {
+                    const recovered = await pollInvestigation(investigation_id);
+                    if (recovered && active) conversationThread = threadFor(active);
+                    return recovered;
+                },
+                () => {
+                    followupBusy = false;
+                    pendingFollowup = '';
+                }
+            );
         } catch (problem) {
             error = String(problem);
-        } finally {
-            busy = false;
+            followupBusy = false;
+            pendingFollowup = '';
         }
     }
 
@@ -452,10 +510,13 @@
         const identifier = item.run.investigation_id;
         if (!window.confirm(`Delete the saved ${item.run.scope.team} analysis? This cannot be undone.`)) return;
         try {
+            const deletedRoot = rootIdFor(item);
             await api.deleteInvestigation(identifier);
-            history = history.filter((saved) => saved.run.investigation_id !== identifier);
-            if (active?.run.investigation_id === identifier) {
-                active = history[0] ?? null;
+            history = history.filter((saved) => rootIdFor(saved) !== deletedRoot);
+            if (active && rootIdFor(active) === deletedRoot) {
+                const remainingRoots = history.filter((saved) => !saved.run.parent_investigation_id);
+                active = remainingRoots[0] ?? null;
+                conversationThread = active ? threadFor(active) : [];
                 clearEvidenceSelection();
             }
         } catch (problem) {
@@ -472,22 +533,24 @@
             <div><strong>Open Sports</strong><span>Analyst</span></div>
         </div>
         <nav aria-label="Primary">
-            <button class="new-investigation" class:active={!active} on:click={() => openInvestigation(null)}>
+            <button class="new-investigation" class:active={!active} on:click={startNewAnalysis}>
                 <span class="new-icon"><Icon name="clipboard-plus" size={20}/></span> New Analysis
             </button>
             <div class="nav-label">
                 <Icon name="history" size={15}/>
                 Recent Film Room
             </div>
-            {#each history.slice(0, 8) as item}
+            {#each rootHistory.slice(0, 8) as item}
                 <div class="recent-report">
-                    <button class="recent-report-link" class:active={active?.run.investigation_id === item.run.investigation_id} on:click={() => openInvestigation(item)}>
+                    <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
+                            on:click={() => openInvestigation(item)}>
                         <span>{item.run.scope.team}</span>
                         <div>{item.run.question}
                             <small>{item.run.scope.comparison_design === 'full_seasons' ? `Full Seasons ${item.run.scope.baseline.season}–${item.run.scope.comparison.season}` : `${item.run.scope.baseline.season} W${item.run.scope.baseline.weeks[0]}–${item.run.scope.baseline.weeks[1]} → ${item.run.scope.comparison.season} W${item.run.scope.comparison.weeks[0]}–${item.run.scope.comparison.weeks[1]}`}</small>
+                            {#if threadFor(item).length > 1}<small class="thread-count">{threadFor(item).length - 1} follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
                         </div>
                     </button>
-                    <button class="delete-report" type="button" aria-label={`Delete saved report: ${item.run.question}`} title="Delete saved report"
+                    <button class="delete-report" type="button" aria-label={`Delete investigation thread: ${item.run.question}`} title="Delete investigation thread"
                             on:click={() => deleteInvestigation(item)}>
                         <Icon name="trash" size={16}/>
                     </button>
@@ -664,13 +727,16 @@
                                     {/if}
                                 </fieldset>
                             </div>
-                            {#if comparisonMode === 'full_seasons' && windowsDiffer}<p
-                                class="range-summary">{`Includes every season from ${baseline} through ${comparison}: ${requiredSeasons.join(', ')}.`}</p>{/if}
-                            {#if !windowsDiffer}<p
-                                class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>{/if}
-                            {#if windowsDiffer && missingRequiredSeasons.length}<p class="validation">Sync the missing
-                                season{missingRequiredSeasons.length === 1 ? '' : 's'}before
-                                running this range: {missingRequiredSeasons.join(', ')}.</p>{/if}
+                            {#if comparisonMode === 'full_seasons' && windowsDiffer}
+                                <p class="range-summary">{`Includes every season from ${baseline} through ${comparison}: ${requiredSeasons.join(', ')}.`}</p>
+                            {/if}
+                            {#if !windowsDiffer}
+                                <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
+                            {/if}
+                            {#if windowsDiffer && missingRequiredSeasons.length}
+                                <p class="validation">Sync the missing season{missingRequiredSeasons.length === 1 ? '' : 's'}before running this
+                                    range: {missingRequiredSeasons.join(', ')}.</p>
+                            {/if}
                         {/if}
                     {:else}
                         <p class="empty-state">Sync at least one nflverse season to configure an investigation.</p>
@@ -692,7 +758,8 @@
                             </button>
                         </div>
                     </div>
-                    <p class="section-help"><strong>Checked metrics are included in the investigation.</strong> Once you select metrics, unchecked metrics are excluded. Leave all metrics clear to use the recommended set automatically.</p>
+                    <p class="section-help"><strong>Recommended metrics are selected by default.</strong> Checked metrics are included and unchecked metrics are
+                        excluded. Use Recommended Metrics replaces the current selection with the recommended set.</p>
                     <div class="metric-groups">
                         {#each metricCategories as category}
                             <section class="metric-group" role="group" aria-label={category}>
@@ -709,11 +776,15 @@
                     </div>
                     <button class="text-button clear-metrics" type="button" on:click={() => selectedMetrics = []}>
                         <Icon name="wand" size={16}/>
-                        Clear selections · let analyst choose
+                        Clear All Metrics
                     </button>
+                    {#if analysisOptions && selectedAvailableMetricCount === 0}
+                        <p class="selection-warning">Select AT LEAST ONE available metric to start an investigation!</p>
+                    {/if}
                     <div class="split-selector">
                         <div><h4>Diagnostic Cuts</h4>
-                            <p>Checked cuts are included as situational breakdowns. Once you select cuts, unchecked cuts are skipped. Leave all clear to use the recommended diagnostic cuts automatically.</p></div>
+                            <p>Checked cuts are included as situational breakdowns. Once you select cuts, unchecked cuts are skipped. Leave all clear to use the
+                                recommended diagnostic cuts automatically.</p></div>
                         <div class="split-options">
                             {#each analysisOptions?.split_dimensions ?? [] as split}
                                 <label class:unavailable={!splitAvailable(split.available_seasons)} title={split.description}>
@@ -786,6 +857,60 @@
                 </div>
             </section>
         {:else if active}
+            <section class="conversation" aria-label="Investigation conversation">
+                <div class="conversation-header">
+                    <div><span class="eyebrow">INVESTIGATION THREAD</span>
+                        <h2>{active.run.scope.team} Film Room</h2>
+                        <p>The initial analysis and every follow-up are saved together. Select any analyst response to inspect its report and evidence.</p>
+                    </div>
+                    <span class="conversation-count">{Math.max(0, conversationThread.length - 1)} follow-up{conversationThread.length === 2 ? '' : 's'}</span>
+                </div>
+                <div class="conversation-messages" aria-live="polite">
+                    {#each conversationThread as turn, index}
+                        <article class="chat-row user-row">
+                            <span class="chat-avatar user-avatar">You</span>
+                            <div class="chat-bubble user-bubble"><small>{index === 0 ? 'Initial question' : `Follow-up ${index}`}</small>
+                                <p>{turn.run.question}</p></div>
+                        </article>
+                        <div class="chat-row analyst-row">
+                            <span class="chat-avatar analyst-avatar"><Icon name="brain" size={18}/></span>
+                            <button class="chat-bubble analyst-bubble" class:selected={active.run.investigation_id === turn.run.investigation_id}
+                                    type="button" on:click={() => openInvestigation(turn)}>
+                                <small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
+                                <p>{turn.summary}</p>
+                                <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'} <Icon name="arrow-right" size={15}/></span>
+                            </button>
+                        </div>
+                    {/each}
+                    {#if pendingFollowup}
+                        <article class="chat-row user-row pending-message">
+                            <span class="chat-avatar user-avatar">You</span>
+                            <div class="chat-bubble user-bubble"><small>New follow-up</small><p>{pendingFollowup}</p></div>
+                        </article>
+                        <article class="chat-row analyst-row pending-message">
+                            <span class="chat-avatar analyst-avatar"><Icon name="brain" size={18}/></span>
+                            <div class="chat-bubble analyst-bubble typing"><small>Open Sports Analyst</small>
+                                <span class="typing-dots" aria-label="Analyzing follow-up"><i></i><i></i><i></i></span>
+                                <p>{stage || 'Planning the next evidence-backed analysis…'}</p></div>
+                        </article>
+                    {/if}
+                </div>
+                <div class="chat-composer">
+                    <textarea bind:value={followup} rows="2" disabled={followupBusy}
+                              aria-label="Ask a follow-up question"
+                              placeholder="Ask a follow-up about this investigation…"
+                              on:keydown={(event) => {
+                                  if (event.key === 'Enter' && !event.shiftKey) {
+                                      event.preventDefault();
+                                      sendFollowup();
+                                  }
+                              }}></textarea>
+                    <button type="button" disabled={followupBusy || !followup.trim()} on:click={sendFollowup}>
+                        {followupBusy ? 'Analyzing' : 'Send'} <Icon name="send" size={18}/>
+                    </button>
+                    <small>Enter to send · Shift+Enter for a new line</small>
+                </div>
+            </section>
             <section class="report-hero">
                 <div class="report-summary">
                     <span class="eyebrow">FINAL READ · {active.fallback_used ? 'DETERMINISTIC' : active.model_id}</span>
@@ -826,7 +951,8 @@
                 <aside class="evidence-panel">
                     <div class="section-title"><span>EVIDENCE INSPECTOR</span></div>
                     {#if evidenceLoading}
-                        <div class="evidence-loading"><span></span><p>Loading cited evidence…</p></div>
+                        <div class="evidence-loading"><span></span>
+                            <p>Loading cited evidence…</p></div>
                     {:else if evidenceError}
                         <p class="evidence-error">{evidenceError}</p>
                     {:else if selectedEvidenceItems.length}
@@ -837,22 +963,29 @@
                         <div class="evidence-list">
                             {#each selectedEvidenceItems as evidence, index}
                                 <article class="evidence-record">
-                                    <div class="evidence-record-heading"><span>{String(index + 1).padStart(2, '0')}</span><div>
-                                        <span class="evidence-id">{evidence.evidence_id}</span>
-                                        <h3>{evidence.label || `Play ${evidence.play_id}`}</h3>
-                                    </div></div>
+                                    <div class="evidence-record-heading"><span>{String(index + 1).padStart(2, '0')}</span>
+                                        <div>
+                                            <span class="evidence-id">{evidence.evidence_id}</span>
+                                            <h3>{evidence.label || `Play ${evidence.play_id}`}</h3>
+                                        </div>
+                                    </div>
                                     {#if evidence.baseline_value != null && evidence.comparison_value != null}
                                         <div class="delta">
                                             <div><span>Baseline</span><strong>{evidence.baseline_value.toFixed(3)}</strong></div>
-                                            <b><Icon name="arrow-right" size={18}/></b>
+                                            <b>
+                                                <Icon name="arrow-right" size={18}/>
+                                            </b>
                                             <div><span>Comparison</span><strong>{evidence.comparison_value.toFixed(3)}</strong></div>
                                         </div>
                                     {/if}
                                     {#if evidence.description}<p>{evidence.description}</p>{/if}
                                     <dl>
-                                        <dt>Metric</dt><dd>{evidence.metric || 'source play'}</dd>
-                                        <dt>Sample</dt><dd>{evidence.sample_size || '1 play'}</dd>
-                                        <dt>Change / EPA</dt><dd>{evidence.value ?? evidence.epa}</dd>
+                                        <dt>Metric</dt>
+                                        <dd>{evidence.metric || 'source play'}</dd>
+                                        <dt>Sample</dt>
+                                        <dd>{evidence.sample_size || '1 play'}</dd>
+                                        <dt>Change / EPA</dt>
+                                        <dd>{evidence.value ?? evidence.epa}</dd>
                                     </dl>
                                     {#each evidence.caveats || [] as caveat}<p class="caveat">{caveat}</p>{/each}
                                 </article>
@@ -886,15 +1019,6 @@
                             · #{play.play_id}</strong>
                             <p>{play.description}</p><b class="play-epa">{play.epa?.toFixed(2)} EPA</b></button>
                     {/each}
-                </div>
-            </section>
-            <section class="followup"><span class="eyebrow">CHALLENGE THE READ</span>
-                <h2>Ask the analyst to go one level deeper.</h2>
-                <div><input bind:value={followup} placeholder="Was this driven more by sacks or unsuccessful early-down passes?"
-                            on:keydown={(event) => event.key === 'Enter' && sendFollowup()}/>
-                    <button on:click={sendFollowup}>Ask follow-up
-                        <Icon name="send" size={17}/>
-                    </button>
                 </div>
             </section>
         {/if}

@@ -36,7 +36,7 @@ export type Evidence = {
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };
 export type Investigation = {
-  run: { investigation_id: string; parent_investigation_id?: string; question: string; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: 'full_seasons' | 'week_ranges' | 'before_after' }; created_at: string };
+  run: { investigation_id: string; parent_investigation_id?: string; question: string; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: 'full_seasons' | 'week_ranges' | 'before_after' }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };
