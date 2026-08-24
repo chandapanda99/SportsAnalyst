@@ -47,6 +47,7 @@ def ask(
     compare: str = typer.Option(..., help="Baseline and comparison seasons, for example 2024:2025"),
     team: str = typer.Option(..., help="NFL team abbreviation or city/name"),
     season_type: str = typer.Option("REG"),
+    domain: str = typer.Option("passing", help="Analysis domain: passing, rushing, or offense"),
 ) -> None:
     try:
         baseline, comparison = (int(item) for item in compare.split(":", 1))
@@ -54,6 +55,7 @@ def ask(
         raise typer.BadParameter("--compare must look like 2024:2025") from error
     request = AnalysisRequest(
         question=question,
+        analysis_domain=domain.lower(),
         scope=AnalysisScope(
             team=team,
             baseline_season=baseline,

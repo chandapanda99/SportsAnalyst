@@ -50,9 +50,19 @@ describe('Open Sports Analyst workbench', () => {
                 { value: 'week_ranges', label: 'Custom week ranges', description: 'Compare ranges.' }
               ],
               split_dimensions: [],
+              analysis_domains: [
+                { value: 'passing', label: 'Passing', description: 'Quarterback dropbacks.' },
+                { value: 'rushing', label: 'Rushing', description: 'Rushing attempts.' },
+                { value: 'offense', label: 'Overall offense', description: 'All qualifying offensive plays.' }
+              ],
+              default_metrics_by_domain: {
+                passing: ['epa_per_dropback'], rushing: ['epa_per_rush'], offense: ['epa_per_play']
+              },
               metrics: [
-                { value: 'epa_per_dropback', label: 'EPA/dropback', category: 'Efficiency', description: 'EPA per dropback.', available_seasons: [2024, 2025] },
-                { value: 'success_rate', label: 'Success rate', category: 'Efficiency', description: 'Share with positive EPA.', available_seasons: [2024, 2025] }
+                { value: 'epa_per_dropback', label: 'EPA/dropback', category: 'Efficiency', analysis_domain: 'passing', description: 'EPA per dropback.', available_seasons: [2024, 2025] },
+                { value: 'success_rate', label: 'Success rate', category: 'Efficiency', analysis_domain: 'passing', description: 'Share with positive EPA.', available_seasons: [2024, 2025] },
+                { value: 'epa_per_rush', label: 'EPA/rush', category: 'Rushing Efficiency', analysis_domain: 'rushing', description: 'EPA per rush.', available_seasons: [2024, 2025] },
+                { value: 'epa_per_play', label: 'EPA/play', category: 'Overall Efficiency', analysis_domain: 'offense', description: 'EPA per play.', available_seasons: [2024, 2025] }
               ]
             }
           : url.endsWith('/investigations')
@@ -124,6 +134,11 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Use Recommended Metrics' }));
     expect(epa.checked).toBe(true);
     expect(successRate.checked).toBe(false);
+
+    await fireEvent.click(screen.getByRole('button', { name: /Rushing.*Rushing attempts/ }));
+    const rushEpa = screen.getByRole('checkbox', { name: /EPA\/rush/ }) as HTMLInputElement;
+    expect(rushEpa.checked).toBe(true);
+    expect(screen.queryByRole('checkbox', { name: /EPA\/dropback/ })).toBeNull();
   });
 
   it('treats full seasons as an inclusive season range', async () => {
@@ -148,6 +163,32 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(rosters);
     expect(details.open).toBe(true);
+  });
+
+  it('selects locally available packages when the selected seasons change', async () => {
+    render(App);
+    const seasons = await screen.findByLabelText('Seasons to sync') as HTMLSelectElement;
+    const playByPlay = await screen.findByLabelText(/Play By Play/) as HTMLInputElement;
+    const rosters = screen.getByLabelText(/Rosters/) as HTMLInputElement;
+    const injuries = screen.getByLabelText(/Injuries/) as HTMLInputElement;
+
+    for (const option of Array.from(seasons.options)) option.selected = option.value === '2024';
+    await fireEvent.change(seasons);
+
+    expect(playByPlay.checked).toBe(true);
+    expect(rosters.checked).toBe(true);
+    expect(injuries.checked).toBe(true);
+    expect(rosters.indeterminate).toBe(false);
+
+    for (const option of Array.from(seasons.options)) option.selected = option.value === '2024' || option.value === '2025';
+    await fireEvent.change(seasons);
+
+    expect(playByPlay.checked).toBe(true);
+    expect(playByPlay.indeterminate).toBe(false);
+    expect(rosters.checked).toBe(true);
+    expect(rosters.indeterminate).toBe(true);
+    expect(injuries.checked).toBe(true);
+    expect(injuries.indeterminate).toBe(true);
   });
 
   it('groups follow-ups as a saved conversation and deletes the full thread', async () => {

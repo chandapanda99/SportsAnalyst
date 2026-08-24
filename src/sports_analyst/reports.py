@@ -20,10 +20,15 @@ def _scope_label(scope) -> str:
     return f"{baseline} → {comparison}"
 
 
+def _domain_label(domain: str) -> str:
+    return {"passing": "passing", "rushing": "rushing", "offense": "overall offensive"}.get(domain, domain)
+
+
 def render_markdown(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
+    domain = _domain_label(bundle.run.analysis_domain)
     lines = [
-        f"# {scope.team} efficiency investigation",
+        f"# {scope.team} {domain} efficiency investigation",
         "",
         bundle.summary,
         "",
@@ -98,6 +103,7 @@ def _chart_svg(specification: dict, team: str) -> str:
 
 def render_html(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
+    domain = _domain_label(bundle.run.analysis_domain)
     palette = team_report_palette(scope.team)
     comparison_label = _scope_label(scope)
     claims = "".join(
@@ -141,9 +147,9 @@ footer{{margin-top:36px;padding-top:18px;border-top:2px solid var(--team-accent)
 @media print{{*{{print-color-adjust:exact;-webkit-print-color-adjust:exact}}body{{max-width:none;padding:0}}}}
 """
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{html.escape(scope.team)} efficiency investigation</title><style>{styles}</style></head><body>
+<title>{html.escape(scope.team)} {html.escape(domain)} efficiency investigation</title><style>{styles}</style></head><body>
 <header><div class="eyebrow">Open Sports Analyst · Evidence-bound report</div>
-<h1>{html.escape(scope.team)} passing efficiency</h1><p>{html.escape(bundle.summary)}</p>
+<h1>{html.escape(scope.team)} {html.escape(domain)} efficiency</h1><p>{html.escape(bundle.summary)}</p>
 <small>{comparison_label} · {html.escape(bundle.run.investigation_id)}</small></header>
 <main><h2>Findings</h2>{claims}{charts}<h2>Representative plays</h2><table><thead>
 <tr><th>Game</th><th>Play</th><th>EPA</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>

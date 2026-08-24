@@ -122,6 +122,7 @@ class AnalysisScope(BaseModel):
 class AnalysisRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2_000)
     scope: AnalysisScope
+    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
     metrics: list[str] = Field(default_factory=list)
     splits: list[str] = Field(default_factory=list)
     parent_investigation_id: str | None = None
@@ -142,6 +143,7 @@ class MetricOption(BaseModel):
     label: str
     category: str
     description: str
+    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
     available_seasons: list[int] = Field(default_factory=list)
 
 
@@ -185,6 +187,8 @@ class AnalysisOptions(BaseModel):
     syncable_seasons: list[int]
     metrics: list[MetricOption]
     default_metrics: list[str]
+    analysis_domains: list[dict[str, str]] = Field(default_factory=list)
+    default_metrics_by_domain: dict[str, list[str]] = Field(default_factory=dict)
     split_dimensions: list[SplitDimensionOption]
     comparison_windows: list[ComparisonWindowOption]
     week_values: list[int] = Field(default_factory=lambda: list(range(1, 23)))
@@ -282,6 +286,7 @@ class InvestigationRun(BaseModel):
     parent_investigation_id: str | None = None
     question: str
     scope: AnalysisScope
+    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
     metrics: list[str] = Field(default_factory=list)
     splits: list[str] = Field(default_factory=list)
     status: RunStatus = RunStatus.QUEUED

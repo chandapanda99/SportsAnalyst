@@ -96,10 +96,11 @@ class AnalystApplication:
             "investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()}
         )
         logger.info(
-            "investigation_started investigation_id=%s team=%s design=%s seasons=%s "
+            "investigation_started investigation_id=%s team=%s domain=%s design=%s seasons=%s "
             "baseline=%s:%s-%s comparison=%s:%s-%s metrics=%d splits=%d",
             identifier,
             request.scope.team,
+            request.analysis_domain,
             request.scope.comparison_design,
             ",".join(str(season) for season in request.scope.included_seasons),
             request.scope.baseline_season,
@@ -113,10 +114,7 @@ class AnalystApplication:
         )
         self.events.emit(identifier, "planning", "Resolving scope and analytical tools", 0.1)
         plan = self.plugin.default_plan(request)
-        manifests = {
-            season: self.store.manifest_for_season(season, "play_by_play")
-            for season in request.scope.included_seasons
-        }
+        manifests = {season: self.store.manifest_for_season(season, "play_by_play") for season in request.scope.included_seasons}
         datasets = {season: self.connector.load(manifest) for season, manifest in manifests.items()}
         supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
         for manifest in self.store.manifests():
@@ -156,6 +154,10 @@ class AnalystApplication:
             result.play_evidence,
             request.scope.included_seasons if request.scope.comparison_design == "full_seasons" else None,
             conversation_context,
+            request.analysis_domain,
+            progress_callback=lambda message, progress: self.events.emit(
+                identifier, "synthesizing", message, progress
+            ),
         )
         logger.info(
             "synthesis_completed investigation_id=%s model_id=%s fallback=%s claims=%d duration_ms=%d",
@@ -170,6 +172,7 @@ class AnalystApplication:
             parent_investigation_id=request.parent_investigation_id,
             question=request.question,
             scope=request.scope,
+            analysis_domain=request.analysis_domain,
             metrics=request.metrics,
             splits=request.splits,
             status=RunStatus.COMPLETED,
@@ -210,6 +213,7 @@ class AnalystApplication:
             AnalysisRequest(
                 question=question,
                 scope=root.run.scope,
+                analysis_domain=root.run.analysis_domain,
                 metrics=root.run.metrics,
                 splits=root.run.splits,
                 parent_investigation_id=root.run.investigation_id,

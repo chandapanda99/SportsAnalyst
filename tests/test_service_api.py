@@ -25,6 +25,15 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     bundle = application.investigate(request)
     assert bundle.fallback_used
     assert bundle.claims
+    synthesis_events = [
+        event for event in application.events.events(bundle.run.investigation_id) if event["stage"] == "synthesizing"
+    ]
+    assert [event["message"] for event in synthesis_events] == [
+        "Reviewing evidence and drafting findings",
+        "Organizing the validated evidence",
+        "Writing the deterministic evidence report",
+    ]
+    assert [event["progress"] for event in synthesis_events] == [0.75, 0.76, 0.94]
     assert (tmp_path / "investigations" / bundle.run.investigation_id / "report.html").exists()
     assert all(claim.evidence_ids for claim in bundle.claims)
 
@@ -34,6 +43,8 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert options["available_seasons"] == [2024, 2025]
     assert {item["value"] for item in options["teams"]} >= {"KC", "BUF"}
     assert {item["value"] for item in options["metrics"]} >= {"epa_per_dropback", "sack_rate"}
+    assert {item["value"] for item in options["analysis_domains"]} == {"passing", "rushing", "offense"}
+    assert options["default_metrics_by_domain"]["rushing"][0] == "epa_per_rush"
     assert {"play_by_play", "rosters", "injuries", "nextgen_passing"} <= set(options["syncable_datasets"])
     metric = client.get("/api/sports/nfl/metrics/epa_per_dropback")
     assert metric.status_code == 200
@@ -46,6 +57,10 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
         "decompose_metric_change",
         "compare_player_usage",
         "analyze_starter_availability",
+        "build_player_week_dataset",
+        "analyze_position_group_availability",
+        "analyze_lineup_continuity",
+        "decompose_lineup_continuity",
     }
     assert all(
         item["input_schema"].get("type") == "object"

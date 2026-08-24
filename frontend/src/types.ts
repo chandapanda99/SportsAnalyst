@@ -4,7 +4,7 @@ export type DatasetManifest = {
 export type AnalysisWindow = { season: number; weeks: [number, number] };
 export type TeamOption = { value: string; label: string };
 export type MetricOption = {
-  value: string; label: string; category: string; description: string; available_seasons: number[];
+  value: string; label: string; category: string; description: string; analysis_domain: 'passing' | 'rushing' | 'offense'; available_seasons: number[];
 };
 export type SplitDimensionOption = {
   value: string; label: string; description: string; available_seasons: number[];
@@ -17,6 +17,8 @@ export type AnalysisOptions = {
   syncable_seasons: number[];
   metrics: MetricOption[];
   default_metrics: string[];
+  analysis_domains: Array<{ value: 'passing' | 'rushing' | 'offense'; label: string; description: string }>;
+  default_metrics_by_domain: Record<string, string[]>;
   split_dimensions: SplitDimensionOption[];
   comparison_windows: ComparisonWindowOption[];
   week_values: number[];
@@ -24,6 +26,7 @@ export type AnalysisOptions = {
 };
 export type InvestigationRequest = {
   question: string;
+  analysis_domain: 'passing' | 'rushing' | 'offense';
   scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: 'full_seasons' | 'week_ranges' | 'before_after' };
   metrics: string[];
   splits: string[];
@@ -36,7 +39,7 @@ export type Evidence = {
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };
 export type Investigation = {
-  run: { investigation_id: string; parent_investigation_id?: string; question: string; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: 'full_seasons' | 'week_ranges' | 'before_after' }; created_at: string };
+  run: { investigation_id: string; parent_investigation_id?: string; question: string; analysis_domain?: 'passing' | 'rushing' | 'offense'; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: 'full_seasons' | 'week_ranges' | 'before_after' }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };

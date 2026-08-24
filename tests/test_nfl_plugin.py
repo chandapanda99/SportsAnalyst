@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import polars as pl
 
 from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisWindow, DatasetManifest
@@ -50,6 +52,63 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
         "league_average_delta_epa_per_dropback",
     } <= benchmark_metrics
     assert "analyze_situational_split" in {item.tool for item in first.executions}
+
+
+def test_rushing_and_overall_offense_domains_scope_the_correct_plays(pbp_pair) -> None:
+    plugin = NFLPlugin()
+    frames: dict[int, pl.DataFrame] = {}
+    for season, rush_epa in ((2024, 0.05), (2025, 0.15)):
+        passing = pbp_pair[season].with_columns(pl.lit(0).alias("rush_attempt"))
+        rushing = pl.DataFrame(
+            [
+                {
+                    "season": season,
+                    "season_type": "REG",
+                    "week": game,
+                    "game_id": f"{season}_0{game}_KC_BUF",
+                    "play_id": 1000 + game * 100 + play,
+                    "posteam": "KC",
+                    "defteam": "BUF",
+                    "qb_dropback": 0,
+                    "rush_attempt": 1,
+                    "play_type": "run",
+                    "epa": rush_epa + (play % 5) * 0.01,
+                    "success": 1,
+                    "yards_gained": 12 if play % 5 == 0 else 4,
+                    "ydstogo": 5,
+                    "interception": 0,
+                    "fumble_lost": int(play == 20),
+                    "down": 1 + play % 3,
+                    "yardline_100": 25 + play,
+                    "score_differential": 0,
+                    "desc": f"Synthetic rush play {play} in game {game}",
+                }
+                for game in range(1, 5)
+                for play in range(1, 21)
+            ]
+        )
+        frames[season] = pl.concat([passing, rushing], how="diagonal_relaxed")
+    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
+    scope = AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025)
+
+    rushing_result = plugin.analyze(
+        AnalysisRequest(question="How did the run game change?", scope=scope, analysis_domain="rushing"), frames, manifests
+    )
+    rush_epa = next(item for item in rushing_result.aggregate_evidence if item.metric == "epa_per_rush")
+    assert rush_epa.sample_size == 80
+    assert rush_epa.value == 0.1
+    assert all("rush play" in play.description for play in rushing_result.play_evidence)
+
+    offense_result = plugin.analyze(
+        AnalysisRequest(question="How did the full offense change?", scope=scope, analysis_domain="offense"), frames, manifests
+    )
+    overall_epa = next(item for item in offense_result.aggregate_evidence if item.metric == "epa_per_play")
+    assert overall_epa.sample_size == 240
+    assert {item.metric for item in offense_result.aggregate_evidence} >= {
+        "overall_success_rate",
+        "overall_yards_per_play",
+        "turnover_rate",
+    }
 
 
 def test_full_season_range_analyzes_every_included_season(pbp_pair) -> None:
@@ -181,28 +240,73 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
         question="Did personnel and availability contribute to the decline?",
         scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
     )
+    analysis_pbp = {
+        2024: pbp_pair[2024],
+        2025: pbp_pair[2025].with_columns(
+            pl.when(pl.col("receiver_player_name") == "Rashee Rice")
+            .then(pl.lit("Xavier Worthy"))
+            .otherwise(pl.col("receiver_player_name"))
+            .alias("receiver_player_name"),
+            pl.when(pl.col("receiver_player_id") == "00-0039064")
+            .then(pl.lit("00-0039912"))
+            .otherwise(pl.col("receiver_player_id"))
+            .alias("receiver_player_id"),
+        ),
+    }
     rosters = {
-        season: pl.DataFrame(
+        2024: pl.DataFrame(
             {
                 "team": ["KC", "KC", "KC"],
                 "position": ["QB", "WR", "TE"],
                 "gsis_id": ["00-0033873", "00-0039064", "00-0030506"],
                 "full_name": ["Patrick Mahomes", "Rashee Rice", "Travis Kelce"],
             }
-        )
-        for season in (2024, 2025)
+        ),
+        2025: pl.DataFrame(
+            {
+                "team": ["KC", "KC", "KC", "KC"],
+                "position": ["QB", "WR", "WR", "TE"],
+                "gsis_id": ["00-0033873", "00-0039064", "00-0039912", "00-0030506"],
+                "full_name": ["Patrick Mahomes", "Rashee Rice", "Xavier Worthy", "Travis Kelce"],
+            }
+        ),
     }
     injuries = {
-        2024: pl.DataFrame({"team": ["KC"], "week": [2], "full_name": ["Rashee Rice"], "report_status": ["Questionable"]}),
+        2024: pl.DataFrame(
+            {
+                "team": ["KC"],
+                "week": [2],
+                "full_name": ["Rashee Rice"],
+                "position": ["WR"],
+                "report_status": ["Questionable"],
+                "last_modified": [datetime(2024, 9, 1, tzinfo=UTC)],
+            }
+        ),
         2025: pl.DataFrame(
             {
                 "team": ["KC", "KC"],
                 "week": [2, 3],
                 "full_name": ["Rashee Rice", "Rashee Rice"],
+                "position": ["WR", "WR"],
                 "report_status": ["Out", "Out"],
+                "last_modified": [datetime(2025, 9, 1, tzinfo=UTC), datetime(2025, 9, 8, tzinfo=UTC)],
             }
         ),
     }
+    snap_counts = {}
+    for season in (2024, 2025):
+        players = (
+            [("Patrick Mahomes", "QB", 60), ("Rashee Rice", "WR", 50), ("Travis Kelce", "TE", 40)]
+            if season == 2024
+            else [("Patrick Mahomes", "QB", 60), ("Xavier Worthy", "WR", 48), ("Travis Kelce", "TE", 40)]
+        )
+        snap_counts[season] = pl.DataFrame(
+            [
+                {"team": "KC", "week": week, "player": player, "position": position, "offense_snaps": snaps}
+                for week in range(1, 5)
+                for player, position, snaps in players
+            ]
+        )
     nextgen = {
         2024: pl.DataFrame({"team_abbr": ["KC"], "week": [1], "avg_time_to_throw": [2.8]}),
         2025: pl.DataFrame({"team_abbr": ["KC"], "week": [1], "avg_time_to_throw": [3.0]}),
@@ -211,17 +315,27 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
         2024: pl.DataFrame({"week": [1], "home_team": ["KC"], "away_team": ["BUF"], "home_score": [27], "away_score": [20]}),
         2025: pl.DataFrame({"week": [1], "home_team": ["BUF"], "away_team": ["KC"], "home_score": [24], "away_score": [20]}),
     }
-    supplemental = {"rosters": rosters, "injuries": injuries, "nextgen_passing": nextgen, "schedules": schedules}
+    supplemental = {
+        "rosters": rosters,
+        "injuries": injuries,
+        "snap_counts": snap_counts,
+        "nextgen_passing": nextgen,
+        "schedules": schedules,
+    }
     supplemental_manifests = {
         dataset: {season: manifest(season, frame.columns, dataset) for season, frame in frames.items()}
         for dataset, frames in supplemental.items()
     }
-    manifests = {season: manifest(season, frame.columns) for season, frame in pbp_pair.items()}
+    manifests = {season: manifest(season, frame.columns) for season, frame in analysis_pbp.items()}
 
-    result = plugin.analyze(request, pbp_pair, manifests, supplemental, supplemental_manifests)
+    result = plugin.analyze(request, analysis_pbp, manifests, supplemental, supplemental_manifests)
     executed = {item.tool for item in result.executions}
     assert {
         "compare_player_usage",
+        "build_player_week_dataset",
+        "analyze_position_group_availability",
+        "analyze_lineup_continuity",
+        "decompose_lineup_continuity",
         "analyze_qb_receiver_pairs",
         "get_roster_context",
         "analyze_starter_availability",
@@ -230,7 +344,33 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
         "join_schedule_context",
     } <= executed
     metrics = {item.metric for item in result.aggregate_evidence}
-    assert {"receiver_target_share", "qb_receiver_epa_per_target", "unavailable_player_reports"} <= metrics
+    assert {
+        "receiver_target_share",
+        "player_opportunity_share",
+        "position_group_availability_rate",
+        "lineup_returning_snap_share",
+        "lineup_turnover_position_contribution",
+        "qb_receiver_epa_per_target",
+        "unavailable_player_reports",
+    } <= metrics
+    overall_continuity = next(
+        item for item in result.aggregate_evidence if item.metric == "lineup_returning_snap_share" and item.label.startswith("Overall")
+    )
+    assert 0 < float(overall_continuity.comparison_value) < 1
+    wr_availability = next(
+        item
+        for item in result.aggregate_evidence
+        if item.metric == "position_group_availability_rate" and item.label.startswith("WR")
+    )
+    assert float(wr_availability.comparison_value) < float(wr_availability.baseline_value)
+    worthy_targets = next(
+        item for item in result.aggregate_evidence if item.metric == "receiver_target_share" and "Xavier Worthy" in item.label
+    )
+    rice_targets = next(
+        item for item in result.aggregate_evidence if item.metric == "receiver_target_share" and "Rashee Rice" in item.label
+    )
+    assert worthy_targets.baseline_value == 0
+    assert rice_targets.comparison_value == 0
     assert "nextgen_avg_time_to_throw" in metrics
     assert "schedule_average_scoring_margin" in metrics
 

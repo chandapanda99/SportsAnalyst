@@ -1,7 +1,7 @@
 # Open Sports Analyst
 
 Open Sports Analyst is a local-first framework for answering analytical sports questions against reproducible local datasets. The first plugin diagnoses changes in NFL team
-passing efficiency using nflverse play-by-play.
+passing, rushing, and overall offensive performance using nflverse play-by-play.
 
 The language model plans and explains; versioned Python tools and read-only SQL produce the evidence. Every measured claim links to an aggregate result or source play. The
 application never lets a model write or execute Python.
@@ -68,6 +68,7 @@ targeted season or week comparisons.
 
 ```powershell
 uv run sports-analyst ask "Why did Kansas City's passing efficiency change?" --team KC --compare 2024:2025
+uv run sports-analyst ask "How did Kansas City's rushing performance change?" --team KC --compare 2024:2025 --domain rushing
 ```
 
 Investigations and datasets are stored below the operating system's user-data directory. Raw nflverse files and generated investigations are never committed.

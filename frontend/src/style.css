@@ -574,7 +574,48 @@ main {
 }
 
 .section-help {
-    margin: -10px 0 20px
+    margin: 14px 0 20px
+}
+
+.domain-selector {
+    display: grid;
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+    gap: 8px
+}
+
+.domain-selector button {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border-control);
+    border-radius: 7px;
+    background: var(--color-surface-input);
+    color: var(--color-text-soft);
+    text-align: left;
+    cursor: pointer
+}
+
+.domain-selector button:hover,
+.domain-selector button:focus-visible {
+    border-color: var(--color-border-interactive)
+}
+
+.domain-selector button.active {
+    border-color: var(--mint);
+    background: color-mix(in srgb, var(--mint) 8%, var(--color-surface-input));
+    box-shadow: inset 3px 0 0 var(--mint)
+}
+
+.domain-selector strong {
+    color: var(--color-text-primary);
+    font-size: 14px
+}
+
+.domain-selector span {
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    line-height: 1.4
 }
 
 .metric-groups {
@@ -1467,7 +1508,7 @@ button.analyst-bubble:focus-visible,
 }
 
 .report-summary > p {
-    max-width: 1240px;
+    max-width: 1096px;
     margin: 13px 0 0;
     color: var(--color-text-soft);
     font-size: 20px;
@@ -2003,7 +2044,7 @@ button.analyst-bubble:focus-visible,
         grid-template-columns:1fr 1fr
     }
 
-    .scope-controls, .metric-groups, .window-grid, .window-grid.before-after {
+    .scope-controls, .metric-groups, .domain-selector, .window-grid, .window-grid.before-after {
         grid-template-columns: 1fr
     }
 

@@ -25,7 +25,7 @@ operation.
 
 ## Shared analytical rules
 
-- Play-by-play tools currently focus on team quarterback dropbacks.
+- Each investigation selects a play population: quarterback dropbacks, qualifying rushing attempts, or overall offensive plays.
 - Comparison windows require at least 30 qualifying plays each.
 - Situational subgroups require at least 10 qualifying plays in both windows.
 - Full-season ranges analyze every synced season from the selected start through end season.
@@ -33,25 +33,27 @@ operation.
 - Every result records its tool version, parameters, input dataset manifests, runtime, result hash, and stable evidence identifier.
 - Results are descriptive and observational. They do not establish causality.
 
-Supported metrics are EPA/dropback, success rate, CPOE, explosive-pass rate, yards/play, sack rate, interception rate, air yards/attempt, and YAC/completion. Supported
-diagnostic cuts are down, distance, field zone, score state, shotgun, no huddle, personnel, and formation when the required source fields are available.
+Passing metrics are EPA/dropback, success rate, CPOE, explosive-pass rate, yards/play, sack rate, interception rate, air yards/attempt, and YAC/completion. Rushing metrics are
+EPA/rush, rush success rate, yards/rush, explosive-run rate, stuff rate, and rushing first-down rate. Overall-offense metrics are EPA/play, overall success rate, overall
+yards/play, and turnover rate. Supported diagnostic cuts are down, distance, field zone, score state, shotgun, no huddle, personnel, and formation when the required source
+fields are available.
 
 ## Discovery and validation
 
-| Tool                      | Purpose                                                                                                                                          | Data requirement                             |
-|---------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
-| `get_analysis_options`    | Returns valid teams, synced and syncable seasons, metrics, defaults, split dimensions, comparison modes, and season-specific field availability. | Dataset manifests; no play rows are scanned. |
+|           Tool            | Purpose                                                                                                                                          | Data requirement                             |
+|:-------------------------:|--------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+|  `get_analysis_options`   | Returns valid teams, synced and syncable seasons, metrics, defaults, split dimensions, comparison modes, and season-specific field availability. | Dataset manifests; no play rows are scanned. |
 | `validate_analysis_scope` | Validates team resolution, seasons, windows, metric and split names, required fields, and minimum samples before analysis.                       | Play-by-play for every requested season.     |
-| `explain_metric`          | Returns the metric definition, formula, qualifying-play rule, interpretation guidance, preferred direction when meaningful, and limitations.     | No dataset required.                         |
+|     `explain_metric`      | Returns the metric definition, formula, qualifying-play rule, interpretation guidance, preferred direction when meaningful, and limitations.     | No dataset required.                         |
 
 ## Core comparison and diagnosis
 
-| Tool                        | Purpose                                                                 | Main inputs                                                                        | Evidence produced                                                                                                        |
-|-----------------------------|-------------------------------------------------------------------------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| `compare_time_windows`      | Measures selected metrics between two season/week windows.              | Team, baseline window, comparison window, season type, metrics.                    | Baseline value, comparison value, difference, sample size, and game-bootstrap confidence interval where available.       |
-| `analyze_season_trends`     | Measures each season in an inclusive full-season range.                 | Team, included seasons, metrics.                                                   | One measurement and confidence interval per season and metric.                                                           |
-| `analyze_weekly_trends`     | Determines whether a change is sustained or concentrated.               | Team, one or two windows, metric; three-week moving average by default.            | Weekly values, bootstrap intervals, three-week moving averages, and sustained/mixed/outlier-concentrated classification. |
-| `rank_game_outliers`        | Finds comparison-window games farthest from the baseline expectation.   | Team, comparison window, metric, result limit.                                     | Ranked game-level differences and qualifying-play samples.                                                               |
+|            Tool             | Purpose                                                                 | Main inputs                                                                        | Evidence produced                                                                                                        |
+|:---------------------------:|-------------------------------------------------------------------------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+|   `compare_time_windows`    | Measures selected metrics between two season/week windows.              | Team, analysis domain, baseline window, comparison window, season type, metrics.   | Baseline value, comparison value, difference, sample size, and game-bootstrap confidence interval where available.       |
+|   `analyze_season_trends`   | Measures each season in an inclusive full-season range.                 | Team, included seasons, metrics.                                                   | One measurement and confidence interval per season and metric.                                                           |
+|   `analyze_weekly_trends`   | Determines whether a change is sustained or concentrated.               | Team, one or two windows, metric; three-week moving average by default.            | Weekly values, bootstrap intervals, three-week moving averages, and sustained/mixed/outlier-concentrated classification. |
+|    `rank_game_outliers`     | Finds comparison-window games farthest from the baseline expectation.   | Team, comparison window, metric, result limit.                                     | Ranked game-level differences and qualifying-play samples.                                                               |
 | `benchmark_against_league`  | Places team performance in league context for each window.              | Team, windows, metrics.                                                            | NFL percentile, NFL rank, AFC/NFC rank, and distance from league average.                                                |
 | `analyze_situational_split` | Compares performance within registered football situations.             | Metric, split dimensions, minimum subgroup sample.                                 | Baseline, comparison, and change for every qualifying subgroup.                                                          |
 | `find_representative_plays` | Selects source plays that support or challenge the aggregate diagnosis. | Team, window, supporting and counterexample limits, optional minimum absolute EPA. | Game ID, play ID, description, EPA, support/counterexample role, and source manifest.                                    |
@@ -61,28 +63,40 @@ extensions rather than current scope options.
 
 ## Decomposition and context
 
-| Tool                      | Purpose                                                                                     | Data requirement                                                                                                  |
-|---------------------------|---------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+|           Tool            | Purpose                                                                                     | Data requirement                                                                                                  |
+|:-------------------------:|---------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
 | `decompose_metric_change` | Separates changes associated with situational mix from within-group performance changes.    | Play-by-play and selected split fields.                                                                           |
-| `adjust_for_opponents`    | Compares raw EPA with leave-one-game-out defensive baselines.                               | Play-by-play containing offense, defense, game ID, and EPA; opponent samples require at least 30 other dropbacks. |
-| `analyze_game_state`      | Analyzes performance while leading, tied, and trailing.                                     | Play-by-play with score differential.                                                                             |
-| `compare_play_mix`        | Measures changes in the frequency of selected situations, personnel, formations, and tempo. | Play-by-play and selected split fields.                                                                           |
+|  `adjust_for_opponents`   | Compares raw EPA with leave-one-game-out defensive baselines.                               | Play-by-play containing offense, defense, game ID, and EPA; opponent samples require at least 30 other dropbacks. |
+|   `analyze_game_state`    | Analyzes performance while leading, tied, and trailing.                                     | Play-by-play with score differential.                                                                             |
+|    `compare_play_mix`     | Measures changes in the frequency of selected situations, personnel, formations, and tempo. | Play-by-play and selected split fields.                                                                           |
 | `identify_change_points`  | Finds descriptive week boundaries with the largest sustained shift.                         | Weekly play-by-play values for the selected metric.                                                               |
 
 Decomposition results from overlapping dimensions must not be summed together. They are descriptive diagnostics, not causal attribution.
 
 ## Player, roster, and availability context
 
-| Tool                                    | Purpose                                                                         | Primary dataset                               |
-|-----------------------------------------|---------------------------------------------------------------------------------|-----------------------------------------------|
-| `resolve_player`                        | Resolves player names or identifiers and reports teams, positions, and seasons. | Rosters, player statistics, or play-by-play.  |
-| `get_roster_context`                    | Compares roster composition by position across windows.                         | Rosters.                                      |
-| `analyze_starter_availability`          | Compares recorded injury and availability reports.                              | Injuries.                                     |
-| `summarize_injured_or_inactive_players` | Ranks players most frequently listed unavailable.                               | Injuries.                                     |
-| `compare_player_usage`                  | Compares receiver target share and quarterback involvement.                     | Play-by-play.                                 |
-| `analyze_qb_receiver_pairs`             | Compares quarterback-receiver volume and EPA per target.                        | Play-by-play with passer and receiver fields. |
-| `join_nextgen_passing_metrics`          | Compares supported Next Gen Stats passing measurements.                         | Next Gen passing.                             |
-| `join_schedule_context`                 | Adds opponent, location, scoring-margin, and schedule context.                  | Schedules.                                    |
+|                  Tool                   | Purpose                                                                                             | Primary dataset                                      |
+|:---------------------------------------:|-----------------------------------------------------------------------------------------------------|------------------------------------------------------|
+|            `resolve_player`             | Resolves player names or identifiers and reports teams, positions, and seasons.                     | Rosters, player statistics, or play-by-play.         |
+|       `build_player_week_dataset`       | Resolves identities and normalizes roster, injury, snap, and play-participant data by player-week. | Play-by-play; supplemental packages enrich the rows. |
+|          `get_roster_context`           | Compares roster composition by position across windows.                                             | Rosters.                                             |
+|     `analyze_starter_availability`      | Compares recorded injury and availability reports.                                                  | Injuries.                                            |
+| `summarize_injured_or_inactive_players` | Ranks players most frequently listed unavailable.                                                   | Injuries.                                            |
+|         `compare_player_usage`          | Compares target, carry, opportunity, snap-normalized usage, and EPA per opportunity.                | Normalized player-week layer.                        |
+| `analyze_position_group_availability`   | Estimates recorded availability by position, weighted by median healthy-week snaps when possible.  | Rosters, injuries, and snap counts.                  |
+|       `analyze_lineup_continuity`       | Measures returning snap share and weighted snap-distribution similarity overall and by position.   | Snap counts and normalized player identities.       |
+|      `decompose_lineup_continuity`      | Attributes comparison-window new-player snap share to position groups.                              | Snap counts and normalized player identities.       |
+|       `analyze_qb_receiver_pairs`       | Compares quarterback-receiver volume and EPA per target.                                            | Play-by-play with passer and receiver fields.        |
+|     `join_nextgen_passing_metrics`      | Compares supported Next Gen Stats passing measurements.                                             | Next Gen passing.                                    |
+|         `join_schedule_context`         | Adds opponent, location, scoring-margin, and schedule context.                                      | Schedules.                                           |
+
+The normalized layer prefers GSIS identifiers, maps PFR or source-specific identifiers through matching player names when possible, and falls back to a normalized name key.
+It stores team, season, week, player identity, position group, roster and injury status, offensive/defensive/special-teams snaps, targets, carries, quarterback dropbacks,
+opportunities, and participant EPA. Season-level roster membership is projected only across locally observed team weeks.
+
+Continuity is game/week-level rather than snap-by-snap lineup reconstruction. Returning snap share asks how much of the comparison window's recorded participation belongs to
+players also observed in the baseline. Weighted Jaccard similarity additionally captures changes in how snaps were distributed among returning and new players. Position-group
+turnover contributions describe where new-player snaps occurred; they do not measure replacement quality or establish that turnover caused a performance change.
 
 Supplemental datasets are optional. If they are unavailable for both windows, the investigation skips the affected tools and records a capability caveat instead of fabricating
 context.

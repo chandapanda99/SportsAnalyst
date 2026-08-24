@@ -2,17 +2,53 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
+from threading import Lock
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
 
 logger = logging.getLogger("sports_analyst.agents")
-POSITIVE_IS_BETTER = {"epa_per_dropback", "success_rate", "cpoe", "explosive_pass_rate", "yards_per_play", "yards_after_catch"}
-LOWER_IS_BETTER = {"sack_rate", "interception_rate"}
+POSITIVE_IS_BETTER = {
+    "epa_per_dropback",
+    "success_rate",
+    "cpoe",
+    "explosive_pass_rate",
+    "yards_per_play",
+    "yards_after_catch",
+    "epa_per_rush",
+    "rush_success_rate",
+    "yards_per_rush",
+    "explosive_run_rate",
+    "rush_first_down_rate",
+    "epa_per_play",
+    "overall_success_rate",
+    "overall_yards_per_play",
+}
+LOWER_IS_BETTER = {"sack_rate", "interception_rate", "stuff_rate", "turnover_rate"}
+
+ANALYST_VOICE_GUIDE = """
+Write like an experienced NFL analyst briefing an informed reader, not like a model summarizing a table.
+
+- Lead with the answer and the central football story. Do not open with methodology, generic scene-setting, or a list of metrics.
+- Prioritize the two or three findings that best answer the question. Treat the remaining measurements as support, context, or
+  counterevidence instead of reciting every available result.
+- Connect related measurements in natural prose and explain their football meaning. For example, distinguish changes in play mix from
+  changes in execution, and separate sustained movement from a result driven by a few games.
+- Use precise football language where the evidence supports it, but translate specialized metrics into practical implications. Avoid
+  buzzwords, empty intensifiers, canned phrases, and repetitive sentence templates.
+- Vary sentence length and transitions so the writing reads naturally. Prefer direct sentences and active voice. Do not refer to
+  yourself, the model, tools, prompts, evidence keys, or the process of generating the report.
+- Keep the summary to a compact thesis followed by the most important qualification. Each finding should make one coherent point and
+  should not repeat the summary verbatim.
+- State measured results plainly. Use interpretation claims to explain what the pattern is consistent with, while making uncertainty
+  proportional to sample size and evidence quality. Never turn observational evidence into proven causality.
+- Mention counterexamples, noisy samples, endpoint-only comparisons, or conflicting indicators when they materially change the read.
+""".strip()
 
 
 class SynthesisDraft(BaseModel):
@@ -21,7 +57,7 @@ class SynthesisDraft(BaseModel):
 
 
 def _citation_ledger(
-    aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
+        aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     ledger: dict[str, str] = {}
     aggregate_payload: list[dict[str, Any]] = []
@@ -42,19 +78,27 @@ def _citation_ledger(
 def _citation_response_model(valid_aliases: list[str]) -> type[BaseModel]:
     if not valid_aliases:
         raise ValueError("citation schema requires at least one evidence alias")
-    citation_key = Literal.__getitem__(tuple(valid_aliases))
-    claim_model = create_model(
-        "CitationClaimDraft",
-        claim_type=(ClaimType, ...),
-        statement=(str, Field(min_length=1, max_length=1_500)),
-        evidence_refs=(list[citation_key], Field(min_length=1)),
-        confidence=(Literal["low", "medium", "high"], "medium"),
-    )
-    return create_model(
-        "CitationSynthesisDraft",
-        summary=(str, Field(min_length=1, max_length=2_500)),
-        claims=(list[claim_model], Field(min_length=1, max_length=12)),
-    )
+    allowed_aliases = frozenset(valid_aliases)
+
+    class CitationClaimDraft(BaseModel):
+        claim_type: ClaimType
+        statement: str = Field(min_length=1, max_length=1_500)
+        evidence_refs: list[str] = Field(min_length=1)
+        confidence: Literal["low", "medium", "high"] = "medium"
+
+        @field_validator("evidence_refs")
+        @classmethod
+        def validate_evidence_refs(cls, references: list[str]) -> list[str]:
+            unknown = [reference for reference in references if reference not in allowed_aliases]
+            if unknown:
+                raise ValueError(f"unknown evidence aliases: {unknown}")
+            return references
+
+    class CitationSynthesisDraft(BaseModel):
+        summary: str = Field(min_length=1, max_length=2_500)
+        claims: list[CitationClaimDraft] = Field(min_length=1, max_length=12)
+
+    return CitationSynthesisDraft
 
 
 def _resolve_citation_draft(draft: BaseModel, ledger: dict[str, str]) -> SynthesisDraft:
@@ -84,16 +128,18 @@ def _is_citation_error(error: Exception) -> bool:
 
 
 def _fallback_synthesis(
-    question: str,
-    team: str,
-    baseline: AnalysisWindow,
-    comparison: AnalysisWindow,
-    aggregate: list[AggregateEvidence],
-    analysis_seasons: list[int] | None = None,
-    conversation_context: list[dict[str, str]] | None = None,
+        question: str,
+        team: str,
+        baseline: AnalysisWindow,
+        comparison: AnalysisWindow,
+        aggregate: list[AggregateEvidence],
+        analysis_seasons: list[int] | None = None,
+        conversation_context: list[dict[str, str]] | None = None,
+        analysis_domain: str = "passing",
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
-    primary = next((item for item in metrics if item.metric == "epa_per_dropback"), metrics[0] if metrics else None)
+    preferred_metric = {"passing": "epa_per_dropback", "rushing": "epa_per_rush", "offense": "epa_per_play"}[analysis_domain]
+    primary = next((item for item in metrics if item.metric == preferred_metric), metrics[0] if metrics else None)
     if primary is None:
         raise ValueError("analysis produced no comparable metrics")
     change = float(primary.value or 0)
@@ -105,9 +151,7 @@ def _fallback_synthesis(
     baseline_label = f"{baseline.season} weeks {baseline.weeks[0]}–{baseline.weeks[1]}"
     comparison_label = f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
     range_context = (
-        f" The analysis includes every full season from {analysis_seasons[0]} through {analysis_seasons[-1]}."
-        if analysis_seasons
-        else ""
+        f" The analysis includes every full season from {analysis_seasons[0]} through {analysis_seasons[-1]}." if analysis_seasons else ""
     )
     summary = (
         f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "
@@ -121,7 +165,7 @@ def _fallback_synthesis(
             claim_type=ClaimType.MEASURED,
             statement=(
                 f"{primary.label} moved from {primary.baseline_value:.3f} to {primary.comparison_value:.3f}, "
-                f"a change of {float(primary.value or 0):+.3f} across {primary.sample_size} comparison-window dropbacks."
+                f"a change of {float(primary.value or 0):+.3f} across {primary.sample_size} comparison-window qualifying plays."
             ),
             evidence_ids=[primary.evidence_id],
             confidence="high" if primary.sample_size >= 100 else "medium",
@@ -177,17 +221,32 @@ class EvidenceBoundAgent:
         self.settings = settings or get_settings()
 
     def synthesize(
-        self,
-        question: str,
-        team: str,
-        baseline: AnalysisWindow,
-        comparison: AnalysisWindow,
-        aggregate: list[AggregateEvidence],
-        plays: list[PlayEvidence],
-        analysis_seasons: list[int] | None = None,
-        conversation_context: list[dict[str, str]] | None = None,
+            self,
+            question: str,
+            team: str,
+            baseline: AnalysisWindow,
+            comparison: AnalysisWindow,
+            aggregate: list[AggregateEvidence],
+            plays: list[PlayEvidence],
+            analysis_seasons: list[int] | None = None,
+            conversation_context: list[dict[str, str]] | None = None,
+            analysis_domain: str = "passing",
+            progress_callback: Callable[[str, float], None] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
-        fallback = _fallback_synthesis(question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context)
+        progress = 0.75
+        progress_lock = Lock()
+
+        def report_progress(message: str, target: float | None = None) -> None:
+            nonlocal progress
+            if progress_callback is None:
+                return
+            with progress_lock:
+                progress = min(0.97, max(progress + 0.015 if target is None else target, progress))
+                progress_callback(message, progress)
+
+        report_progress("Organizing the validated evidence", 0.76)
+        fallback = _fallback_synthesis(question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context,
+                                       analysis_domain)
         logger.debug(
             "synthesis_requested provider=%s aggregate_count=%d play_count=%d",
             self.settings.model_provider,
@@ -196,11 +255,13 @@ class EvidenceBoundAgent:
         )
         if self.settings.model_provider == "azure_foundry" and not self.settings.foundry_endpoint:
             logger.info("synthesis_fallback reason=model_not_configured provider=azure_foundry")
+            report_progress("Writing the deterministic evidence report", 0.94)
             return fallback, None, True
         try:
             from deepagents import create_deep_agent
             from deepagents.backends import StateBackend
             from langchain.tools import tool
+            from langchain_core.callbacks import BaseCallbackHandler
 
             resolved = get_provider(self.settings.model_provider).build(self.settings)
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
@@ -211,6 +272,33 @@ class EvidenceBoundAgent:
             )
             response_model = _citation_response_model(list(ledger))
             allowed_citations = ", ".join(ledger)
+            report_progress("Preparing the evidence brief for the analyst", 0.78)
+
+            class SynthesisProgressHandler(BaseCallbackHandler):
+                model_passes = 0
+
+                def on_chat_model_start(self, *_args: Any, **_kwargs: Any) -> None:
+                    messages = (
+                        "Reviewing the analytical brief",
+                        "Comparing the strongest performance signals",
+                        "Examining situational context and counterexamples",
+                        "Challenging the findings against the evidence",
+                        "Drafting the analyst's final read",
+                    )
+                    message = messages[min(self.model_passes, len(messages) - 1)]
+                    self.model_passes += 1
+                    report_progress(message)
+
+                def on_tool_start(self, serialized: dict[str, Any], _input: str, **_kwargs: Any) -> None:
+                    tool_name = str(serialized.get("name", ""))
+                    messages = {
+                        "inspect_aggregate_evidence": "Inspecting validated metrics and diagnostic cuts",
+                        "inspect_representative_plays": "Reviewing representative plays and counterexamples",
+                        "task": "Consulting a specialist football analyst",
+                    }
+                    report_progress(messages.get(tool_name, "Running an evidence review step"))
+
+            progress_handler = SynthesisProgressHandler()
 
             @tool
             def inspect_aggregate_evidence() -> str:
@@ -224,10 +312,11 @@ class EvidenceBoundAgent:
 
             tools: list[Any] = [inspect_aggregate_evidence, inspect_representative_plays]
             common = (
-                "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by those "
-                f"tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be measured; football "
-                "explanations must be interpretation claims. Do not claim causality or invent players, schemes, injuries, citation keys, "
-                "or evidence IDs."
+                    "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
+                    f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
+                    "measured; football explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
+                    "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n"
+                    + ANALYST_VOICE_GUIDE
             )
             if analysis_seasons:
                 common += (
@@ -243,22 +332,34 @@ class EvidenceBoundAgent:
             subagents = [
                 {
                     "name": "efficiency-analyst",
-                    "description": "Diagnoses passing efficiency changes.",
-                    "system_prompt": common,
+                    "description": f"Diagnoses {analysis_domain} efficiency and production changes.",
+                    "system_prompt": (
+                            "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
+                            "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
+                            "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
+                    ),
                     "tools": tools,
                     "model": resolved.chat_model,
                 },
                 {
                     "name": "situational-analyst",
                     "description": "Examines contextual split contributions.",
-                    "system_prompt": common,
+                    "system_prompt": (
+                            "Act as a situational football analyst. Determine where the change occurred, whether it came from usage mix or "
+                            "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
+                            "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
+                    ),
                     "tools": tools,
                     "model": resolved.chat_model,
                 },
                 {
                     "name": "evidence-reviewer",
                     "description": "Challenges claims and verifies citations.",
-                    "system_prompt": common,
+                    "system_prompt": (
+                            "Act as a skeptical senior football editor. Challenge unsupported explanations, check that the cited evidence "
+                            "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
+                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
+                    ),
                     "tools": tools,
                     "model": resolved.chat_model,
                 },
@@ -268,8 +369,11 @@ class EvidenceBoundAgent:
                 tools=tools,
                 subagents=subagents,
                 system_prompt=(
-                    f"You coordinate an NFL analysis for {team}, comparing {baseline.model_dump()} with {comparison.model_dump()}. "
-                    "Delegate diagnosis and review. Produce concise analyst-style findings grounded in evidence. " + common
+                        f"You coordinate an NFL analysis for {team}, comparing {baseline.model_dump()} with {comparison.model_dump()}. "
+                        "Delegate diagnosis and review, then write the final report as a polished analyst's read—not a transcript of the "
+                        "specialists and not a metric dump. Build a clear hierarchy: answer, strongest explanation, qualification, then "
+                        "supporting detail. The reader should understand both what changed and why the available football evidence makes "
+                        "that interpretation reasonable.\n\n" + common
                 ),
                 response_format=response_model,
                 backend=StateBackend(),
@@ -277,7 +381,10 @@ class EvidenceBoundAgent:
             )
 
             def invoke(prompt: str) -> BaseModel:
-                response = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+                response = agent.invoke(
+                    {"messages": [{"role": "user", "content": prompt}]},
+                    config={"callbacks": [progress_handler]},
+                )
                 structured = response.get("structured_response")
                 return structured if isinstance(structured, response_model) else response_model.model_validate(structured)
 
@@ -285,7 +392,8 @@ class EvidenceBoundAgent:
                 logger.info("model_synthesis_started model_id=%s citation_aliases=%d", resolved.model_id, len(ledger))
                 aliased_draft = invoke(
                     f"The user's analytical question is {json.dumps(question)}. Synthesize and verify an answer that directly "
-                    "addresses that question. Use evidence_refs with exact citation keys from the tools."
+                    "addresses that question. Write a concise, natural analyst's read with a clear thesis, prioritized findings, and "
+                    "calibrated football interpretation. Use evidence_refs with exact citation keys from the tools."
                 )
             except Exception as citation_error:
                 if not _is_citation_error(citation_error):
@@ -300,7 +408,9 @@ class EvidenceBoundAgent:
                     "use only these exact evidence_refs: "
                     f"{allowed_citations}. Do not write or infer canonical evidence IDs."
                 )
+            report_progress("Validating every finding and citation", 0.94)
             resolved_draft = _resolve_citation_draft(aliased_draft, ledger)
+            report_progress("Finalizing the evidence-linked report", 0.97)
             logger.info("model_synthesis_completed model_id=%s claims=%d", resolved.model_id, len(resolved_draft.claims))
             return resolved_draft, resolved.model_id, False
         except Exception as error:

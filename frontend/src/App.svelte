@@ -16,8 +16,13 @@
     let evidenceLoading = false;
     let evidenceError = '';
     let evidenceRequestVersion = 0;
+    const domainExampleQuestions = {
+        passing: "Why did this team's passing efficiency change?",
+        rushing: "How did this team's rushing performance change?",
+        offense: "How did this team's overall offensive efficiency change?"
+    } as const;
     const exampleQuestions = [
-        "Why did this team's passing efficiency change?",
+        domainExampleQuestions.passing,
         "Did this team become more consistent, or was the change concentrated in a few periods?",
         "Which games had the greatest influence on the difference between these periods?",
         "How did this team move relative to the rest of the league?",
@@ -26,7 +31,9 @@
         "Where does the clearest sustained change in performance begin?",
         "Which receivers gained or lost the most target share between these periods?",
         "Which quarterback-receiver connections changed the most?",
-        "Which representative plays best support—and challenge—the overall finding?"
+        "Which representative plays best support—and challenge—the overall finding?",
+        domainExampleQuestions.rushing,
+        domainExampleQuestions.offense
     ];
     let question = exampleQuestions[0];
     let team = '';
@@ -42,6 +49,7 @@
     let comparisonEndWeek = 18;
     let splitWeek = 10;
     let comparisonMode = 'full_seasons';
+    let analysisDomain: 'passing' | 'rushing' | 'offense' = 'passing';
     let seasonType: 'REG' | 'POST' | 'ALL' = 'REG';
     let selectedMetrics: string[] = [];
     let selectedSplits: string[] = [];
@@ -56,7 +64,6 @@
     let followup = '';
     let followupBusy = false;
     let pendingFollowup = '';
-    const metricCategories = ['Efficiency', 'Passing', 'Negative outcomes'];
 
     $: requiredSeasons = comparisonMode === 'before_after'
         ? [baseline]
@@ -78,7 +85,9 @@
         resolvedTeam && question.trim().length >= 3 && windowsDiffer && hasRequiredData && selectedAvailableMetricCount > 0
     );
     $: indexedSeasonCount = new Set(datasets.filter((dataset) => dataset.dataset === 'play_by_play').map((dataset) => dataset.season)).size;
-    $: availableMetrics = (analysisOptions?.metrics ?? []).filter(metricAvailable);
+    $: domainMetrics = (analysisOptions?.metrics ?? []).filter((metric) => metric.analysis_domain === analysisDomain);
+    $: metricCategories = [...new Set(domainMetrics.map((metric) => metric.category))];
+    $: availableMetrics = domainMetrics.filter(metricAvailable);
     $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
     $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
     $: selectedClaim = active?.claims.find((claim) => claim.claim_id === selectedClaimId) ?? null;
@@ -112,6 +121,7 @@
             selectedMetrics = [...analysisOptions.default_metrics];
             const missing = analysisOptions.syncable_seasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
             syncSeasons = missing.length ? missing.slice(0, 2) : analysisOptions.available_seasons.slice(-1);
+            selectLocallyAvailablePackages();
             initializedSelections = true;
         }
     }
@@ -194,8 +204,20 @@
     }
 
     function useRecommendedMetrics() {
-        const recommended = new Set(analysisOptions?.default_metrics ?? []);
+        const recommended = new Set(analysisOptions?.default_metrics_by_domain?.[analysisDomain] ?? analysisOptions?.default_metrics ?? []);
         selectedMetrics = availableMetrics.filter((metric) => recommended.has(metric.value)).map((metric) => metric.value);
+    }
+
+    function selectAnalysisDomain(domain: 'passing' | 'rushing' | 'offense') {
+        if (analysisDomain === domain) return;
+        analysisDomain = domain;
+        const recommended = new Set(analysisOptions?.default_metrics_by_domain?.[domain] ?? []);
+        selectedMetrics = (analysisOptions?.metrics ?? [])
+            .filter((metric) => metric.analysis_domain === domain && metricAvailable(metric) && recommended.has(metric.value))
+            .map((metric) => metric.value);
+        if ((Object.values(domainExampleQuestions) as readonly string[]).includes(question)) {
+            question = domainExampleQuestions[domain];
+        }
     }
 
     function selectAllMetrics() {
@@ -211,6 +233,23 @@
         syncDatasets = syncDatasets.includes(dataset)
             ? syncDatasets.filter((value) => value !== dataset)
             : [...syncDatasets, dataset];
+    }
+
+    function selectLocallyAvailablePackages() {
+        if (!syncSeasons.length) {
+            syncDatasets = [];
+            return;
+        }
+        const locallyAvailable = (analysisOptions?.syncable_datasets ?? []).filter((dataset) =>
+            syncSeasons.some((season) => syncedPackages(season).has(dataset))
+        );
+        syncDatasets = locallyAvailable.length ? locallyAvailable : ['play_by_play'];
+    }
+
+    function updateSyncSeasons(event: Event) {
+        const select = event.currentTarget as HTMLSelectElement;
+        syncSeasons = Array.from(select.selectedOptions, (option) => Number(option.value));
+        selectLocallyAvailablePackages();
     }
 
     function datasetLabel(dataset: string) {
@@ -255,6 +294,20 @@
         if (!syncSeasons.length) return 'Select seasons';
         const local = syncSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
         return `${local}/${syncSeasons.length} local`;
+    }
+
+    function packagePartiallyAvailable(dataset: string) {
+        const local = syncSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
+        return local > 0 && local < syncSeasons.length;
+    }
+
+    function showPartialSelection(node: HTMLInputElement, partial: boolean) {
+        node.indeterminate = partial;
+        return {
+            update(nextPartial: boolean) {
+                node.indeterminate = nextPartial;
+            }
+        };
     }
 
     function wait(milliseconds: number) {
@@ -356,6 +409,7 @@
             });
             const {investigation_id} = await api.investigate({
                 question: question.trim(),
+                analysis_domain: analysisDomain,
                 scope: {
                     team: resolvedTeam,
                     baseline: baselineWindow,
@@ -547,7 +601,8 @@
                         <span>{item.run.scope.team}</span>
                         <div>{item.run.question}
                             <small>{item.run.scope.comparison_design === 'full_seasons' ? `Full Seasons ${item.run.scope.baseline.season}–${item.run.scope.comparison.season}` : `${item.run.scope.baseline.season} W${item.run.scope.baseline.weeks[0]}–${item.run.scope.baseline.weeks[1]} → ${item.run.scope.comparison.season} W${item.run.scope.comparison.weeks[0]}–${item.run.scope.comparison.weeks[1]}`}</small>
-                            {#if threadFor(item).length > 1}<small class="thread-count">{threadFor(item).length - 1} follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
+                            {#if threadFor(item).length > 1}<small class="thread-count">{threadFor(item).length - 1}
+                                follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
                         </div>
                     </button>
                     <button class="delete-report" type="button" aria-label={`Delete investigation thread: ${item.run.question}`} title="Delete investigation thread"
@@ -596,7 +651,7 @@
                             <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-play is required. Package checkboxes choose what to sync next; the coverage labels show what is already stored locally.</span>
                             </div>
                             <div class="sync-fields">
-                                <label class="season-picker">Seasons<select multiple bind:value={syncSeasons} aria-label="Seasons to sync">
+                                <label class="season-picker">Seasons<select multiple value={syncSeasons} aria-label="Seasons to sync" on:change={updateSyncSeasons}>
                                     {#each analysisOptions?.syncable_seasons ?? [] as season}
                                         <option value={season}>{season}{seasonPackageStatus(season)}</option>
                                     {/each}
@@ -606,6 +661,7 @@
                                     <div class="dataset-options">
                                         {#each analysisOptions?.syncable_datasets ?? [] as dataset}<label><input type="checkbox"
                                                                                                                  checked={syncDatasets.includes(dataset)}
+                                                                                                                 use:showPartialSelection={packagePartiallyAvailable(dataset)}
                                                                                                                  on:change={() => toggleSyncDataset(dataset)}/><span>{datasetLabel(dataset)}
                                             <small>{packageCoverage(dataset)}</small></span></label>{/each}
                                     </div>
@@ -758,13 +814,21 @@
                             </button>
                         </div>
                     </div>
+                    <div class="domain-selector" role="group" aria-label="Analysis domain">
+                        {#each analysisOptions?.analysis_domains ?? [] as domain}
+                            <button type="button" class:active={analysisDomain === domain.value} aria-pressed={analysisDomain === domain.value}
+                                    on:click={() => selectAnalysisDomain(domain.value)}>
+                                <strong>{domain.label}</strong><span>{domain.description}</span>
+                            </button>
+                        {/each}
+                    </div>
                     <p class="section-help"><strong>Recommended metrics are selected by default.</strong> Checked metrics are included and unchecked metrics are
                         excluded. Use Recommended Metrics replaces the current selection with the recommended set.</p>
                     <div class="metric-groups">
                         {#each metricCategories as category}
                             <section class="metric-group" role="group" aria-label={category}>
                                 <h4 class="metric-group-title">{category}</h4>
-                                {#each analysisOptions?.metrics.filter((metric) => metric.category === category) ?? [] as metric}
+                                {#each domainMetrics.filter((metric) => metric.category === category) as metric}
                                     <label class:unavailable={!metricAvailable(metric)} title={metric.description}>
                                         <input type="checkbox" checked={selectedMetrics.includes(metric.value)} disabled={!metricAvailable(metric)}
                                                on:change={() => toggleMetric(metric.value)}/>
@@ -878,14 +942,16 @@
                                     type="button" on:click={() => openInvestigation(turn)}>
                                 <small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
                                 <p>{turn.summary}</p>
-                                <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'} <Icon name="arrow-right" size={15}/></span>
+                                <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'}
+                                    <Icon name="arrow-right" size={15}/></span>
                             </button>
                         </div>
                     {/each}
                     {#if pendingFollowup}
                         <article class="chat-row user-row pending-message">
                             <span class="chat-avatar user-avatar">You</span>
-                            <div class="chat-bubble user-bubble"><small>New follow-up</small><p>{pendingFollowup}</p></div>
+                            <div class="chat-bubble user-bubble"><small>New follow-up</small>
+                                <p>{pendingFollowup}</p></div>
                         </article>
                         <article class="chat-row analyst-row pending-message">
                             <span class="chat-avatar analyst-avatar"><Icon name="brain" size={18}/></span>
@@ -906,7 +972,8 @@
                                   }
                               }}></textarea>
                     <button type="button" disabled={followupBusy || !followup.trim()} on:click={sendFollowup}>
-                        {followupBusy ? 'Analyzing' : 'Send'} <Icon name="send" size={18}/>
+                        {followupBusy ? 'Analyzing' : 'Send'}
+                        <Icon name="send" size={18}/>
                     </button>
                     <small>Enter to send · Shift+Enter for a new line</small>
                 </div>
@@ -918,6 +985,7 @@
                     <p>{active.summary}</p>
                     <div class="report-meta" aria-label="Investigation scope">
                         <span>{active.run.scope.team}</span>
+                        <span>{active.run.analysis_domain === 'rushing' ? 'Rushing' : active.run.analysis_domain === 'offense' ? 'Overall offense' : 'Passing'}</span>
                         <span>{active.run.scope.comparison_design === 'full_seasons' ? `${active.run.scope.baseline.season}–${active.run.scope.comparison.season} inclusive` : `${active.run.scope.baseline.season} W${active.run.scope.baseline.weeks[0]}–${active.run.scope.baseline.weeks[1]} → ${active.run.scope.comparison.season} W${active.run.scope.comparison.weeks[0]}–${active.run.scope.comparison.weeks[1]}`}</span>
                         <span>{active.claims.length} evidence-bound findings</span>
                     </div>
