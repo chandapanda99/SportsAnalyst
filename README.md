@@ -17,6 +17,16 @@ application never lets a model write or execute Python.
 
 The application produces deterministic reports when no model is configured.
 
+The NFL integration keeps `NFLPlugin` as its stable public entry point while separating implementation concerns:
+
+- `nfl.py` owns tool registration, planning, and investigation orchestration.
+- `nfl_shared.py` owns metric metadata, input schemas, and stateless analytical primitives.
+- `nfl_trends.py` owns season, weekly, outlier, benchmark, split, play-mix, and change-point analysis.
+- `nfl_personnel.py` owns player-week coverage, usage, availability, and lineup continuity.
+- `nfl_supplemental.py` owns roster, injury, charting, published-stat, schedule, and play-context joins.
+- `nfl_presentation.py` owns representative-play evidence and chart specifications.
+- `nfl_player_weeks.py` owns normalization to the reusable player-week layer.
+
 ## Development
 
 Requirements: Python 3.13 or 3.14, Node.js 20+, and `uv`.

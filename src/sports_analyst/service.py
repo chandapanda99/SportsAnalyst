@@ -241,8 +241,6 @@ class AnalystApplication:
         if not manifests:
             raise ValueError("no datasets are registered")
         rows, _duration = execute_read_only_sql(
-            sql,
-            {item.season: Path(item.local_path) for item in manifests},
-            self.settings.sql_row_limit,
+            sql, {item.season: Path(item.local_path) for item in manifests}, self.settings.sql_row_limit
         )
         return rows

@@ -976,32 +976,87 @@
                     <div class="play-visual" aria-hidden="true">
                         <div class="play-caption"><span>LIVE ANALYSIS DRIVE</span><b>{Math.round(progress * 100)}%</b></div>
                         <svg class="catch-scene" viewBox="0 0 360 170" preserveAspectRatio="xMidYMid meet">
+                            <defs>
+                                <linearGradient id="practice-jersey" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0" stop-color="#dce8ee"/><stop offset="1" stop-color="#728898"/>
+                                </linearGradient>
+                                <linearGradient id="practice-shorts" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0" stop-color="#607684"/><stop offset="1" stop-color="#263845"/>
+                                </linearGradient>
+                                <filter id="ball-shadow" x="-80%" y="-100%" width="260%" height="300%">
+                                    <feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#000" flood-opacity=".55"/>
+                                </filter>
+                            </defs>
                             <path class="field-shadow" d="M19 151H341"/>
-                            <path id="analysis-catch-arc" class="catch-arc" d="M70 103 Q180 5 290 103"/>
+                            <path id="analysis-catch-arc" class="catch-arc" d="M77 95 Q180 3 283 95"/>
 
-                            <g class="player-figure player-left">
-                                <circle class="player-head" cx="42" cy="73" r="10"/>
-                                <path class="player-body" d="M31 88Q42 82 53 88L56 121Q42 129 28 121Z"/>
-                                <path class="player-limb" d="M33 93L20 110M51 93L60 101L70 103M35 121L28 151M49 121L57 151"/>
-                                <circle class="player-hand" cx="70" cy="103" r="3"/>
+                            <g class="athlete-anchor athlete-anchor-left">
+                                <ellipse class="athlete-ground-shadow" cx="43" cy="151" rx="23" ry="4"/>
+                                <g class="athlete-motion athlete-left">
+                                    <circle class="athlete-head" cx="43" cy="61" r="8.5"/>
+                                    <path class="athlete-hair" d="M35 60Q35 51 43 51Q51 51 52 59Q45 55 35 60Z"/>
+                                    <path class="athlete-neck" d="M39 68H47L48 78H38Z"/>
+                                    <path class="athlete-jersey" d="M29 82Q35 76 43 76Q52 76 58 82L62 111Q52 118 43 118Q33 118 24 111Z"/>
+                                    <path class="jersey-panel" d="M43 78V115M27 91H59"/>
+                                    <text class="jersey-number" x="43" y="103">1</text>
+                                    <path class="athlete-shorts" d="M25 110Q43 116 61 110L59 126L49 127L43 121L37 127L27 126Z"/>
+                                    <path class="athlete-leg" d="M31 124L41 125L38 140L31 151L23 150L29 137Z"/>
+                                    <path class="athlete-leg" d="M47 125L57 124L59 138L65 149L57 152L51 140Z"/>
+                                    <path class="athlete-cleat" d="M22 149H34L35 153H21Z"/>
+                                    <path class="athlete-cleat" d="M56 149H68L69 153H55Z"/>
+                                    <g class="arm-pose ready-arms">
+                                        <path class="athlete-arm" d="M29 83Q19 92 18 105"/><path class="athlete-arm" d="M57 83Q66 88 77 95"/>
+                                    </g>
+                                    <g class="arm-pose throw-arms left-throw-arms">
+                                        <path class="athlete-arm" d="M29 83Q20 92 19 106"/><path class="athlete-arm" d="M57 83Q67 86 77 95"/>
+                                        <circle class="athlete-hand" cx="77" cy="95" r="3.2"/>
+                                    </g>
+                                    <g class="arm-pose catch-arms left-catch-arms">
+                                        <path class="athlete-arm" d="M29 83Q50 86 77 95"/><path class="athlete-arm" d="M57 83Q67 90 77 95"/>
+                                        <circle class="athlete-hand" cx="77" cy="95" r="3.4"/>
+                                    </g>
+                                </g>
                             </g>
-                            <g class="player-figure player-right" transform="translate(360 0) scale(-1 1)">
-                                <circle class="player-head" cx="42" cy="73" r="10"/>
-                                <path class="player-body" d="M31 88Q42 82 53 88L56 121Q42 129 28 121Z"/>
-                                <path class="player-limb" d="M33 93L20 110M51 93L60 101L70 103M35 121L28 151M49 121L57 151"/>
-                                <circle class="player-hand" cx="70" cy="103" r="3"/>
+                            <g class="athlete-anchor athlete-anchor-right" transform="translate(360 0) scale(-1 1)">
+                                <ellipse class="athlete-ground-shadow" cx="43" cy="151" rx="23" ry="4"/>
+                                <g class="athlete-motion athlete-right">
+                                    <circle class="athlete-head" cx="43" cy="61" r="8.5"/>
+                                    <path class="athlete-hair" d="M35 60Q35 51 43 51Q51 51 52 59Q45 55 35 60Z"/>
+                                    <path class="athlete-neck" d="M39 68H47L48 78H38Z"/>
+                                    <path class="athlete-jersey" d="M29 82Q35 76 43 76Q52 76 58 82L62 111Q52 118 43 118Q33 118 24 111Z"/>
+                                    <path class="jersey-panel" d="M43 78V115M27 91H59"/>
+                                    <text class="jersey-number" x="43" y="103">2</text>
+                                    <path class="athlete-shorts" d="M25 110Q43 116 61 110L59 126L49 127L43 121L37 127L27 126Z"/>
+                                    <path class="athlete-leg" d="M31 124L41 125L38 140L31 151L23 150L29 137Z"/>
+                                    <path class="athlete-leg" d="M47 125L57 124L59 138L65 149L57 152L51 140Z"/>
+                                    <path class="athlete-cleat" d="M22 149H34L35 153H21Z"/>
+                                    <path class="athlete-cleat" d="M56 149H68L69 153H55Z"/>
+                                    <g class="arm-pose ready-arms">
+                                        <path class="athlete-arm" d="M29 83Q19 92 18 105"/><path class="athlete-arm" d="M57 83Q66 88 77 95"/>
+                                    </g>
+                                    <g class="arm-pose catch-arms right-catch-arms">
+                                        <path class="athlete-arm" d="M29 83Q50 86 77 95"/><path class="athlete-arm" d="M57 83Q67 90 77 95"/>
+                                        <circle class="athlete-hand" cx="77" cy="95" r="3.4"/>
+                                    </g>
+                                    <g class="arm-pose throw-arms right-throw-arms">
+                                        <path class="athlete-arm" d="M29 83Q20 92 19 106"/><path class="athlete-arm" d="M57 83Q67 86 77 95"/>
+                                        <circle class="athlete-hand" cx="77" cy="95" r="3.2"/>
+                                    </g>
+                                </g>
                             </g>
-                            <circle class="catch-signal catch-signal-left" cx="70" cy="103" r="9"/>
-                            <circle class="catch-signal catch-signal-right" cx="290" cy="103" r="9"/>
+                            <circle class="catch-signal catch-signal-left" cx="77" cy="95" r="10"/>
+                            <circle class="catch-signal catch-signal-right" cx="283" cy="95" r="10"/>
 
-                            <g class="moving-football">
+                            <g class="moving-football" filter="url(#ball-shadow)">
                                 <animateMotion dur="3.2s" repeatCount="indefinite" rotate="auto" calcMode="linear"
                                                keyPoints="0;1;1;0;0" keyTimes="0;.4;.5;.9;1">
                                     <mpath href="#analysis-catch-arc"/>
                                 </animateMotion>
-                                <g transform="translate(-10 -6)">
-                                    <ellipse class="football-body" cx="10" cy="6" rx="10" ry="6"/>
-                                    <path class="football-laces" d="M6 6h8M8 4.2v3.6M10 4.2v3.6M12 4.2v3.6"/>
+                                <g class="football-spin">
+                                    <animateTransform attributeName="transform" type="rotate" from="0" to="720" dur=".8s" repeatCount="indefinite"/>
+                                    <ellipse class="football-body" cx="0" cy="0" rx="10" ry="5.8"/>
+                                    <path class="football-seam" d="M-8 0Q0 3 8 0"/>
+                                    <path class="football-laces" d="M-4 0H4M-2.5-2V2M0-2V2M2.5-2V2"/>
                                 </g>
                             </g>
                         </svg>

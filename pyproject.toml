@@ -35,7 +35,7 @@ markers = ["integration: downloads nflverse data", "live: requires a configured 
 
 [tool.ruff]
 target-version = "py313"
-line-length = 140
+line-length = 143
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
