@@ -10,6 +10,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.data import DATASET_MIN_SEASONS, REFERENCE_DATASETS, SUPPORTED_DATASETS
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -24,6 +25,7 @@ from sports_analyst.models import (
     PlannedToolCall,
     PlayerOption,
     PlayEvidence,
+    PlayVisualization,
     SplitDimensionOption,
     TeamOption,
     ToolDefinition,
@@ -426,6 +428,31 @@ def _sha(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _row_number(row: dict[str, Any], name: str) -> float | None:
+    value = row.get(name)
+    return float(value) if value is not None else None
+
+
+def _row_integer(row: dict[str, Any], name: str) -> int | None:
+    value = row.get(name)
+    return int(value) if value is not None else None
+
+
+def _row_boolean(row: dict[str, Any], name: str) -> bool | None:
+    value = row.get(name)
+    return bool(value) if value is not None else None
+
+
+def _row_text(row: dict[str, Any], name: str) -> str | None:
+    value = row.get(name)
+    return str(value) if value not in (None, "") else None
+
+
+def _row_text_list(row: dict[str, Any], name: str) -> list[str]:
+    value = _row_text(row, name)
+    return [item.strip() for item in value.split(";") if item.strip()] if value else []
+
+
 def _present(frame: pl.DataFrame, name: str, default: Any = None) -> pl.Expr:
     return pl.col(name) if name in frame.columns else pl.lit(default)
 
@@ -717,6 +744,21 @@ class NFLPlugin:
             ToolDefinition(name="analyze_qb_receiver_pairs", description="Compare quarterback-receiver volume and efficiency."),
             ToolDefinition(name="summarize_injured_or_inactive_players", description="Rank players most frequently listed unavailable."),
             ToolDefinition(name="join_nextgen_passing_metrics", description="Compare synced Next Gen Stats passing measurements."),
+            ToolDefinition(
+                name="join_nextgen_receiving_metrics",
+                description="Compare receiving separation, cushion, and YAC-over-expectation.",
+            ),
+            ToolDefinition(name="join_nextgen_rushing_metrics", description="Compare rushing efficiency and yards over expectation."),
+            ToolDefinition(
+                name="join_participation_context",
+                description="Measure play-level personnel, pressure, coverage, and recorded lineup participation.",
+            ),
+            ToolDefinition(name="join_depth_chart_context", description="Compare first-unit depth-chart availability and continuity."),
+            ToolDefinition(name="join_ftn_charting", description="Compare motion, play action, RPO, pressure, and charted outcome rates."),
+            ToolDefinition(
+                name="join_pfr_advanced_stats",
+                description="Compare PFR passing, rushing, receiving, and defensive advanced metrics.",
+            ),
             ToolDefinition(name="join_schedule_context", description="Add opponent, location, scoring-margin, and schedule context."),
             ToolDefinition(name="compare_passing_efficiency", description="Compatibility alias for compare_time_windows."),
             ToolDefinition(name="decompose_situational_splits", description="Compatibility alias for decompose_metric_change."),
@@ -725,7 +767,7 @@ class NFLPlugin:
         ]
         return [tool.model_copy(update={"input_schema": TOOL_INPUT_SCHEMAS.get(tool.name, tool.input_schema)}) for tool in tools]
 
-    def analysis_options(self, manifests: list[DatasetManifest]) -> AnalysisOptions:
+    def analysis_options(self, manifests: list[DatasetManifest], teams: pl.DataFrame | None = None) -> AnalysisOptions:
         available_seasons = sorted({manifest.season for manifest in manifests})
 
         def seasons_with(required: set[str]) -> list[int]:
@@ -751,9 +793,18 @@ class NFLPlugin:
             )
             for value, metadata in SPLIT_DIMENSIONS.items()
         ]
+        team_options = [TeamOption(value=code, label=label) for code, label in NFL_TEAMS.items()]
+        if teams is not None and not teams.is_empty():
+            code_column = _first_column(teams, "team_abbr", "team", "abbr")
+            name_column = _first_column(teams, "team_name", "team_nick", "team_full_name", "name")
+            if code_column and name_column:
+                rows = teams.select(code_column, name_column).drop_nulls().unique().sort(code_column).iter_rows(named=True)
+                loaded = [TeamOption(value=str(row[code_column]), label=str(row[name_column])) for row in rows]
+                if loaded:
+                    team_options = loaded
         return AnalysisOptions(
             sport=self.sport_id,
-            teams=[TeamOption(value=code, label=label) for code, label in NFL_TEAMS.items()],
+            teams=team_options,
             available_seasons=available_seasons,
             syncable_seasons=list(range(LATEST_SYNCABLE_SEASON, 1998, -1)),
             metrics=metrics,
@@ -778,15 +829,11 @@ class NFLPlugin:
                     description="Split one season around a selected week.",
                 ),
             ],
-            syncable_datasets=[
-                "play_by_play",
-                "player_stats",
-                "rosters",
-                "injuries",
-                "schedules",
-                "snap_counts",
-                "nextgen_passing",
-            ],
+            syncable_datasets=list(SUPPORTED_DATASETS),
+            dataset_min_seasons={
+                dataset: None if dataset in REFERENCE_DATASETS else DATASET_MIN_SEASONS[dataset]
+                for dataset in SUPPORTED_DATASETS
+            },
         )
 
     def explain_metric(self, metric: str) -> MetricDefinition:
@@ -819,6 +866,7 @@ class NFLPlugin:
         for season, frame in sources:
             candidates = [
                 ("gsis_id", "full_name", "team", "position"),
+                ("gsis_id", "display_name", "latest_team", "position"),
                 ("player_id", "player_name", "recent_team", "position"),
                 ("passer_player_id", "passer_player_name", "posteam", None),
                 ("receiver_player_id", "receiver_player_name", "posteam", None),
@@ -840,7 +888,8 @@ class NFLPlugin:
                         record["teams"].add(str(row[team_column]))
                     if position_column and row.get(position_column):
                         record["positions"].add(str(row[position_column]))
-                    record["seasons"].add(season)
+                    if season:
+                        record["seasons"].add(season)
         return [
             PlayerOption(
                 player_id=record["player_id"],
@@ -959,6 +1008,36 @@ class NFLPlugin:
                 tool="decompose_lineup_continuity",
                 arguments={"team": request.scope.team},
                 purpose="Identify which position groups account for the largest share of lineup turnover.",
+            ),
+            PlannedToolCall(
+                tool="join_participation_context",
+                arguments={"team": request.scope.team},
+                purpose="Use recorded on-field players, personnel, pressure, route, and coverage context when available.",
+            ),
+            PlannedToolCall(
+                tool="join_depth_chart_context",
+                arguments={"team": request.scope.team},
+                purpose="Compare listed first-unit availability and continuity when depth charts are synced.",
+            ),
+            PlannedToolCall(
+                tool="join_ftn_charting",
+                arguments={"team": request.scope.team},
+                purpose="Compare charted motion, play action, RPO, pressure, and outcome rates when available.",
+            ),
+            PlannedToolCall(
+                tool="join_nextgen_receiving_metrics",
+                arguments={"team": request.scope.team},
+                purpose="Add receiving separation and YAC-over-expectation context when available.",
+            ),
+            PlannedToolCall(
+                tool="join_nextgen_rushing_metrics",
+                arguments={"team": request.scope.team},
+                purpose="Add rushing efficiency and yards-over-expectation context when available.",
+            ),
+            PlannedToolCall(
+                tool="join_pfr_advanced_stats",
+                arguments={"team": request.scope.team},
+                purpose="Add published advanced passing, rushing, receiving, and defensive context when available.",
             ),
             PlannedToolCall(
                 tool="find_representative_plays",
@@ -1242,7 +1321,12 @@ class NFLPlugin:
         executions.append(change_execution)
 
         player_manifest_map = {manifest.manifest_id: manifest for manifest in selected_manifests}
-        for dataset in ("rosters", "injuries", "snap_counts"):
+        for dataset in ("rosters", "weekly_rosters", "injuries", "snap_counts", "participation", "depth_charts", "players"):
+            if dataset == "players":
+                manifest = supplemental_manifests.get(dataset, {}).get(0)
+                if manifest:
+                    player_manifest_map[manifest.manifest_id] = manifest
+                continue
             for window in windows:
                 manifest = supplemental_manifests.get(dataset, {}).get(window.season)
                 if manifest:
@@ -1256,12 +1340,22 @@ class NFLPlugin:
             supplemental.get("injuries", {}),
             supplemental.get("snap_counts", {}),
             request.scope.season_type,
+            weekly_rosters=supplemental.get("weekly_rosters", {}),
+            participation=supplemental.get("participation", {}),
+            depth_charts=supplemental.get("depth_charts", {}),
+            player_directory=supplemental.get("players", {}).get(0),
         )
         player_week_evidence, player_week_execution = self._player_week_coverage(
             team, windows, player_weeks, player_manifests
         )
         aggregate.extend(player_week_evidence)
         executions.append(player_week_execution)
+
+        depth_result = self._depth_chart_context(player_weeks, windows, player_manifests)
+        if depth_result:
+            depth_evidence, depth_execution = depth_result
+            aggregate.extend(depth_evidence)
+            executions.append(depth_execution)
 
         usage_evidence, usage_execution = self._player_usage_change(player_weeks, windows, player_manifests)
         aggregate.extend(usage_evidence)
@@ -1304,6 +1398,9 @@ class NFLPlugin:
 
         if any(window.season not in supplemental_manifests.get("snap_counts", {}) for window in windows):
             missing_supplemental.append("snap_counts")
+        for dataset_name in ("weekly_rosters", "depth_charts"):
+            if any(window.season not in supplemental_manifests.get(dataset_name, {}) for window in windows):
+                missing_supplemental.append(dataset_name)
 
         nextgen_result = self._nextgen_context(
             team,
@@ -1317,6 +1414,118 @@ class NFLPlugin:
             executions.append(nextgen_execution)
         else:
             missing_supplemental.append("nextgen_passing")
+
+        for dataset_name, stat_type in (("nextgen_receiving", "receiving"), ("nextgen_rushing", "rushing")):
+            context = self._nextgen_context(
+                team,
+                windows,
+                supplemental.get(dataset_name, {}),
+                supplemental_manifests.get(dataset_name, {}),
+                stat_type,
+            )
+            if context:
+                context_evidence, context_execution = context
+                aggregate.extend(context_evidence)
+                executions.append(context_execution)
+            else:
+                missing_supplemental.append(dataset_name)
+
+        participation_result = self._play_level_context(
+            windows,
+            [baseline, comparison],
+            supplemental.get("participation", {}),
+            supplemental_manifests.get("participation", {}),
+            manifests,
+            "join_participation_context",
+            "participation",
+            {
+                "pressure_rate": "Pressure rate",
+                "man_coverage_rate": "Man-coverage rate",
+                "defenders_in_box": "Defenders in the box",
+                "number_of_pass_rushers": "Number of pass rushers",
+                "time_to_throw": "Time to throw",
+                "n_offense": "Recorded offensive players",
+                "n_defense": "Recorded defensive players",
+            },
+        )
+        if participation_result:
+            participation_evidence, participation_execution = participation_result
+            aggregate.extend(participation_evidence)
+            executions.append(participation_execution)
+        else:
+            missing_supplemental.append("participation")
+
+        ftn_result = self._play_level_context(
+            windows,
+            [baseline, comparison],
+            supplemental.get("ftn_charting", {}),
+            supplemental_manifests.get("ftn_charting", {}),
+            manifests,
+            "join_ftn_charting",
+            "ftn",
+            {
+                "is_motion": "Pre-snap motion rate",
+                "is_play_action": "Play-action rate",
+                "is_screen_pass": "Screen rate",
+                "is_rpo": "RPO rate",
+                "is_qb_out_of_pocket": "Quarterback out-of-pocket rate",
+                "is_interception_worthy": "Interception-worthy throw rate",
+                "is_catchable_ball": "Catchable-ball rate",
+                "is_drop": "Drop rate",
+                "n_blitzers": "Number of blitzers",
+                "n_pass_rushers": "Number of pass rushers",
+                "is_qb_fault_sack": "Quarterback-fault sack rate",
+            },
+        )
+        if ftn_result:
+            ftn_evidence, ftn_execution = ftn_result
+            aggregate.extend(ftn_evidence)
+            executions.append(ftn_execution)
+        else:
+            missing_supplemental.append("ftn_charting")
+
+        pfr_metric_sets = {
+            "pfr_passing": {
+                "passing_drop_pct": "Passing drop rate",
+                "passing_bad_throw_pct": "Bad-throw rate",
+                "times_blitzed": "Times blitzed",
+                "times_hurried": "Times hurried",
+                "times_hit": "Quarterback hits",
+                "times_pressured_pct": "Pressure rate",
+            },
+            "pfr_rushing": {
+                "rushing_yards_before_contact": "Yards before contact",
+                "rushing_yards_after_contact": "Yards after contact",
+                "rushing_broken_tackles": "Broken tackles",
+            },
+            "pfr_receiving": {
+                "receiving_drop": "Receiver drops",
+                "receiving_drop_pct": "Receiver drop rate",
+                "receiving_broken_tackles": "Receiving broken tackles",
+            },
+            "pfr_defense": {
+                "def_times_blitzed": "Defensive blitzes",
+                "def_times_hurried": "Defensive hurries",
+                "def_times_hitqb": "Defensive quarterback hits",
+                "def_targets": "Coverage targets",
+            },
+        }
+        for dataset_name, candidates in pfr_metric_sets.items():
+            pfr_result = self._published_stat_context(
+                team,
+                windows,
+                supplemental.get(dataset_name, {}),
+                supplemental_manifests.get(dataset_name, {}),
+                "join_pfr_advanced_stats",
+                dataset_name,
+                candidates,
+            )
+            if pfr_result:
+                pfr_evidence, pfr_execution = pfr_result
+                aggregate.extend(pfr_evidence)
+                executions.append(pfr_execution)
+            else:
+                missing_supplemental.append(dataset_name)
 
         schedule_result = self._schedule_context(
             team, windows, supplemental.get("schedules", {}), supplemental_manifests.get("schedules", {})
@@ -1345,6 +1554,11 @@ class NFLPlugin:
             supporting_count=int(play_parameters["supporting"]),
             counterexample_count=int(play_parameters["counterexamples"]),
             minimum_absolute_epa=float(play_parameters["minimum_absolute_epa"]),
+        )
+        plays = self._enrich_representative_plays(
+            plays,
+            supplemental.get("participation", {}).get(windows[1].season),
+            supplemental.get("ftn_charting", {}).get(windows[1].season),
         )
         executions.append(
             _execution_record(
@@ -1850,6 +2064,71 @@ class NFLPlugin:
             "build_player_week_dataset", execution_id, parameters, evidence, manifests, started_at, started
         )
 
+    def _depth_chart_context(
+        self,
+        layer: PlayerWeekLayer,
+        windows: list[AnalysisWindow],
+        manifests: list[DatasetManifest],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord] | None:
+        if not layer.source_rows.get("depth_charts") or layer.frame.is_empty() or "depth_rank" not in layer.frame.columns:
+            return None
+        parameters = {"windows": [window.model_dump() for window in windows], "starter_rank": 1}
+        execution_id = stable_id("execution", {"tool": "join_depth_chart_context", **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        summaries: list[tuple[float, set[str], int]] = []
+        for window in windows:
+            scoped = layer.frame.filter(
+                (pl.col("season") == window.season)
+                & pl.col("week").is_between(window.weeks[0], window.weeks[1], closed="both")
+                & pl.col("depth_rank").is_not_null()
+                & (pl.col("depth_rank") <= 1)
+            )
+            available = scoped.filter(~pl.col("unavailable")).height
+            summaries.append((available / scoped.height if scoped.height else 0.0, set(scoped["player_id"].to_list()), scoped.height))
+        if not summaries[0][2] or not summaries[1][2]:
+            return None
+        returning = len(summaries[0][1] & summaries[1][1]) / len(summaries[1][1]) if summaries[1][1] else 0.0
+        evidence: list[AggregateEvidence] = []
+        values = (
+            (
+                "depth_chart_starter_availability",
+                "First-unit depth-chart availability",
+                summaries[0][0],
+                summaries[1][0],
+                summaries[1][2],
+                "share of starter player-weeks",
+            ),
+            (
+                "depth_chart_starter_continuity",
+                "Returning first-unit depth-chart players",
+                None,
+                returning,
+                len(summaries[1][1]),
+                "share of comparison starters",
+            ),
+        )
+        for metric, label, baseline_value, comparison_value, sample_size, unit in values:
+            payload = {"tool": "join_depth_chart_context", "metric": metric, **parameters}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=metric,
+                    label=label,
+                    value=round(comparison_value - baseline_value, 4) if baseline_value is not None else round(comparison_value, 4),
+                    baseline_value=round(baseline_value, 4) if baseline_value is not None else None,
+                    comparison_value=round(comparison_value, 4),
+                    unit=unit,
+                    sample_size=sample_size,
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=[item.manifest_id for item in manifests],
+                    tool_execution_id=execution_id,
+                    caveats=["Depth-chart rank identifies listed role, not the exact starter on every play."],
+                )
+            )
+        return evidence, _execution_record(
+            "join_depth_chart_context", execution_id, parameters, evidence, manifests, started_at, started
+        )
+
     def _player_usage_change(
         self,
         layer: PlayerWeekLayer,
@@ -1942,7 +2221,7 @@ class NFLPlugin:
         windows: list[AnalysisWindow],
         manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord] | None:
-        if not layer.source_rows.get("injuries"):
+        if not layer.source_rows.get("injuries") and not layer.source_rows.get("weekly_rosters"):
             return None
         parameters = {"windows": [window.model_dump() for window in windows], "unavailable_status_severity": 2}
         execution_id = stable_id("execution", {"tool": "analyze_position_group_availability", **parameters})
@@ -1993,7 +2272,7 @@ class NFLPlugin:
         windows: list[AnalysisWindow],
         manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord]] | None:
-        if not layer.source_rows.get("snap_counts"):
+        if not layer.source_rows.get("snap_counts") and not layer.source_rows.get("participation"):
             return None
         parameters = {"windows": [window.model_dump() for window in windows], "weight": "recorded_relevant_snaps"}
         continuity_id = stable_id("execution", {"tool": "analyze_lineup_continuity", **parameters})
@@ -2031,7 +2310,11 @@ class NFLPlugin:
                         tool_execution_id=continuity_id,
                         caveats=[
                             "The 1.0 baseline is a continuity reference, not an observed baseline-season continuity estimate.",
-                            "Game-level snap counts support weekly continuity, not exact 11-player combinations on each play.",
+                            (
+                                "Participation rows provide recorded play-level lineup counts."
+                                if layer.source_rows.get("participation")
+                                else "Game-level snap counts support weekly continuity, not exact 11-player combinations on each play."
+                            ),
                         ],
                     )
                 )
@@ -2337,20 +2620,40 @@ class NFLPlugin:
         windows: list[AnalysisWindow],
         frames: dict[int, pl.DataFrame],
         manifests: dict[int, DatasetManifest],
+        stat_type: str = "passing",
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord] | None:
         if any(window.season not in frames or window.season not in manifests for window in windows):
             return None
         selected_manifests = list({manifests[window.season].manifest_id: manifests[window.season] for window in windows}.values())
         parameters = {"team": team, "windows": [window.model_dump() for window in windows]}
-        execution_id = stable_id("execution", {"tool": "join_nextgen_passing_metrics", **parameters})
+        tool = f"join_nextgen_{stat_type}_metrics"
+        execution_id = stable_id("execution", {"tool": tool, **parameters})
         started_at, started = datetime.now(UTC), perf_counter()
         metric_candidates = {
-            "avg_time_to_throw": "Average time to throw",
-            "avg_completed_air_yards": "Completed air yards",
-            "aggressiveness": "Aggressiveness",
-            "completion_percentage_above_expectation": "NGS CPOE",
-            "avg_air_yards_differential": "Air-yards differential",
-        }
+            "passing": {
+                "avg_time_to_throw": "Average time to throw",
+                "avg_completed_air_yards": "Completed air yards",
+                "aggressiveness": "Aggressiveness",
+                "completion_percentage_above_expectation": "NGS CPOE",
+                "avg_air_yards_differential": "Air-yards differential",
+            },
+            "receiving": {
+                "avg_cushion": "Average pre-snap cushion",
+                "avg_separation": "Average target separation",
+                "percent_share_of_intended_air_yards": "Intended air-yards share",
+                "avg_yac": "Average YAC",
+                "avg_expected_yac": "Expected YAC",
+                "avg_yac_above_expectation": "YAC above expectation",
+            },
+            "rushing": {
+                "efficiency": "Rushing path efficiency",
+                "percent_attempts_gte_eight_defenders": "Attempts against eight-plus defenders",
+                "avg_time_to_los": "Average time to line of scrimmage",
+                "expected_rush_yards": "Expected rushing yards",
+                "rush_yards_over_expected_per_att": "Rush yards over expected per attempt",
+                "rush_pct_over_expected": "Rush rate over expectation",
+            },
+        }[stat_type]
         summaries: list[dict[str, tuple[float, int]]] = []
         for window in windows:
             frame = frames[window.season]
@@ -2372,11 +2675,11 @@ class NFLPlugin:
         for metric in sorted(set(summaries[0]) & set(summaries[1])):
             baseline_value, _baseline_n = summaries[0][metric]
             comparison_value, comparison_n = summaries[1][metric]
-            payload = {"tool": "join_nextgen_passing_metrics", "metric": metric, **parameters}
+            payload = {"tool": tool, "metric": metric, **parameters}
             evidence.append(
                 AggregateEvidence(
                     evidence_id=stable_id("evidence", payload),
-                    metric=f"nextgen_{metric}",
+                    metric=f"nextgen_{metric}" if stat_type == "passing" else f"nextgen_{stat_type}_{metric}",
                     label=metric_candidates[metric],
                     value=round(comparison_value - baseline_value, 4),
                     baseline_value=round(baseline_value, 4),
@@ -2389,8 +2692,147 @@ class NFLPlugin:
                 )
             )
         return evidence, _execution_record(
-            "join_nextgen_passing_metrics", execution_id, parameters, evidence, selected_manifests, started_at, started
+            tool, execution_id, parameters, evidence, selected_manifests, started_at, started
         )
+
+    def _published_stat_context(
+        self,
+        team: str,
+        windows: list[AnalysisWindow],
+        frames: dict[int, pl.DataFrame],
+        manifests: dict[int, DatasetManifest],
+        tool: str,
+        metric_prefix: str,
+        metric_candidates: dict[str, str],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord] | None:
+        if any(window.season not in frames or window.season not in manifests for window in windows):
+            return None
+        selected_manifests = list({manifests[window.season].manifest_id: manifests[window.season] for window in windows}.values())
+        parameters = {"team": team, "dataset": metric_prefix, "windows": [window.model_dump() for window in windows]}
+        execution_id = stable_id("execution", {"tool": tool, **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        summaries: list[dict[str, tuple[float, int]]] = []
+        for window in windows:
+            frame = frames[window.season]
+            team_column = _first_column(frame, "team", "team_abbr", "recent_team")
+            week_column = _first_column(frame, "week", "week_number")
+            if not team_column:
+                summaries.append({})
+                continue
+            scoped = frame.filter(pl.col(team_column) == team)
+            if week_column:
+                scoped = scoped.filter(pl.col(week_column).is_between(window.weeks[0], window.weeks[1], closed="both"))
+            summary: dict[str, tuple[float, int]] = {}
+            for metric in metric_candidates:
+                if metric not in scoped.columns:
+                    continue
+                values = scoped[metric].cast(pl.Float64, strict=False).drop_nulls()
+                if values.len():
+                    summary[metric] = (float(values.mean()), values.len())
+            summaries.append(summary)
+        evidence: list[AggregateEvidence] = []
+        for metric in sorted(set(summaries[0]) & set(summaries[1])):
+            baseline_value, _ = summaries[0][metric]
+            comparison_value, comparison_n = summaries[1][metric]
+            payload = {"tool": tool, "metric": metric, **parameters}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"{metric_prefix}_{metric}",
+                    label=metric_candidates[metric],
+                    value=round(comparison_value - baseline_value, 4),
+                    baseline_value=round(baseline_value, 4),
+                    comparison_value=round(comparison_value, 4),
+                    unit="published value",
+                    sample_size=comparison_n,
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=[item.manifest_id for item in selected_manifests],
+                    tool_execution_id=execution_id,
+                )
+            )
+        return evidence, _execution_record(tool, execution_id, parameters, evidence, selected_manifests, started_at, started)
+
+    def _play_level_context(
+        self,
+        windows: list[AnalysisWindow],
+        scoped_plays: list[pl.DataFrame],
+        frames: dict[int, pl.DataFrame],
+        manifests: dict[int, DatasetManifest],
+        play_manifests: dict[int, DatasetManifest],
+        tool: str,
+        metric_prefix: str,
+        metric_candidates: dict[str, str],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord] | None:
+        if any(window.season not in frames or window.season not in manifests for window in windows):
+            return None
+        selected_manifests = {
+            manifest.manifest_id: manifest
+            for window in windows
+            for manifest in (manifests[window.season], play_manifests[window.season])
+        }
+        parameters = {"windows": [window.model_dump() for window in windows]}
+        execution_id = stable_id("execution", {"tool": tool, **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        summaries: list[dict[str, tuple[float, int]]] = []
+        for window, plays in zip(windows, scoped_plays, strict=True):
+            frame = frames[window.season]
+            source_game = _first_column(frame, "nflverse_game_id", "game_id")
+            source_play = _first_column(frame, "nflverse_play_id", "play_id")
+            play_game = _first_column(plays, "game_id", "nflverse_game_id")
+            play_play = _first_column(plays, "play_id", "nflverse_play_id")
+            if not all((source_game, source_play, play_game, play_play)):
+                summaries.append({})
+                continue
+            keys = plays.select(
+                pl.col(play_game).cast(pl.Utf8).alias("_join_game"),
+                pl.col(play_play).cast(pl.Int64, strict=False).alias("_join_play"),
+            ).unique()
+            scoped = frame.with_columns(
+                pl.col(source_game).cast(pl.Utf8).alias("_join_game"),
+                pl.col(source_play).cast(pl.Int64, strict=False).alias("_join_play"),
+            ).join(keys, on=["_join_game", "_join_play"], how="inner")
+            if tool == "join_participation_context":
+                if "was_pressure" in scoped.columns:
+                    scoped = scoped.with_columns(pl.col("was_pressure").cast(pl.Float64, strict=False).alias("pressure_rate"))
+                if "defense_man_zone_type" in scoped.columns:
+                    scoped = scoped.with_columns(
+                        pl.col("defense_man_zone_type")
+                        .cast(pl.Utf8)
+                        .str.to_uppercase()
+                        .str.contains("MAN")
+                        .cast(pl.Float64)
+                        .alias("man_coverage_rate")
+                    )
+            summary: dict[str, tuple[float, int]] = {}
+            for metric in metric_candidates:
+                if metric not in scoped.columns:
+                    continue
+                values = scoped[metric].cast(pl.Float64, strict=False).drop_nulls()
+                if values.len():
+                    summary[metric] = (float(values.mean()), values.len())
+            summaries.append(summary)
+        evidence: list[AggregateEvidence] = []
+        for metric in sorted(set(summaries[0]) & set(summaries[1])):
+            baseline_value, _ = summaries[0][metric]
+            comparison_value, comparison_n = summaries[1][metric]
+            payload = {"tool": tool, "metric": metric, **parameters}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"{metric_prefix}_{metric}",
+                    label=metric_candidates[metric],
+                    value=round(comparison_value - baseline_value, 4),
+                    baseline_value=round(baseline_value, 4),
+                    comparison_value=round(comparison_value, 4),
+                    unit="rate" if metric.endswith("rate") or metric.startswith("is_") else "per play",
+                    sample_size=comparison_n,
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=list(selected_manifests),
+                    tool_execution_id=execution_id,
+                )
+            )
+        manifests_list = list(selected_manifests.values())
+        return evidence, _execution_record(tool, execution_id, parameters, evidence, manifests_list, started_at, started)
 
     def _schedule_context(
         self,
@@ -2448,6 +2890,86 @@ class NFLPlugin:
             "join_schedule_context", execution_id, parameters, evidence, selected_manifests, started_at, started
         )
 
+    def _enrich_representative_plays(
+        self,
+        plays: list[PlayEvidence],
+        participation: pl.DataFrame | None,
+        ftn: pl.DataFrame | None,
+    ) -> list[PlayEvidence]:
+        participation_fields = {
+            "defenders_in_box": ("defenders_in_box", _row_integer),
+            "pass_rushers": ("number_of_pass_rushers", _row_integer),
+            "route": ("route", _row_text),
+            "coverage_type": ("defense_coverage_type", _row_text),
+            "man_zone": ("defense_man_zone_type", _row_text),
+            "pressure": ("was_pressure", _row_boolean),
+            "time_to_throw": ("time_to_throw", _row_number),
+            "defensive_personnel": ("defense_personnel", _row_text),
+            "offense_names": ("offense_names", _row_text_list),
+            "offense_positions": ("offense_positions", _row_text_list),
+            "defense_names": ("defense_names", _row_text_list),
+            "defense_positions": ("defense_positions", _row_text_list),
+        }
+        ftn_fields = {
+            "no_huddle": ("is_no_huddle", _row_boolean),
+            "motion": ("is_motion", _row_boolean),
+            "play_action": ("is_play_action", _row_boolean),
+            "rpo": ("is_rpo", _row_boolean),
+            "screen": ("is_screen_pass", _row_boolean),
+            "catchable_ball": ("is_catchable_ball", _row_boolean),
+            "receiver_drop": ("is_drop", _row_boolean),
+            "pass_rushers": ("n_pass_rushers", _row_integer),
+            "starting_hash": ("starting_hash", _row_text),
+            "qb_location": ("qb_location", _row_text),
+            "offense_backfield_count": ("n_offense_backfield", _row_integer),
+            "defense_box_count": ("n_defense_box", _row_integer),
+            "blitzers": ("n_blitzers", _row_integer),
+            "trick_play": ("is_trick_play", _row_boolean),
+            "qb_out_of_pocket": ("is_qb_out_of_pocket", _row_boolean),
+            "interception_worthy": ("is_interception_worthy", _row_boolean),
+            "throw_away": ("is_throw_away", _row_boolean),
+            "read_thrown": ("read_thrown", _row_text),
+            "contested_ball": ("is_contested_ball", _row_boolean),
+            "created_reception": ("is_created_reception", _row_boolean),
+            "qb_sneak": ("is_qb_sneak", _row_boolean),
+            "qb_fault_sack": ("is_qb_fault_sack", _row_boolean),
+        }
+
+        def index(frame: pl.DataFrame | None, value_columns: list[str]) -> dict[tuple[str, int], dict[str, Any]]:
+            if frame is None or frame.is_empty():
+                return {}
+            game_column = _first_column(frame, "nflverse_game_id", "game_id")
+            play_column = _first_column(frame, "nflverse_play_id", "play_id")
+            if not game_column or not play_column:
+                return {}
+            selected_columns = list(
+                dict.fromkeys([game_column, play_column, *(column for column in value_columns if column in frame.columns)])
+            )
+            return {
+                (str(row[game_column]), int(row[play_column])): row
+                for row in frame.select(selected_columns).iter_rows(named=True)
+                if row.get(game_column) is not None and row.get(play_column) is not None
+            }
+
+        participation_rows = index(participation, [source for source, _ in participation_fields.values()])
+        ftn_rows = index(ftn, [source for source, _ in ftn_fields.values()])
+        enriched: list[PlayEvidence] = []
+        for play in plays:
+            visualization = play.visualization or PlayVisualization()
+            updates: dict[str, Any] = {}
+            participation_row = participation_rows.get((play.game_id, play.play_id), {})
+            ftn_row = ftn_rows.get((play.game_id, play.play_id), {})
+            for target, (source, converter) in participation_fields.items():
+                value = converter(participation_row, source)
+                if value is not None:
+                    updates[target] = value
+            for target, (source, converter) in ftn_fields.items():
+                value = converter(ftn_row, source)
+                if value is not None and target not in updates:
+                    updates[target] = value
+            enriched.append(play.model_copy(update={"visualization": visualization.model_copy(update=updates)}))
+        return enriched
+
     def _representative_plays(
         self,
         frame: pl.DataFrame,
@@ -2468,6 +2990,46 @@ class NFLPlugin:
         records = []
         for index, row in enumerate(selected.iter_rows(named=True)):
             payload = {"season": manifest.season, "game_id": row["game_id"], "play_id": row["play_id"]}
+            turnover_values = [row.get(name) for name in ("interception", "fumble_lost")]
+            turnover = any(bool(value) for value in turnover_values) if any(value is not None for value in turnover_values) else None
+            visualization = PlayVisualization(
+                week=_row_integer(row, "week"),
+                quarter=_row_integer(row, "qtr"),
+                clock=_row_text(row, "game_clock") or _row_text(row, "time"),
+                down=_row_integer(row, "down"),
+                yards_to_go=_row_number(row, "ydstogo"),
+                yardline_100=_row_number(row, "yardline_100"),
+                possession_team=_row_text(row, "posteam"),
+                defensive_team=_row_text(row, "defteam"),
+                possession_score=_row_integer(row, "posteam_score"),
+                defensive_score=_row_integer(row, "defteam_score"),
+                possession_timeouts=_row_integer(row, "posteam_timeouts_remaining"),
+                defensive_timeouts=_row_integer(row, "defteam_timeouts_remaining"),
+                score_differential=_row_number(row, "score_differential"),
+                goal_to_go=_row_boolean(row, "goal_to_go"),
+                play_type=_row_text(row, "play_type"),
+                formation=_row_text(row, "offense_formation"),
+                personnel=_row_text(row, "offense_personnel"),
+                shotgun=_row_boolean(row, "shotgun"),
+                no_huddle=_row_boolean(row, "no_huddle"),
+                pass_length=_row_text(row, "pass_length"),
+                pass_location=_row_text(row, "pass_location"),
+                run_location=_row_text(row, "run_location"),
+                run_gap=_row_text(row, "run_gap"),
+                air_yards=_row_number(row, "air_yards"),
+                yards_after_catch=_row_number(row, "yards_after_catch"),
+                yards_gained=_row_number(row, "yards_gained"),
+                passer=_row_text(row, "passer_player_name"),
+                receiver=_row_text(row, "receiver_player_name"),
+                rusher=_row_text(row, "rusher_player_name"),
+                touchdown=_row_boolean(row, "touchdown"),
+                turnover=turnover,
+                sack=_row_boolean(row, "sack"),
+                penalty=_row_boolean(row, "penalty"),
+                first_down=_row_boolean(row, "first_down"),
+                win_probability=_row_number(row, "wp"),
+                win_probability_added=_row_number(row, "wpa"),
+            )
             records.append(
                 PlayEvidence(
                     evidence_id=stable_id("play", payload),
@@ -2480,6 +3042,7 @@ class NFLPlugin:
                     supporting=index < supporting.height,
                     dataset_manifest_id=manifest.manifest_id,
                     tool_execution_id=execution_id,
+                    visualization=visualization,
                 )
             )
         return records

@@ -48,7 +48,9 @@ class AnalystApplication:
         )
 
     def analysis_options(self) -> AnalysisOptions:
-        return self.plugin.analysis_options(self.store.manifests("play_by_play"))
+        team_manifests = self.store.manifests("teams")
+        teams = self.connector.load(team_manifests[0]) if team_manifests else None
+        return self.plugin.analysis_options(self.store.manifests("play_by_play"), teams)
 
     def explain_metric(self, metric: str) -> MetricDefinition:
         return self.plugin.explain_metric(metric)
@@ -57,7 +59,11 @@ class AnalystApplication:
         return self.plugin.tools()
 
     def resolve_players(self, query: str) -> list[PlayerOption]:
-        manifests = [manifest for manifest in self.store.manifests() if manifest.dataset in {"play_by_play", "rosters", "player_stats"}]
+        manifests = [
+            manifest
+            for manifest in self.store.manifests()
+            if manifest.dataset in {"play_by_play", "rosters", "weekly_rosters", "player_stats", "players"}
+        ]
         sources = [(manifest.season, self.connector.load(manifest)) for manifest in manifests]
         return self.plugin.resolve_players(query, sources)
 
@@ -118,7 +124,9 @@ class AnalystApplication:
         datasets = {season: self.connector.load(manifest) for season, manifest in manifests.items()}
         supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
         for manifest in self.store.manifests():
-            if manifest.dataset == "play_by_play" or manifest.season not in manifests:
+            if manifest.dataset in {"play_by_play", "teams"}:
+                continue
+            if manifest.dataset != "players" and manifest.season not in manifests:
                 continue
             supplemental_manifests.setdefault(manifest.dataset, {})[manifest.season] = manifest
         supplemental = {

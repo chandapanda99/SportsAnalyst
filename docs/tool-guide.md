@@ -75,28 +75,38 @@ Decomposition results from overlapping dimensions must not be summed together. T
 
 ## Player, roster, and availability context
 
-|                  Tool                   | Purpose                                                                                             | Primary dataset                                      |
-|:---------------------------------------:|-----------------------------------------------------------------------------------------------------|------------------------------------------------------|
-|            `resolve_player`             | Resolves player names or identifiers and reports teams, positions, and seasons.                     | Rosters, player statistics, or play-by-play.         |
+|                  Tool                   | Purpose                                                                                            | Primary dataset                                      |
+|:---------------------------------------:|----------------------------------------------------------------------------------------------------|------------------------------------------------------|
+|            `resolve_player`             | Resolves player names or identifiers and reports teams, positions, and seasons.                    | Rosters, player statistics, or play-by-play.         |
 |       `build_player_week_dataset`       | Resolves identities and normalizes roster, injury, snap, and play-participant data by player-week. | Play-by-play; supplemental packages enrich the rows. |
-|          `get_roster_context`           | Compares roster composition by position across windows.                                             | Rosters.                                             |
-|     `analyze_starter_availability`      | Compares recorded injury and availability reports.                                                  | Injuries.                                            |
-| `summarize_injured_or_inactive_players` | Ranks players most frequently listed unavailable.                                                   | Injuries.                                            |
-|         `compare_player_usage`          | Compares target, carry, opportunity, snap-normalized usage, and EPA per opportunity.                | Normalized player-week layer.                        |
-| `analyze_position_group_availability`   | Estimates recorded availability by position, weighted by median healthy-week snaps when possible.  | Rosters, injuries, and snap counts.                  |
-|       `analyze_lineup_continuity`       | Measures returning snap share and weighted snap-distribution similarity overall and by position.   | Snap counts and normalized player identities.       |
-|      `decompose_lineup_continuity`      | Attributes comparison-window new-player snap share to position groups.                              | Snap counts and normalized player identities.       |
-|       `analyze_qb_receiver_pairs`       | Compares quarterback-receiver volume and EPA per target.                                            | Play-by-play with passer and receiver fields.        |
-|     `join_nextgen_passing_metrics`      | Compares supported Next Gen Stats passing measurements.                                             | Next Gen passing.                                    |
-|         `join_schedule_context`         | Adds opponent, location, scoring-margin, and schedule context.                                      | Schedules.                                           |
+|          `get_roster_context`           | Compares roster composition by position across windows.                                            | Rosters.                                             |
+|     `analyze_starter_availability`      | Compares recorded injury and availability reports.                                                 | Injuries.                                            |
+| `summarize_injured_or_inactive_players` | Ranks players most frequently listed unavailable.                                                  | Injuries.                                            |
+|         `compare_player_usage`          | Compares target, carry, opportunity, snap-normalized usage, and EPA per opportunity.               | Normalized player-week layer.                        |
+|  `analyze_position_group_availability`  | Estimates recorded availability by position, weighted by median healthy-week snaps when possible.  | Rosters, injuries, and snap counts.                  |
+|       `analyze_lineup_continuity`       | Measures returning snap share and weighted snap-distribution similarity overall and by position.   | Snap counts and normalized player identities.        |
+|      `decompose_lineup_continuity`      | Attributes comparison-window new-player snap share to position groups.                             | Snap counts and normalized player identities.        |
+|       `analyze_qb_receiver_pairs`       | Compares quarterback-receiver volume and EPA per target.                                           | Play-by-play with passer and receiver fields.        |
+|     `join_nextgen_passing_metrics`      | Compares supported Next Gen Stats passing measurements.                                            | Next Gen passing.                                    |
+|    `join_nextgen_receiving_metrics`     | Compares separation, cushion, expected YAC, and YAC over expectation.                              | Next Gen receiving.                                  |
+|     `join_nextgen_rushing_metrics`      | Compares rushing efficiency, box frequency, time to the line, and RYOE.                            | Next Gen rushing.                                    |
+|      `join_participation_context`       | Adds recorded on-field players, personnel, pressure, routes, and coverage.                         | Participation plus play-by-play IDs.                 |
+|       `join_depth_chart_context`        | Measures listed first-unit availability and returning-player continuity.                           | Depth charts and normalized player weeks.            |
+|           `join_ftn_charting`           | Compares motion, play action, RPO, screen, pressure, and charted outcome rates.                    | FTN charting plus play-by-play IDs.                  |
+|        `join_pfr_advanced_stats`        | Compares available advanced passing, rushing, receiving, and defensive measurements.               | Corresponding PFR advanced package.                  |
+|         `join_schedule_context`         | Adds opponent, location, scoring-margin, and schedule context.                                     | Schedules.                                           |
 
-The normalized layer prefers GSIS identifiers, maps PFR or source-specific identifiers through matching player names when possible, and falls back to a normalized name key.
-It stores team, season, week, player identity, position group, roster and injury status, offensive/defensive/special-teams snaps, targets, carries, quarterback dropbacks,
+The normalized layer prefers GSIS identifiers, maps PFR or source-specific identifiers through matching player names when possible, and falls back to a normalized name key. It
+stores team, season, week, player identity, position group, roster and injury status, offensive/defensive/special-teams snaps, targets, carries, quarterback dropbacks,
 opportunities, and participant EPA. Season-level roster membership is projected only across locally observed team weeks.
 
-Continuity is game/week-level rather than snap-by-snap lineup reconstruction. Returning snap share asks how much of the comparison window's recorded participation belongs to
-players also observed in the baseline. Weighted Jaccard similarity additionally captures changes in how snaps were distributed among returning and new players. Position-group
-turnover contributions describe where new-player snaps occurred; they do not measure replacement quality or establish that turnover caused a performance change.
+When participation is synced, continuity weights use recorded play-level appearances; otherwise they fall back to game-level snap counts. Returning snap share asks how much of
+the comparison window's recorded participation belongs to players also observed in the baseline. Weighted Jaccard similarity additionally captures changes in how snaps were
+distributed among returning and new players. Position-group turnover contributions describe where new-player snaps occurred; they do not measure replacement quality or
+establish that turnover caused a performance change.
+
+Weekly rosters supersede season-level roster projection for synced seasons. Depth charts provide listed role and rank but do not prove which player started a particular play.
+Participation is available only for supported completed seasons and records lineup membership rather than player coordinates or movement.
 
 Supplemental datasets are optional. If they are unavailable for both windows, the investigation skips the affected tools and records a capability caveat instead of fabricating
 context.

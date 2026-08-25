@@ -3,6 +3,7 @@
     import {api} from './api';
     import Chart from './Chart.svelte';
     import Icon from './Icon.svelte';
+    import PlayTablet from './PlayTablet.svelte';
     import type {AnalysisOptions, Capabilities, Claim, DatasetManifest, Evidence, Investigation, MetricOption, TeamOption} from './types';
 
     let capabilities: Capabilities | null = null;
@@ -13,6 +14,7 @@
     let conversationThread: Investigation[] = [];
     let selectedEvidenceItems: Evidence[] = [];
     let selectedClaimId: string | null = null;
+    let selectedPlay: Evidence | null = null;
     let evidenceLoading = false;
     let evidenceError = '';
     let evidenceRequestVersion = 0;
@@ -90,6 +92,11 @@
     $: availableMetrics = domainMetrics.filter(metricAvailable);
     $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
     $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
+    $: eligibleSyncDatasets = syncSeasons.length
+        ? (analysisOptions?.syncable_datasets ?? []).filter((dataset) => packageEligible(dataset, syncSeasons))
+        : [];
+    $: allEligibleSyncDatasetsSelected = eligibleSyncDatasets.length > 0
+        && eligibleSyncDatasets.every((dataset) => syncDatasets.includes(dataset));
     $: selectedClaim = active?.claims.find((claim) => claim.claim_id === selectedClaimId) ?? null;
     $: rootHistory = history.filter((item) => !item.run.parent_investigation_id);
 
@@ -119,8 +126,10 @@
         }
         if (!initializedSelections) {
             selectedMetrics = [...analysisOptions.default_metrics];
-            const missing = analysisOptions.syncable_seasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
-            syncSeasons = missing.length ? missing.slice(0, 2) : analysisOptions.available_seasons.slice(-1);
+            const localSeasons = [...analysisOptions.available_seasons].sort((left, right) => right - left);
+            syncSeasons = localSeasons.length
+                ? localSeasons.slice(0, 2)
+                : analysisOptions.syncable_seasons.slice(0, 2);
             selectLocallyAvailablePackages();
             initializedSelections = true;
         }
@@ -235,20 +244,27 @@
             : [...syncDatasets, dataset];
     }
 
+    function toggleAllSyncDatasets() {
+        syncDatasets = allEligibleSyncDatasetsSelected ? [] : [...eligibleSyncDatasets];
+    }
+
     function selectLocallyAvailablePackages() {
         if (!syncSeasons.length) {
             syncDatasets = [];
             return;
         }
         const locallyAvailable = (analysisOptions?.syncable_datasets ?? []).filter((dataset) =>
-            syncSeasons.some((season) => syncedPackages(season).has(dataset))
+            isReferenceDataset(dataset)
+                ? datasets.some((item) => item.dataset === dataset)
+                : syncSeasons.some((season) => syncedPackages(season).has(dataset))
         );
         syncDatasets = locallyAvailable.length ? locallyAvailable : ['play_by_play'];
     }
 
-    function updateSyncSeasons(event: Event) {
-        const select = event.currentTarget as HTMLSelectElement;
-        syncSeasons = Array.from(select.selectedOptions, (option) => Number(option.value));
+    function toggleSyncSeason(season: number) {
+        syncSeasons = syncSeasons.includes(season)
+            ? syncSeasons.filter((value) => value !== season)
+            : [...syncSeasons, season].sort((left, right) => right - left);
         selectLocallyAvailablePackages();
     }
 
@@ -260,7 +276,19 @@
             injuries: 'Injuries',
             schedules: 'Schedules',
             snap_counts: 'Snap Counts',
-            nextgen_passing: 'Nextgen Passing'
+            nextgen_passing: 'Nextgen Passing',
+            participation: 'Play Participation',
+            weekly_rosters: 'Weekly Rosters',
+            depth_charts: 'Depth Charts',
+            nextgen_receiving: 'Nextgen Receiving',
+            nextgen_rushing: 'Nextgen Rushing',
+            ftn_charting: 'FTN Charting',
+            pfr_passing: 'PFR Advanced Passing',
+            pfr_rushing: 'PFR Advanced Rushing',
+            pfr_receiving: 'PFR Advanced Receiving',
+            pfr_defense: 'PFR Advanced Defense',
+            players: 'Player Directory',
+            teams: 'Team Directory'
         };
         return labels[dataset] ?? dataset.replaceAll('_', ' ');
     }
@@ -281,24 +309,53 @@
         return new Set(datasets.filter((dataset) => dataset.season === season).map((dataset) => dataset.dataset));
     }
 
+    function isReferenceDataset(dataset: string) {
+        return dataset === 'players' || dataset === 'teams';
+    }
+
+    function datasetMinimumSeason(dataset: string) {
+        const value = Number(analysisOptions?.dataset_min_seasons?.[dataset]);
+        return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    function eligibleSelectedSeasons(dataset: string, selectedSeasons = syncSeasons) {
+        const minimum = datasetMinimumSeason(dataset);
+        return selectedSeasons.map(Number).filter((season) => Number.isFinite(season) && (!minimum || season >= minimum));
+    }
+
     function seasonPackageStatus(season: number) {
         const packages = syncedPackages(season);
-        if (!packages.size) return '';
-        const total = analysisOptions?.syncable_datasets.length ?? 0;
-        if (total && packages.size >= total) return ` · ${total}/${total} packages`;
-        if (packages.size === 1 && packages.has('play_by_play')) return ' · PBP only';
-        return ` · ${packages.size}/${total || packages.size} packages`;
+        const total = analysisOptions?.syncable_datasets.filter((dataset) => {
+            const minimum = datasetMinimumSeason(dataset);
+            return !isReferenceDataset(dataset) && (!minimum || season >= minimum);
+        }).length ?? 0;
+        if (!packages.size) return 'Not local';
+        if (packages.size === 1 && packages.has('play_by_play')) return 'PBP only';
+        return `${packages.size}/${total || packages.size} local`;
     }
 
-    function packageCoverage(dataset: string) {
-        if (!syncSeasons.length) return 'Select seasons';
-        const local = syncSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
-        return `${local}/${syncSeasons.length} local`;
+    function packageCoverage(dataset: string, selectedSeasons = syncSeasons) {
+        if (isReferenceDataset(dataset)) {
+            return datasets.some((item) => item.dataset === dataset) ? 'shared local' : 'shared reference';
+        }
+        if (!selectedSeasons.length) return 'Select seasons';
+        const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
+        const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
+        const minimum = datasetMinimumSeason(dataset);
+        if (!eligibleSeasons.length) return `not offered · ${minimum}+`;
+        return `${local}/${eligibleSeasons.length} local${minimum ? ` · ${minimum}+` : ''}`;
     }
 
-    function packagePartiallyAvailable(dataset: string) {
-        const local = syncSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
-        return local > 0 && local < syncSeasons.length;
+    function packageEligible(dataset: string, selectedSeasons = syncSeasons) {
+        if (isReferenceDataset(dataset)) return true;
+        return eligibleSelectedSeasons(dataset, selectedSeasons).length > 0;
+    }
+
+    function packagePartiallyAvailable(dataset: string, selectedSeasons = syncSeasons) {
+        if (isReferenceDataset(dataset)) return false;
+        const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
+        const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
+        return local > 0 && local < eligibleSeasons.length;
     }
 
     function showPartialSelection(node: HTMLInputElement, partial: boolean) {
@@ -456,6 +513,12 @@
         selectedEvidenceItems = [];
         evidenceLoading = false;
         evidenceError = '';
+        selectedPlay = null;
+    }
+
+    function openPlay(play: Evidence) {
+        selectedPlay = play;
+        void inspect(play.evidence_id);
     }
 
     function rootIdFor(investigation: Investigation) {
@@ -648,22 +711,34 @@
                                 <Icon name="chevron-down" size={16}/>
                             </i></b></summary>
                         <div class="onboarding">
-                            <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-play is required. Package checkboxes choose what to sync next; the coverage labels show what is already stored locally.</span>
+                            <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-play is required. Package checkboxes choose what to sync next; coverage is calculated for the selected seasons, and “not offered” means those seasons predate that package.</span>
                             </div>
                             <div class="sync-fields">
-                                <label class="season-picker">Seasons<select multiple value={syncSeasons} aria-label="Seasons to sync" on:change={updateSyncSeasons}>
-                                    {#each analysisOptions?.syncable_seasons ?? [] as season}
-                                        <option value={season}>{season}{seasonPackageStatus(season)}</option>
-                                    {/each}
-                                </select></label>
+                                <fieldset class="season-picker">
+                                    <legend>Seasons</legend>
+                                    <div class="season-options" role="group" aria-label="Seasons to sync">
+                                        {#each analysisOptions?.syncable_seasons ?? [] as season}
+                                            <label class:selected={syncSeasons.includes(season)}>
+                                                <input type="checkbox" aria-label={`${season} season`} checked={syncSeasons.includes(season)}
+                                                       on:change={() => toggleSyncSeason(season)}/>
+                                                <strong>{season}</strong>
+                                                <small>{seasonPackageStatus(season)}</small>
+                                            </label>
+                                        {/each}
+                                    </div>
+                                </fieldset>
                                 <fieldset class="dataset-picker">
-                                    <legend>Packages</legend>
+                                    <legend><span>Packages</span><button class="package-toggle" type="button" disabled={!eligibleSyncDatasets.length}
+                                                                          on:click={toggleAllSyncDatasets}>
+                                        {allEligibleSyncDatasetsSelected ? 'Deselect all' : 'Select all'}
+                                    </button></legend>
                                     <div class="dataset-options">
                                         {#each analysisOptions?.syncable_datasets ?? [] as dataset}<label><input type="checkbox"
                                                                                                                  checked={syncDatasets.includes(dataset)}
-                                                                                                                 use:showPartialSelection={packagePartiallyAvailable(dataset)}
+                                                                                                                 disabled={!packageEligible(dataset, syncSeasons)}
+                                                                                                                 use:showPartialSelection={packagePartiallyAvailable(dataset, syncSeasons)}
                                                                                                                  on:change={() => toggleSyncDataset(dataset)}/><span>{datasetLabel(dataset)}
-                                            <small>{packageCoverage(dataset)}</small></span></label>{/each}
+                                            <small>{packageCoverage(dataset, syncSeasons)}</small></span></label>{/each}
                                     </div>
                                 </fieldset>
                             </div>
@@ -900,19 +975,33 @@
                     </div>
                     <div class="play-visual" aria-hidden="true">
                         <div class="play-caption"><span>LIVE ANALYSIS DRIVE</span><b>{Math.round(progress * 100)}%</b></div>
-                        <svg class="play-route" viewBox="0 0 360 170" preserveAspectRatio="none">
-                            <path id="analysis-drive-route" d="M20 132 C70 132 82 48 143 48 S218 118 270 74 S318 31 342 31"/>
-                            <circle class="route-point point-one" cx="20" cy="132" r="5"/>
-                            <circle class="route-point point-two" cx="143" cy="48" r="5"/>
-                            <circle class="route-point point-three" cx="270" cy="74" r="5"/>
-                            <circle class="route-point point-four" cx="342" cy="31" r="5"/>
+                        <svg class="catch-scene" viewBox="0 0 360 170" preserveAspectRatio="xMidYMid meet">
+                            <path class="field-shadow" d="M19 151H341"/>
+                            <path id="analysis-catch-arc" class="catch-arc" d="M70 103 Q180 5 290 103"/>
+
+                            <g class="player-figure player-left">
+                                <circle class="player-head" cx="42" cy="73" r="10"/>
+                                <path class="player-body" d="M31 88Q42 82 53 88L56 121Q42 129 28 121Z"/>
+                                <path class="player-limb" d="M33 93L20 110M51 93L60 101L70 103M35 121L28 151M49 121L57 151"/>
+                                <circle class="player-hand" cx="70" cy="103" r="3"/>
+                            </g>
+                            <g class="player-figure player-right" transform="translate(360 0) scale(-1 1)">
+                                <circle class="player-head" cx="42" cy="73" r="10"/>
+                                <path class="player-body" d="M31 88Q42 82 53 88L56 121Q42 129 28 121Z"/>
+                                <path class="player-limb" d="M33 93L20 110M51 93L60 101L70 103M35 121L28 151M49 121L57 151"/>
+                                <circle class="player-hand" cx="70" cy="103" r="3"/>
+                            </g>
+                            <circle class="catch-signal catch-signal-left" cx="70" cy="103" r="9"/>
+                            <circle class="catch-signal catch-signal-right" cx="290" cy="103" r="9"/>
+
                             <g class="moving-football">
-                                <animateMotion dur="2.6s" repeatCount="indefinite" rotate="auto">
-                                    <mpath href="#analysis-drive-route"/>
+                                <animateMotion dur="3.2s" repeatCount="indefinite" rotate="auto" calcMode="linear"
+                                               keyPoints="0;1;1;0;0" keyTimes="0;.4;.5;.9;1">
+                                    <mpath href="#analysis-catch-arc"/>
                                 </animateMotion>
-                                <g transform="translate(-12.5 -7.5)">
-                                    <ellipse class="football-body" cx="12.5" cy="7.5" rx="12" ry="7"/>
-                                    <path class="football-laces" d="M7.5 7.5h10M10 5.2v4.6M12.5 5.2v4.6M15 5.2v4.6"/>
+                                <g transform="translate(-10 -6)">
+                                    <ellipse class="football-body" cx="10" cy="6" rx="10" ry="6"/>
+                                    <path class="football-laces" d="M6 6h8M8 4.2v3.6M10 4.2v3.6M12 4.2v3.6"/>
                                 </g>
                             </g>
                         </svg>
@@ -937,7 +1026,7 @@
                                 <p>{turn.run.question}</p></div>
                         </article>
                         <div class="chat-row analyst-row">
-                            <span class="chat-avatar analyst-avatar"><Icon name="brain" size={18}/></span>
+                            <span class="chat-avatar analyst-avatar"><Icon name="sports-analyst" size={24}/></span>
                             <button class="chat-bubble analyst-bubble" class:selected={active.run.investigation_id === turn.run.investigation_id}
                                     type="button" on:click={() => openInvestigation(turn)}>
                                 <small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
@@ -954,7 +1043,7 @@
                                 <p>{pendingFollowup}</p></div>
                         </article>
                         <article class="chat-row analyst-row pending-message">
-                            <span class="chat-avatar analyst-avatar"><Icon name="brain" size={18}/></span>
+                            <span class="chat-avatar analyst-avatar"><Icon name="sports-analyst" size={24}/></span>
                             <div class="chat-bubble analyst-bubble typing"><small>Open Sports Analyst</small>
                                 <span class="typing-dots" aria-label="Analyzing follow-up"><i></i><i></i><i></i></span>
                                 <p>{stage || 'Planning the next evidence-backed analysis…'}</p></div>
@@ -1082,12 +1171,16 @@
                 <div class="section-title"><span>REPRESENTATIVE PLAYS</span><small>Support & Counterexamples</small></div>
                 <div class="play-list">
                     {#each active.play_evidence as play}
-                        <button on:click={() => inspect(play.evidence_id)}><span class="play-tag"
-                                                                                 class:supporting={play.supporting}>{play.supporting ? 'support' : 'counter'}</span><strong>{play.game_id}
+                        <button class:selected={selectedPlay?.evidence_id === play.evidence_id} aria-expanded={selectedPlay?.evidence_id === play.evidence_id}
+                                on:click={() => openPlay(play)}><span class="play-tag"
+                                                                      class:supporting={play.supporting}>{play.supporting ? 'support' : 'counter'}</span><strong>{play.game_id}
                             · #{play.play_id}</strong>
                             <p>{play.description}</p><b class="play-epa">{play.epa?.toFixed(2)} EPA</b></button>
                     {/each}
                 </div>
+                {#if selectedPlay}
+                    <PlayTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
+                {/if}
             </section>
         {/if}
     </main>

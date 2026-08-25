@@ -43,7 +43,8 @@ describe('Open Sports Analyst workbench', () => {
                 { value: 'BUF', label: 'Buffalo Bills' },
                 { value: 'PHI', label: 'Philadelphia Eagles' }
               ], available_seasons: [2022, 2023, 2024, 2025],
-              syncable_seasons: [2025, 2024, 2023, 2022], syncable_datasets: ['play_by_play', 'rosters', 'injuries'],
+              syncable_seasons: [2025, 2024, 2023, 2022], syncable_datasets: ['play_by_play', 'rosters', 'injuries', 'nextgen_passing'],
+              dataset_min_seasons: { play_by_play: 1999, rosters: 1920, injuries: 2009, nextgen_passing: 2016 },
               default_metrics: ['epa_per_dropback'], week_values: [1, 2, 3, 4, 5],
               comparison_windows: [
                 { value: 'full_seasons', label: 'Full seasons', description: 'Compare seasons.' },
@@ -158,8 +159,11 @@ describe('Open Sports Analyst workbench', () => {
     const rosters = await screen.findByLabelText(/Rosters/);
 
     expect(details.open).toBe(true);
-    expect(screen.getByRole('option', { name: '2024 · 3/3 packages' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: '2025 · PBP only' })).toBeTruthy();
+    expect(screen.getByText('3/4 local')).toBeTruthy();
+    expect(screen.getByText('PBP only')).toBeTruthy();
+    const nextgen = screen.getByLabelText(/Nextgen Passing/) as HTMLInputElement;
+    expect(nextgen.disabled).toBe(false);
+    expect(screen.getByText('0/2 local · 2016+')).toBeTruthy();
 
     await fireEvent.click(rosters);
     expect(details.open).toBe(true);
@@ -167,21 +171,22 @@ describe('Open Sports Analyst workbench', () => {
 
   it('selects locally available packages when the selected seasons change', async () => {
     render(App);
-    const seasons = await screen.findByLabelText('Seasons to sync') as HTMLSelectElement;
+    const season2024 = await screen.findByRole('checkbox', { name: '2024 season' }) as HTMLInputElement;
+    const season2025 = screen.getByRole('checkbox', { name: '2025 season' }) as HTMLInputElement;
     const playByPlay = await screen.findByLabelText(/Play By Play/) as HTMLInputElement;
     const rosters = screen.getByLabelText(/Rosters/) as HTMLInputElement;
     const injuries = screen.getByLabelText(/Injuries/) as HTMLInputElement;
 
-    for (const option of Array.from(seasons.options)) option.selected = option.value === '2024';
-    await fireEvent.change(seasons);
+    expect(season2024.checked).toBe(true);
+    expect(season2025.checked).toBe(true);
+    await fireEvent.click(season2025);
 
     expect(playByPlay.checked).toBe(true);
     expect(rosters.checked).toBe(true);
     expect(injuries.checked).toBe(true);
     expect(rosters.indeterminate).toBe(false);
 
-    for (const option of Array.from(seasons.options)) option.selected = option.value === '2024' || option.value === '2025';
-    await fireEvent.change(seasons);
+    await fireEvent.click(season2025);
 
     expect(playByPlay.checked).toBe(true);
     expect(playByPlay.indeterminate).toBe(false);
@@ -189,6 +194,13 @@ describe('Open Sports Analyst workbench', () => {
     expect(rosters.indeterminate).toBe(true);
     expect(injuries.checked).toBe(true);
     expect(injuries.indeterminate).toBe(true);
+
+    const nextgen = screen.getByLabelText(/Nextgen Passing/) as HTMLInputElement;
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect([playByPlay, rosters, injuries, nextgen].every((input) => input.checked)).toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
+    expect([playByPlay, rosters, injuries, nextgen].every((input) => !input.checked)).toBe(true);
   });
 
   it('groups follow-ups as a saved conversation and deletes the full thread', async () => {

@@ -31,7 +31,7 @@ class DatasetManifest(BaseModel):
     manifest_id: str
     sport: str = "nfl"
     dataset: str = "play_by_play"
-    season: int = Field(ge=1999, le=2100)
+    season: int = Field(ge=0, le=2100, description="NFL season, or 0 for a shared reference table")
     source_url: str
     acquired_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     sha256: str
@@ -193,6 +193,7 @@ class AnalysisOptions(BaseModel):
     comparison_windows: list[ComparisonWindowOption]
     week_values: list[int] = Field(default_factory=lambda: list(range(1, 23)))
     syncable_datasets: list[str] = Field(default_factory=list)
+    dataset_min_seasons: dict[str, int | None] = Field(default_factory=dict)
 
 
 class PlannedToolCall(BaseModel):
@@ -246,6 +247,78 @@ class AggregateEvidence(BaseModel):
     caveats: list[str] = Field(default_factory=list)
 
 
+class PlayVisualization(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    week: int | None = None
+    quarter: int | None = None
+    clock: str | None = None
+    down: int | None = None
+    yards_to_go: float | None = None
+    yardline_100: float | None = None
+    possession_team: str | None = None
+    defensive_team: str | None = None
+    possession_score: int | None = None
+    defensive_score: int | None = None
+    possession_timeouts: int | None = None
+    defensive_timeouts: int | None = None
+    score_differential: float | None = None
+    goal_to_go: bool | None = None
+    play_type: str | None = None
+    formation: str | None = None
+    personnel: str | None = None
+    defensive_personnel: str | None = None
+    shotgun: bool | None = None
+    no_huddle: bool | None = None
+    pass_length: str | None = None
+    pass_location: str | None = None
+    run_location: str | None = None
+    run_gap: str | None = None
+    air_yards: float | None = None
+    yards_after_catch: float | None = None
+    yards_gained: float | None = None
+    passer: str | None = None
+    receiver: str | None = None
+    rusher: str | None = None
+    touchdown: bool | None = None
+    turnover: bool | None = None
+    sack: bool | None = None
+    penalty: bool | None = None
+    first_down: bool | None = None
+    win_probability: float | None = None
+    win_probability_added: float | None = None
+    defenders_in_box: int | None = None
+    pass_rushers: int | None = None
+    route: str | None = None
+    coverage_type: str | None = None
+    man_zone: str | None = None
+    pressure: bool | None = None
+    time_to_throw: float | None = None
+    motion: bool | None = None
+    play_action: bool | None = None
+    rpo: bool | None = None
+    screen: bool | None = None
+    catchable_ball: bool | None = None
+    receiver_drop: bool | None = None
+    starting_hash: str | None = None
+    qb_location: str | None = None
+    offense_backfield_count: int | None = None
+    defense_box_count: int | None = None
+    blitzers: int | None = None
+    trick_play: bool | None = None
+    qb_out_of_pocket: bool | None = None
+    interception_worthy: bool | None = None
+    throw_away: bool | None = None
+    read_thrown: str | None = None
+    contested_ball: bool | None = None
+    created_reception: bool | None = None
+    qb_sneak: bool | None = None
+    qb_fault_sack: bool | None = None
+    offense_names: list[str] = Field(default_factory=list)
+    offense_positions: list[str] = Field(default_factory=list)
+    defense_names: list[str] = Field(default_factory=list)
+    defense_positions: list[str] = Field(default_factory=list)
+
+
 class PlayEvidence(BaseModel):
     model_config = ConfigDict(frozen=True)
     evidence_id: str
@@ -258,6 +331,7 @@ class PlayEvidence(BaseModel):
     supporting: bool = True
     dataset_manifest_id: str
     tool_execution_id: str | None = None
+    visualization: PlayVisualization | None = None
 
 
 class Claim(BaseModel):

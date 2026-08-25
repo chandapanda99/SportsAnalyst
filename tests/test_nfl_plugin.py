@@ -34,6 +34,9 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert epa.sample_size == 160
     assert [item.evidence_id for item in first.aggregate_evidence] == [item.evidence_id for item in second.aggregate_evidence]
     assert len(first.play_evidence) == 5
+    assert first.play_evidence[0].visualization is not None
+    assert first.play_evidence[0].visualization.down is not None
+    assert first.play_evidence[0].visualization.yards_gained is not None
     assert first.charts
     weekly = [item for item in first.aggregate_evidence if item.metric == "weekly_epa_per_dropback"]
     assert weekly and all(item.confidence_low is not None and item.confidence_high is not None for item in weekly)
@@ -315,12 +318,114 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
         2024: pl.DataFrame({"week": [1], "home_team": ["KC"], "away_team": ["BUF"], "home_score": [27], "away_score": [20]}),
         2025: pl.DataFrame({"week": [1], "home_team": ["BUF"], "away_team": ["KC"], "home_score": [24], "away_score": [20]}),
     }
+    participation = {}
+    ftn_charting = {}
+    weekly_rosters = {}
+    depth_charts = {}
+    nextgen_receiving = {}
+    nextgen_rushing = {}
+    pfr_passing = {}
+    for season in (2024, 2025):
+        receiver_id = "00-0039064" if season == 2024 else "00-0039912"
+        receiver_name = "Rashee Rice" if season == 2024 else "Xavier Worthy"
+        play_rows = analysis_pbp[season].select("game_id", "play_id", "week").iter_rows(named=True)
+        participation[season] = pl.DataFrame(
+            [
+                {
+                    "nflverse_game_id": row["game_id"],
+                    "play_id": row["play_id"],
+                    "week": row["week"],
+                    "possession_team": "KC",
+                    "offense_players": f"00-0033873;{receiver_id};00-0030506",
+                    "offense_names": f"Patrick Mahomes;{receiver_name};Travis Kelce",
+                    "offense_positions": "QB;WR;TE",
+                    "defense_names": "T.J. Watt;Minkah Fitzpatrick",
+                    "defense_positions": "EDGE;S",
+                    "defense_personnel": "2 DL, 4 LB, 5 DB",
+                    "defenders_in_box": 6 if season == 2024 else 7,
+                    "number_of_pass_rushers": 4 if season == 2024 else 5,
+                    "was_pressure": season == 2025,
+                    "route": "SLANT",
+                    "defense_man_zone_type": "MAN" if season == 2025 else "ZONE",
+                    "defense_coverage_type": "COVER_1" if season == 2025 else "COVER_3",
+                }
+                for row in play_rows
+            ]
+        )
+        ftn_charting[season] = participation[season].select(
+            pl.col("nflverse_game_id"),
+            pl.col("play_id").alias("nflverse_play_id"),
+        ).with_columns(
+            pl.lit(season == 2025).alias("is_motion"),
+            pl.lit(False).alias("is_no_huddle"),
+            pl.lit(season == 2025).alias("is_play_action"),
+            pl.lit(False).alias("is_rpo"),
+            pl.lit(False).alias("is_screen_pass"),
+            pl.lit(4 if season == 2024 else 5).alias("n_pass_rushers"),
+            pl.lit("R").alias("starting_hash"),
+            pl.lit("SHOTGUN").alias("qb_location"),
+            pl.lit(1).alias("n_offense_backfield"),
+            pl.lit(7).alias("n_defense_box"),
+            pl.lit(1 if season == 2024 else 2).alias("n_blitzers"),
+            pl.lit(False).alias("is_trick_play"),
+            pl.lit(season == 2025).alias("is_qb_out_of_pocket"),
+            pl.lit(False).alias("is_interception_worthy"),
+            pl.lit(False).alias("is_throw_away"),
+            pl.lit("FIRST").alias("read_thrown"),
+            pl.lit(False).alias("is_contested_ball"),
+            pl.lit(False).alias("is_created_reception"),
+            pl.lit(False).alias("is_qb_sneak"),
+            pl.lit(False).alias("is_qb_fault_sack"),
+            pl.datetime(season, 1, 1, time_zone="UTC").alias("loaded_at"),
+        )
+        weekly_rosters[season] = pl.DataFrame(
+            [
+                {
+                    "team": "KC",
+                    "week": week,
+                    "gsis_id": receiver_id,
+                    "full_name": receiver_name,
+                    "position": "WR",
+                    "status": "ACT",
+                }
+                for week in range(1, 5)
+            ]
+        )
+        depth_charts[season] = pl.DataFrame(
+            [
+                {
+                    "team": "KC",
+                    "week": week,
+                    "gsis_id": receiver_id,
+                    "player_name": receiver_name,
+                    "pos_abb": "WR",
+                    "pos_rank": 1,
+                }
+                for week in range(1, 5)
+            ]
+        )
+        nextgen_receiving[season] = pl.DataFrame(
+            {"team_abbr": ["KC"], "week": [1], "avg_separation": [2.5 if season == 2024 else 3.0]}
+        )
+        nextgen_rushing[season] = pl.DataFrame(
+            {"team_abbr": ["KC"], "week": [1], "rush_yards_over_expected_per_att": [0.1 if season == 2024 else 0.4]}
+        )
+        pfr_passing[season] = pl.DataFrame(
+            {"team": ["KC"], "week": [1], "times_pressured_pct": [20.0 if season == 2024 else 25.0]}
+        )
     supplemental = {
         "rosters": rosters,
         "injuries": injuries,
         "snap_counts": snap_counts,
         "nextgen_passing": nextgen,
         "schedules": schedules,
+        "participation": participation,
+        "weekly_rosters": weekly_rosters,
+        "depth_charts": depth_charts,
+        "nextgen_receiving": nextgen_receiving,
+        "nextgen_rushing": nextgen_rushing,
+        "ftn_charting": ftn_charting,
+        "pfr_passing": pfr_passing,
     }
     supplemental_manifests = {
         dataset: {season: manifest(season, frame.columns, dataset) for season, frame in frames.items()}
@@ -342,6 +447,12 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
         "summarize_injured_or_inactive_players",
         "join_nextgen_passing_metrics",
         "join_schedule_context",
+        "join_participation_context",
+        "join_depth_chart_context",
+        "join_nextgen_receiving_metrics",
+        "join_nextgen_rushing_metrics",
+        "join_ftn_charting",
+        "join_pfr_advanced_stats",
     } <= executed
     metrics = {item.metric for item in result.aggregate_evidence}
     assert {
@@ -373,6 +484,20 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
     assert rice_targets.comparison_value == 0
     assert "nextgen_avg_time_to_throw" in metrics
     assert "schedule_average_scoring_margin" in metrics
+    assert {
+        "participation_pressure_rate",
+        "depth_chart_starter_continuity",
+        "nextgen_receiving_avg_separation",
+        "nextgen_rushing_rush_yards_over_expected_per_att",
+        "ftn_is_motion",
+        "pfr_passing_times_pressured_pct",
+    } <= metrics
+    assert result.play_evidence[0].visualization is not None
+    assert result.play_evidence[0].visualization.coverage_type in {"COVER_1", "COVER_3"}
+    assert result.play_evidence[0].visualization.starting_hash == "R"
+    assert result.play_evidence[0].visualization.qb_location == "SHOTGUN"
+    assert result.play_evidence[0].visualization.offense_names
+    assert result.play_evidence[0].visualization.defense_names == ["T.J. Watt", "Minkah Fitzpatrick"]
 
 
 def test_metric_explanation_and_player_resolution(pbp_pair) -> None:

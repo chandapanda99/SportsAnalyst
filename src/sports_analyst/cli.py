@@ -38,7 +38,8 @@ def data_sync(
 @data_app.command("list")
 def data_list() -> None:
     for manifest in AnalystApplication().store.manifests():
-        typer.echo(f"{manifest.season}  {manifest.row_count:>7,} rows  {manifest.sha256[:12]}")
+        season = "shared" if manifest.season == 0 else str(manifest.season)
+        typer.echo(f"{season:>6}  {manifest.dataset:<22}  {manifest.row_count:>7,} rows  {manifest.sha256[:12]}")
 
 
 @app.command("ask")

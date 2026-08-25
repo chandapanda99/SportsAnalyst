@@ -30,7 +30,7 @@ logger = logging.getLogger("sports_analyst.api")
 
 class SyncRequest(BaseModel):
     seasons: list[int] = Field(min_length=1, max_length=27)
-    datasets: list[str] = Field(default_factory=lambda: ["play_by_play"], min_length=1, max_length=7)
+    datasets: list[str] = Field(default_factory=lambda: ["play_by_play"], min_length=1, max_length=20)
 
 
 class FollowUpRequest(BaseModel):

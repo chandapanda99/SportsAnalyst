@@ -288,8 +288,8 @@ main {
 
 .intro-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr);
-    gap: 28px;
+    grid-template-columns: minmax(360px, .82fr) minmax(620px, 1.18fr);
+    gap: clamp(24px, 3vw, 48px);
     align-items: start
 }
 
@@ -844,8 +844,8 @@ main {
 
 .onboarding {
     display: grid;
-    gap: 16px;
-    padding: 18px
+    gap: 18px;
+    padding: 20px
 }
 
 .data-manager {
@@ -922,15 +922,85 @@ main {
 
 .sync-fields {
     display: grid;
-    grid-template-columns: minmax(112px, .65fr) minmax(0, 1.35fr);
-    gap: 14px
+    grid-template-columns: minmax(170px, .42fr) minmax(0, 1.58fr);
+    gap: 20px
 }
 
-.season-picker, .dataset-picker legend {
+.season-picker legend, .dataset-picker legend {
     color: var(--color-text-secondary);
     font: 12px var(--font-mono);
     letter-spacing: .08em;
     text-transform: uppercase
+}
+
+.season-picker {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0
+}
+
+.season-options {
+    display: grid;
+    gap: 4px;
+    max-height: 326px;
+    margin-top: 8px;
+    padding: 5px;
+    overflow-y: auto;
+    border: 1px solid var(--color-border-control);
+    border-radius: 8px;
+    background: var(--color-surface-input);
+    scrollbar-color: var(--color-border-strong) transparent
+}
+
+.season-options label {
+    display: grid;
+    grid-template-columns: 15px 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard)
+}
+
+.season-options label:hover {
+    border-color: var(--color-border-interactive);
+    background: var(--color-surface-control)
+}
+
+.season-options label.selected {
+    border-color: color-mix(in srgb, var(--mint) 38%, var(--color-border-control));
+    background: color-mix(in srgb, var(--mint) 9%, var(--color-surface-control));
+    color: var(--color-text-primary)
+}
+
+.season-options input {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--mint)
+}
+
+.season-options strong {
+    font: 600 13px var(--font-mono);
+    letter-spacing: 0
+}
+
+.season-options small {
+    justify-self: end;
+    color: var(--color-text-tertiary);
+    font: 10px var(--font-mono);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap
+}
+
+.season-options label.selected small {
+    color: var(--mint)
 }
 
 .dataset-picker {
@@ -942,19 +1012,25 @@ main {
 
 .dataset-options {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 12px;
-    row-gap: 4px
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    column-gap: 20px;
+    row-gap: 7px;
+    max-height: 326px;
+    padding: 2px 8px 2px 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-color: var(--color-border-strong) transparent
 }
 
 .dataset-options label {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    align-items: flex-start;
+    gap: 8px;
     color: var(--color-text-soft);
     min-width: 0;
-    min-height: 25px;
-    font-size: 13px
+    min-height: 34px;
+    font-size: 13px;
+    line-height: 1.25
 }
 
 .dataset-options input {
@@ -962,26 +1038,25 @@ main {
     flex: 0 0 14px;
     width: 14px;
     height: 14px;
-    margin: 0;
+    margin: 2px 0 0;
     padding: 0;
     accent-color: var(--mint)
 }
 
 .dataset-options label span {
-    display: flex;
+    display: grid;
     min-width: 0;
     flex: 1;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 6px;
+    gap: 2px;
     margin: 0;
-    line-height: 1.15
+    line-height: 1.2
 }
 
 .dataset-options label small {
     color: var(--color-text-tertiary);
     font: 10px var(--font-mono);
-    white-space: nowrap
+    line-height: 1.25;
+    white-space: normal
 }
 
 .onboarding button, .export {
@@ -1015,6 +1090,35 @@ main {
     align-items: center;
     justify-content: space-between;
     padding: 11px 13px
+}
+
+.dataset-picker legend {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px
+}
+
+.dataset-picker .package-toggle {
+    min-height: 0;
+    padding: 2px 5px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--mint);
+    font: 10px var(--font-mono);
+    letter-spacing: .02em;
+    text-transform: uppercase
+}
+
+.dataset-picker .package-toggle:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--mint) 10%, transparent)
+}
+
+.dataset-picker .package-toggle:disabled {
+    opacity: .4;
+    cursor: not-allowed
 }
 
 .promise-grid {
@@ -1142,44 +1246,72 @@ main {
     letter-spacing: .04em
 }
 
-.play-route {
+.catch-scene {
     position: absolute;
-    inset: 37px 16px 42px;
-    width: calc(100% - 32px);
-    height: calc(100% - 79px);
+    inset: 37px 14px 37px;
+    width: calc(100% - 28px);
+    height: calc(100% - 74px);
     overflow: visible
 }
 
-.play-route > path {
+.field-shadow {
+    fill: none;
+    stroke: var(--color-border-strong);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke
+}
+
+.catch-arc {
+    fill: none;
+    stroke: color-mix(in srgb, var(--mint) 68%, transparent);
+    stroke-dasharray: 7 8;
+    stroke-dashoffset: 60;
+    stroke-linecap: round;
+    stroke-width: 1.6;
+    vector-effect: non-scaling-stroke;
+    animation: catch-arc-drive 3.2s linear infinite
+}
+
+.player-head, .player-body {
+    fill: var(--color-text-secondary);
+    stroke: var(--color-text-primary);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke
+}
+
+.player-body {
+    fill: var(--color-surface-control)
+}
+
+.player-limb {
+    fill: none;
+    stroke: var(--color-text-secondary);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 5;
+    vector-effect: non-scaling-stroke
+}
+
+.player-hand {
+    fill: var(--mint)
+}
+
+.catch-signal {
     fill: none;
     stroke: var(--mint);
-    stroke-dasharray: 8 8;
-    stroke-dashoffset: 64;
-    stroke-linecap: round;
-    stroke-width: 2;
-    vector-effect: non-scaling-stroke;
-    animation: route-drive 2.6s linear infinite
-}
-
-.route-point {
-    fill: var(--color-surface-panel);
-    stroke: var(--mint);
-    stroke-width: 2;
+    stroke-width: 1.5;
+    opacity: 0;
     transform-box: fill-box;
     transform-origin: center;
-    animation: route-pulse 2.6s ease-in-out infinite
+    vector-effect: non-scaling-stroke
 }
 
-.point-two {
-    animation-delay: .55s
+.catch-signal-left {
+    animation: catch-left 3.2s ease-out infinite
 }
 
-.point-three {
-    animation-delay: 1.2s
-}
-
-.point-four {
-    animation-delay: 1.85s
+.catch-signal-right {
+    animation: catch-right 3.2s ease-out infinite
 }
 
 .moving-football {
@@ -1231,20 +1363,39 @@ main {
     }
 }
 
-@keyframes route-drive {
+@keyframes catch-arc-drive {
     to {
         stroke-dashoffset: 0
     }
 }
 
-@keyframes route-pulse {
-    0%, 70%, 100% {
-        transform: scale(1);
-        opacity: .75
+@keyframes catch-left {
+    0%, 84%, 100% {
+        opacity: 0;
+        transform: scale(.65)
     }
-    82% {
-        transform: scale(1.65);
-        opacity: 1
+    90% {
+        opacity: .9;
+        transform: scale(1.15)
+    }
+    97% {
+        opacity: 0;
+        transform: scale(1.55)
+    }
+}
+
+@keyframes catch-right {
+    0%, 34%, 50%, 100% {
+        opacity: 0;
+        transform: scale(.65)
+    }
+    40% {
+        opacity: .9;
+        transform: scale(1.15)
+    }
+    47% {
+        opacity: 0;
+        transform: scale(1.55)
     }
 }
 
@@ -1334,9 +1485,9 @@ main {
 
 .chat-avatar {
     display: grid;
-    flex: 0 0 34px;
-    width: 34px;
-    height: 34px;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
     place-items: center;
     border-radius: 50%;
     font: 600 10px var(--font-mono)
@@ -1940,6 +2091,11 @@ button.analyst-bubble:focus-visible,
     background: var(--color-surface-hover)
 }
 
+.play-list button.selected {
+    background: var(--color-surface-raised);
+    box-shadow: inset 3px 0 0 var(--mint)
+}
+
 .play-list .play-tag {
     justify-self: start;
     padding: 4px 7px;
@@ -2005,6 +2161,16 @@ button.analyst-bubble:focus-visible,
     .ask-copy {
         max-width: 720px;
         padding-bottom: 4px
+    }
+}
+
+@container (min-width: 901px) and (max-width: 1120px) {
+    .intro-grid {
+        grid-template-columns: minmax(320px, .8fr) minmax(540px, 1.2fr)
+    }
+
+    .dataset-options {
+        grid-template-columns: 1fr
     }
 }
 

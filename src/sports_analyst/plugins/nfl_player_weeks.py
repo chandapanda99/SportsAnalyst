@@ -80,6 +80,14 @@ def _truthy(value: Any) -> bool:
     return bool(value)
 
 
+def _list_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in re.split(r"[,;|]", str(value)) if item.strip()]
+
+
 def _team(value: Any) -> str | None:
     normalized = _text(value)
     if not normalized:
@@ -102,6 +110,8 @@ def _position(value: Any) -> tuple[str | None, str]:
 
 def _status_severity(value: Any) -> int:
     status = (_text(value) or "").upper()
+    if status in {"INA", "PUP", "RES", "RSN", "SUS"}:
+        return 3
     if any(pattern in status for pattern in ("RESERVE", "INJURED RESERVE", "PUP", "INACTIVE", "OUT", " IR")):
         return 3
     if "DOUBTFUL" in status:
@@ -132,12 +142,26 @@ def normalize_player_weeks(
     injuries: dict[int, pl.DataFrame] | None = None,
     snap_counts: dict[int, pl.DataFrame] | None = None,
     season_type: str = "REG",
+    weekly_rosters: dict[int, pl.DataFrame] | None = None,
+    participation: dict[int, pl.DataFrame] | None = None,
+    depth_charts: dict[int, pl.DataFrame] | None = None,
+    player_directory: pl.DataFrame | None = None,
 ) -> PlayerWeekLayer:
     """Normalize nflverse player context to one row per team, season, week, and player."""
     rosters, injuries, snap_counts = rosters or {}, injuries or {}, snap_counts or {}
+    weekly_rosters, participation, depth_charts = weekly_rosters or {}, participation or {}, depth_charts or {}
     selected_weeks = _window_weeks(windows)
     observations: list[dict[str, Any]] = []
-    source_rows = {"play_by_play": 0, "rosters": 0, "injuries": 0, "snap_counts": 0}
+    source_rows = {
+        "play_by_play": 0,
+        "rosters": 0,
+        "weekly_rosters": 0,
+        "injuries": 0,
+        "snap_counts": 0,
+        "participation": 0,
+        "depth_charts": 0,
+        "players": 0,
+    }
     played_weeks: dict[int, set[int]] = defaultdict(set)
 
     def add(
@@ -158,6 +182,9 @@ def normalize_player_weeks(
         dropbacks: int = 0,
         opportunities: int = 0,
         opportunity_epa: float = 0,
+        participation_offense_snaps: int = 0,
+        participation_defense_snaps: int = 0,
+        depth_rank: float | None = None,
     ) -> None:
         if week not in selected_weeks.get(season, set()):
             return
@@ -187,6 +214,9 @@ def normalize_player_weeks(
                 "dropbacks": dropbacks,
                 "opportunities": opportunities,
                 "opportunity_epa": opportunity_epa,
+                "participation_offense_snaps": participation_offense_snaps,
+                "participation_defense_snaps": participation_defense_snaps,
+                "depth_rank": depth_rank,
             }
         )
 
@@ -271,6 +301,51 @@ def normalize_player_weeks(
                     player_name=passer_name,
                     position="QB",
                     dropbacks=1,
+                )
+
+    for season, frame in participation.items():
+        if season not in selected_weeks:
+            continue
+        for row in _selected_rows(
+            frame,
+            (
+                "nflverse_game_id",
+                "game_id",
+                "week",
+                "possession_team",
+                "offense_players",
+                "offense_names",
+                "offense_positions",
+                "defense_players",
+                "defense_names",
+                "defense_positions",
+            ),
+        ):
+            week = int(_number(row.get("week")))
+            if week not in selected_weeks[season]:
+                continue
+            possession = _team(row.get("possession_team"))
+            game_id = str(_first(row, "nflverse_game_id", "game_id") or "")
+            is_offense = possession == team
+            is_defense = not is_offense and team in game_id.split("_")
+            if not is_offense and not is_defense:
+                continue
+            side = "offense" if is_offense else "defense"
+            ids = _list_values(row.get(f"{side}_players"))
+            names = _list_values(row.get(f"{side}_names"))
+            positions = _list_values(row.get(f"{side}_positions"))
+            source_rows["participation"] += 1
+            played_weeks[season].add(week)
+            for index, player_id in enumerate(ids):
+                add(
+                    source="participation",
+                    season=season,
+                    week=week,
+                    player_id=player_id,
+                    player_name=names[index] if index < len(names) else None,
+                    position=positions[index] if index < len(positions) else None,
+                    participation_offense_snaps=1 if is_offense else 0,
+                    participation_defense_snaps=1 if is_defense else 0,
                 )
 
     for season, frame in snap_counts.items():
@@ -366,6 +441,85 @@ def normalize_player_weeks(
                 injury_status=_first(row, "report_status", "game_status", "practice_status", "status"),
             )
 
+    for season, frame in weekly_rosters.items():
+        if season not in selected_weeks:
+            continue
+        for row in _selected_rows(
+            frame,
+            (
+                "team",
+                "team_abbr",
+                "recent_team",
+                "week",
+                "week_number",
+                "gsis_id",
+                "player_id",
+                "nfl_id",
+                "full_name",
+                "player_name",
+                "player_display_name",
+                "position",
+                "position_group",
+                "status",
+                "roster_status",
+            ),
+        ):
+            if _team(_first(row, "team", "team_abbr", "recent_team")) != team:
+                continue
+            week = int(_number(_first(row, "week", "week_number")))
+            if week not in selected_weeks[season]:
+                continue
+            status = _first(row, "status", "roster_status")
+            source_rows["weekly_rosters"] += 1
+            add(
+                source="weekly_rosters",
+                season=season,
+                week=week,
+                player_id=_first(row, "gsis_id", "player_id", "nfl_id"),
+                player_name=_first(row, "full_name", "player_name", "player_display_name"),
+                position=_first(row, "position", "position_group"),
+                roster_status=status,
+                injury_status=status if _status_severity(status) else None,
+            )
+
+    for season, frame in depth_charts.items():
+        if season not in selected_weeks:
+            continue
+        for row in _selected_rows(
+            frame,
+            (
+                "team",
+                "team_abbr",
+                "week",
+                "week_number",
+                "gsis_id",
+                "player_id",
+                "player_name",
+                "full_name",
+                "position",
+                "pos_abb",
+                "pos_grp",
+                "pos_rank",
+                "depth_team",
+            ),
+        ):
+            if _team(_first(row, "team", "team_abbr")) != team:
+                continue
+            recorded_week = _first(row, "week", "week_number")
+            weeks = [int(_number(recorded_week))] if recorded_week else sorted(selected_weeks[season])
+            for week in (item for item in weeks if item in selected_weeks[season]):
+                source_rows["depth_charts"] += 1
+                add(
+                    source="depth_charts",
+                    season=season,
+                    week=week,
+                    player_id=_first(row, "gsis_id", "player_id"),
+                    player_name=_first(row, "player_name", "full_name"),
+                    position=_first(row, "position", "pos_abb", "pos_grp"),
+                    depth_rank=_number(_first(row, "pos_rank", "depth_team")) or None,
+                )
+
+    weekly_roster_seasons = {season for season, frame in weekly_rosters.items() if not frame.is_empty()}
     roster_rows: list[tuple[int, dict[str, Any]]] = []
     for season, frame in rosters.items():
         if season not in selected_weeks:
@@ -396,6 +550,33 @@ def normalize_player_weeks(
             roster_rows.append((season, row))
             source_rows["rosters"] += 1
 
+    canonical_ids: dict[str, str] = {}
+    directory_names: dict[str, str] = {}
+    if player_directory is not None and not player_directory.is_empty():
+        for row in _selected_rows(
+            player_directory,
+            (
+                "gsis_id",
+                "pfr_id",
+                "pfr_player_id",
+                "espn_id",
+                "sportradar_id",
+                "display_name",
+                "full_name",
+            ),
+        ):
+            gsis_id = _text(row.get("gsis_id"))
+            if not gsis_id:
+                continue
+            source_rows["players"] += 1
+            for source_id in (_first(row, "gsis_id"), _first(row, "pfr_id", "pfr_player_id"), row.get("espn_id"), row.get("sportradar_id")):
+                normalized = _text(source_id)
+                if normalized:
+                    canonical_ids[normalized] = gsis_id
+            name_key = _name_key(_first(row, "display_name", "full_name"))
+            if name_key:
+                directory_names[name_key] = gsis_id
+
     identity_ids: dict[tuple[int, str], set[str]] = defaultdict(set)
     for observation in observations:
         if observation["name_key"] and observation["player_id"]:
@@ -408,6 +589,10 @@ def normalize_player_weeks(
             identity_ids[(season, name_key)].add(player_id)
 
     def preferred_id(season: int, name_key: str | None, source_id: str | None) -> str:
+        if source_id and source_id in canonical_ids:
+            return canonical_ids[source_id]
+        if name_key and name_key in directory_names:
+            return directory_names[name_key]
         candidates = identity_ids.get((season, name_key or ""), set())
         gsis = sorted(candidate for candidate in candidates if candidate.startswith("00-"))
         return (gsis or sorted(candidates) or ([source_id] if source_id else []) or [f"NAME:{name_key}"])[0]
@@ -424,7 +609,7 @@ def normalize_player_weeks(
             "position_group": position_group,
             "roster_status": _text(_first(row, "status", "roster_status")),
         }
-        for week in sorted(played_weeks.get(season) or selected_weeks[season]):
+        for week in ([] if season in weekly_roster_seasons else sorted(played_weeks.get(season) or selected_weeks[season])):
             add(
                 source="rosters",
                 season=season,
@@ -459,6 +644,9 @@ def normalize_player_weeks(
                 "offense_snaps": 0.0,
                 "defense_snaps": 0.0,
                 "special_teams_snaps": 0.0,
+                "participation_offense_snaps": 0,
+                "participation_defense_snaps": 0,
+                "depth_rank": None,
                 "targets": 0,
                 "carries": 0,
                 "dropbacks": 0,
@@ -473,6 +661,12 @@ def normalize_player_weeks(
             record[field_name] = max(record[field_name], observation[field_name])
         for field_name in ("targets", "carries", "dropbacks", "opportunities"):
             record[field_name] += observation[field_name]
+        for field_name in ("participation_offense_snaps", "participation_defense_snaps"):
+            record[field_name] += observation[field_name]
+        if observation["depth_rank"] is not None:
+            record["depth_rank"] = min(record["depth_rank"] or observation["depth_rank"], observation["depth_rank"])
+        if observation["roster_status"]:
+            record["roster_status"] = observation["roster_status"]
         if observation["opportunities"]:
             record["opportunity_epa"] += observation["opportunity_epa"]
             record["opportunity_epa_plays"] += observation["opportunities"]
@@ -485,19 +679,29 @@ def normalize_player_weeks(
 
     rows = []
     for record in records.values():
+        if record["participation_offense_snaps"]:
+            record["offense_snaps"] = float(record["participation_offense_snaps"])
+        if record["participation_defense_snaps"]:
+            record["defense_snaps"] = float(record["participation_defense_snaps"])
         record["total_snaps"] = record["offense_snaps"] + record["defense_snaps"] + record["special_teams_snaps"]
         record["sources"] = ",".join(sorted(record["sources"]))
         rows.append(record)
     frame = pl.DataFrame(rows, infer_schema_length=None).sort("season", "week", "player_id") if rows else pl.DataFrame()
     caveats = [
-        "Season-level roster membership is projected only across weeks in which the team has local play or snap data.",
+        "Season-level roster membership is projected only when weekly roster records are unavailable.",
         "Player identities prefer GSIS IDs and otherwise use cross-source name matching; unresolved names may remain separate players.",
-        "Play-by-play identifies primary participants, not every player on the field for each snap.",
+        "Play-by-play identifies primary participants; synced participation data supplies recorded on-field players when available.",
     ]
-    if not source_rows["snap_counts"]:
-        caveats.append("Snap-weighted availability and lineup continuity require synced snap counts.")
+    if not source_rows["snap_counts"] and not source_rows["participation"]:
+        caveats.append("Weighted availability and lineup continuity require synced snap counts or participation data.")
     if not source_rows["injuries"]:
         caveats.append("Position-group availability requires synced injury reports.")
+    if not source_rows["participation"]:
+        caveats.append("Exact play-level lineup participation requires synced participation data.")
+    if not source_rows["depth_charts"]:
+        caveats.append("Starter and reserve roles require synced depth charts.")
+    if not source_rows["players"]:
+        caveats.append("Cross-source identity mapping is strongest when the shared player directory is synced.")
     return PlayerWeekLayer(frame=frame, caveats=caveats, source_rows=source_rows)
 
 

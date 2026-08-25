@@ -23,6 +23,7 @@ export type AnalysisOptions = {
   comparison_windows: ComparisonWindowOption[];
   week_values: number[];
   syncable_datasets: string[];
+  dataset_min_seasons: Record<string, number | null>;
 };
 export type InvestigationRequest = {
   question: string;
@@ -34,7 +35,24 @@ export type InvestigationRequest = {
 export type Evidence = {
   evidence_id: string; metric?: string; label?: string; value?: number; baseline_value?: number;
   comparison_value?: number; sample_size?: number; caveats?: string[]; game_id?: string;
-  play_id?: number; description?: string; epa?: number; supporting?: boolean;
+  play_id?: number; season?: number; team?: string; description?: string; epa?: number; supporting?: boolean;
+  visualization?: PlayVisualization;
+};
+export type PlayVisualization = {
+  week?: number; quarter?: number; clock?: string; down?: number; yards_to_go?: number; yardline_100?: number;
+  possession_team?: string; defensive_team?: string; possession_score?: number; defensive_score?: number;
+  possession_timeouts?: number; defensive_timeouts?: number; score_differential?: number; goal_to_go?: boolean; play_type?: string;
+  formation?: string; personnel?: string; defensive_personnel?: string; shotgun?: boolean; no_huddle?: boolean; pass_length?: string;
+  pass_location?: string; run_location?: string; run_gap?: string; air_yards?: number; yards_after_catch?: number;
+  yards_gained?: number; passer?: string; receiver?: string; rusher?: string; touchdown?: boolean; turnover?: boolean;
+  sack?: boolean; penalty?: boolean; first_down?: boolean; win_probability?: number; win_probability_added?: number;
+  defenders_in_box?: number; pass_rushers?: number; route?: string; coverage_type?: string; man_zone?: string;
+  pressure?: boolean; time_to_throw?: number; motion?: boolean; play_action?: boolean; rpo?: boolean; screen?: boolean;
+  catchable_ball?: boolean; receiver_drop?: boolean; starting_hash?: string; qb_location?: string;
+  offense_backfield_count?: number; defense_box_count?: number; blitzers?: number; trick_play?: boolean;
+  qb_out_of_pocket?: boolean; interception_worthy?: boolean; throw_away?: boolean; read_thrown?: string;
+  contested_ball?: boolean; created_reception?: boolean; qb_sneak?: boolean; qb_fault_sack?: boolean;
+  offense_names?: string[]; offense_positions?: string[]; defense_names?: string[]; defense_positions?: string[];
 };
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };

@@ -54,6 +54,11 @@ Supplemental packages are optional. Investigations continue with play-by-play to
 registered NFL tool catalog is available at `GET /api/sports/nfl/tools`; metric definitions and player resolution are available below `/api/sports/nfl/metrics` and
 `/api/sports/nfl/players`.
 
+The data manager also supports play participation, weekly rosters, depth charts, Next Gen receiving and rushing, FTN charting, and weekly PFR advanced passing, rushing,
+receiving, and defensive statistics. Participation enriches lineup continuity and representative-play schematics without attempting player tracking. The canonical player and
+team directories are stored once as shared reference tables (`season=0` in their manifests) and support cross-source identity resolution, official team metadata, and UI
+options. Package labels show their first available season; unavailable season/package combinations are skipped during a multi-season sync.
+
 The priority NFL tool set covers data-driven analysis options, typed time-window comparisons, weekly confidence intervals and three-week moving averages,
 sustained-versus-outlier trend classification, game outlier ranking, league and conference benchmarks, situational splits, representative plays, and metric guidance. League
 benchmarks report percentile, overall rank, conference rank, and distance from the league average. Tool catalog entries expose JSON input schemas so planners and other clients
@@ -63,6 +68,12 @@ instructions.
 The web app's **Full season range** mode is inclusive: selecting 2022 through 2025 loads and measures 2022, 2023, 2024, and 2025. Its season-trend evidence covers the complete
 range, while situational decomposition and representative-play diagnostics compare the first and final seasons. **Custom week ranges** remains the two-window workflow for
 targeted season or week comparisons.
+
+### Play schematics
+
+Selecting a representative play opens a team-themed field schematic built from recorded play-by-play attributes such as situation, ball position, direction, yards gained,
+formation, and personnel. When participation or FTN charting is synced, the details may also include recorded coverage, pressure, route, motion, play action, RPO, and screen
+indicators. The application does not infer assignments or player locations that are absent from nflverse data.
 
 ## Example
 

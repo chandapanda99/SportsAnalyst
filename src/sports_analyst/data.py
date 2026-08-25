@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 from pathlib import Path
+
 import nflreadpy as nfl
 import polars as pl
+
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import DatasetManifest, stable_id
 
@@ -16,8 +18,40 @@ SOURCE_TEMPLATES = {
     "schedules": "https://github.com/nflverse/nflverse-data/releases/tag/schedules",
     "snap_counts": "https://github.com/nflverse/nflverse-data/releases/tag/snap_counts",
     "nextgen_passing": "https://github.com/nflverse/nflverse-data/releases/tag/nextgen_stats",
+    "participation": "https://github.com/nflverse/nflverse-data/releases/tag/pbp_participation",
+    "weekly_rosters": "https://github.com/nflverse/nflverse-data/releases/tag/weekly_rosters",
+    "depth_charts": "https://github.com/nflverse/nflverse-data/releases/tag/depth_charts",
+    "nextgen_receiving": "https://github.com/nflverse/nflverse-data/releases/tag/nextgen_stats",
+    "nextgen_rushing": "https://github.com/nflverse/nflverse-data/releases/tag/nextgen_stats",
+    "ftn_charting": "https://github.com/nflverse/nflverse-data/releases/tag/ftn_charting",
+    "pfr_passing": "https://github.com/nflverse/nflverse-data/releases/tag/pfr_advstats",
+    "pfr_rushing": "https://github.com/nflverse/nflverse-data/releases/tag/pfr_advstats",
+    "pfr_receiving": "https://github.com/nflverse/nflverse-data/releases/tag/pfr_advstats",
+    "pfr_defense": "https://github.com/nflverse/nflverse-data/releases/tag/pfr_advstats",
+    "players": "https://github.com/nflverse/nflverse-data/releases/tag/players",
+    "teams": "https://github.com/nflverse/nflverse-data/releases/tag/teams",
 }
 SUPPORTED_DATASETS = tuple(SOURCE_TEMPLATES)
+REFERENCE_DATASETS = {"players", "teams"}
+DATASET_MIN_SEASONS = {
+    "play_by_play": 1999,
+    "player_stats": 1999,
+    "rosters": 1920,
+    "injuries": 2009,
+    "schedules": 1920,
+    "snap_counts": 2012,
+    "nextgen_passing": 2016,
+    "participation": 2016,
+    "weekly_rosters": 2002,
+    "depth_charts": 2001,
+    "nextgen_receiving": 2016,
+    "nextgen_rushing": 2016,
+    "ftn_charting": 2022,
+    "pfr_passing": 2018,
+    "pfr_rushing": 2018,
+    "pfr_receiving": 2018,
+    "pfr_defense": 2018,
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -39,12 +73,21 @@ class NFLVerseConnector:
         if unknown:
             raise ValueError(f"unsupported nflverse datasets: {unknown}")
         manifests = []
+        for dataset in (item for item in selected if item in REFERENCE_DATASETS):
+            frame = self._load_remote(nfl, dataset, 0)
+            path = self.settings.raw_dir / f"{dataset}.parquet"
+            frame.write_parquet(path)
+            manifests.append(self.manifest_for(path, 0, frame, dataset))
         for season in sorted(set(seasons)):
-            for dataset in selected:
+            for dataset in (item for item in selected if item not in REFERENCE_DATASETS):
+                if season < DATASET_MIN_SEASONS[dataset]:
+                    continue
                 frame = self._load_remote(nfl, dataset, season)
                 path = self.settings.raw_dir / f"{dataset}_{season}.parquet"
                 frame.write_parquet(path)
                 manifests.append(self.manifest_for(path, season, frame, dataset))
+        if not manifests:
+            raise ValueError("none of the selected datasets are available for the selected seasons")
         return manifests
 
     @staticmethod
@@ -57,6 +100,18 @@ class NFLVerseConnector:
             "schedules": lambda: nfl.load_schedules([season]),
             "snap_counts": lambda: nfl.load_snap_counts([season]),
             "nextgen_passing": lambda: nfl.load_nextgen_stats([season], stat_type="passing"),
+            "participation": lambda: nfl.load_participation([season]),
+            "weekly_rosters": lambda: nfl.load_rosters_weekly([season]),
+            "depth_charts": lambda: nfl.load_depth_charts([season]),
+            "nextgen_receiving": lambda: nfl.load_nextgen_stats([season], stat_type="receiving"),
+            "nextgen_rushing": lambda: nfl.load_nextgen_stats([season], stat_type="rushing"),
+            "ftn_charting": lambda: nfl.load_ftn_charting([season]),
+            "pfr_passing": lambda: nfl.load_pfr_advstats([season], stat_type="pass", summary_level="week"),
+            "pfr_rushing": lambda: nfl.load_pfr_advstats([season], stat_type="rush", summary_level="week"),
+            "pfr_receiving": lambda: nfl.load_pfr_advstats([season], stat_type="rec", summary_level="week"),
+            "pfr_defense": lambda: nfl.load_pfr_advstats([season], stat_type="def", summary_level="week"),
+            "players": nfl.load_players,
+            "teams": nfl.load_teams,
         }
         return loaders[dataset]()
 
