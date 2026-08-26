@@ -1,0 +1,2061 @@
+<svg
+    class="catch-scene"
+    viewBox="0 0 360 170"
+    preserveAspectRatio="xMidYMid meet"
+    xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <!-- =====================================================
+         PALETTE
+         ===================================================== -->
+
+    <linearGradient id="practice-jersey" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5d919b"/>
+      <stop offset="1" stop-color="#dce8ee"/>
+    </linearGradient>
+
+    <linearGradient id="practice-pants" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c7d2da"/>
+      <stop offset="1" stop-color="#5d919b"/>
+    </linearGradient>
+
+    <linearGradient id="practice-helmet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5d919b"/>
+      <stop offset=".67" stop-color="#132f49"/>
+      <stop offset="1" stop-color="#081a2c"/>
+    </linearGradient>
+
+    <linearGradient id="football-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a05633"/>
+      <stop offset=".5" stop-color="#6c2b13"/>
+      <stop offset="1" stop-color="#4b2513"/>
+    </linearGradient>
+
+    <filter id="ball-shadow" x="-80%" y="-100%" width="260%" height="300%">
+      <feDropShadow
+          dx="0"
+          dy="2.5"
+          stdDeviation="2"
+          flood-color="#000"
+          flood-opacity=".5"
+      />
+    </filter>
+
+    <!-- =====================================================
+         CANONICAL FOOTBALL FLIGHT PATH
+
+         The football is released slightly forward of and
+         beside the helmet.
+
+         LEFT release / catch:
+             70,57
+
+         RIGHT release / catch:
+             290,57
+
+         The line is intentionally a moderate short-pass arc,
+         rather than a high lob.
+
+         Both the dotted line and animateMotion use this
+         exact path.
+         ===================================================== -->
+
+    <path
+        id="football-flight-path"
+        d="
+                M70 57
+                C118 26 151 18 180 18
+                C209 18 242 26 290 57"
+    />
+
+    <style>
+      .field-shadow {
+      fill: none;
+      stroke: #186907;
+      stroke-width: 1.3;
+      opacity: 0.75;
+      }
+
+      .catch-arc {
+      fill: none;
+      stroke: #79e7de;
+      stroke-width: 1.55;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 4 5;
+      opacity: 0.9;
+      }
+
+      .athlete-ground-shadow {
+      fill: #020b12;
+      opacity: 0.32;
+      }
+
+      .athlete-helmet {
+      fill: url(#practice-helmet);
+      stroke: #647f91;
+      stroke-width: 0.55;
+      }
+
+      .athlete-helmet-stripe {
+      fill: #79e7de;
+      opacity: 0.85;
+      }
+
+      .athlete-visor {
+      fill: #07131e;
+      stroke: #879dab;
+      stroke-width: 0.55;
+      }
+
+      .athlete-facemask {
+      fill: none;
+      stroke: #cbd9e1;
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      }
+
+      .athlete-neck-guard {
+      fill: #526a7a;
+      }
+
+      .athlete-jersey {
+      fill: url(#practice-jersey);
+      stroke: #d8e4ea;
+      stroke-width: 0.55;
+      }
+
+      .athlete-shoulder-pad {
+      fill: #97aab6;
+      stroke: #c7d4dc;
+      stroke-width: 0.4;
+      }
+
+      .shoulder-accent-left {
+      fill: #19b95a;
+      }
+
+      .shoulder-accent-right {
+      fill: #18c6c8;
+      }
+
+      .jersey-number {
+      fill: #314b5f;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      }
+
+      .athlete-pants {
+      fill: url(#practice-pants);
+      }
+
+      .athlete-leg {
+      fill: #b9c6cf;
+      }
+
+      .athlete-sock {
+      fill: #526a79;
+      }
+
+      .athlete-cleat {
+      fill: #71838f;
+      }
+
+      .athlete-upper-arm,
+      .athlete-forearm {
+      fill: none;
+      stroke: #8498a6;
+      stroke-width: 5.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      }
+
+      .athlete-elbow {
+      fill: #738a99;
+      stroke: #a8b8c3;
+      stroke-width: 0.45;
+      }
+
+      .athlete-hand {
+      fill: #d1dbe1;
+      stroke: #879aa7;
+      stroke-width: 0.4;
+      }
+
+      .football-body {
+      fill: url(#football-fill);
+      }
+
+      .football-seam,
+      .football-laces {
+      fill: none;
+      stroke: #fff;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      }
+
+      .football-seam {
+      stroke-width: 0.85;
+      }
+
+      .football-laces {
+      stroke-width: 0.68;
+      }
+
+      .catch-signal {
+      fill: #79e7de;
+      opacity: 0;
+      }
+    </style>
+  </defs>
+
+  <!-- =========================================================
+       FIELD
+       ========================================================= -->
+
+  <path class="field-shadow" d="M19 151H341"/>
+
+  <!-- =========================================================
+       VISIBLE PASS TRAJECTORY
+
+       Uses exactly the same geometry as the football.
+       ========================================================= -->
+
+  <use id="analysis-catch-arc" href="#football-flight-path" class="catch-arc"/>
+
+  <!-- =========================================================
+       LEFT PLAYER
+       ========================================================= -->
+
+  <g class="athlete-anchor athlete-anchor-left">
+    <ellipse class="athlete-ground-shadow" cx="43" cy="151" rx="23" ry="4"/>
+
+    <g class="athlete-motion athlete-left">
+      <!-- =================================================
+           LOWER BODY
+           Stays planted while upper body loads and rotates.
+           ================================================= -->
+
+      <path
+          class="athlete-pants"
+          d="
+                    M25 110
+                    Q43 116 61 110
+                    L59 126
+                    L50 127
+                    L43 121
+                    L36 127
+                    L27 126
+                    Z"
+      />
+
+      <path
+          class="athlete-leg"
+          d="
+                    M30 124
+                    L40 125
+                    L38 140
+                    L31 150
+                    L23 149
+                    L29 137
+                    Z"
+      />
+
+      <path
+          class="athlete-leg"
+          d="
+                    M47 125
+                    L57 124
+                    L59 138
+                    L65 149
+                    L57 151
+                    L51 140
+                    Z"
+      />
+
+      <path class="athlete-sock" d="M29 137L38 140L34 147H25Z"/>
+
+      <path class="athlete-sock" d="M51 140L59 138L63 147L56 148Z"/>
+
+      <path class="athlete-cleat" d="M22 148H34L35 152H21Z"/>
+
+      <path class="athlete-cleat" d="M56 148H68L69 152H55Z"/>
+
+      <!-- =================================================
+           UPPER-BODY ART
+
+           Visual torso rotation is deliberately subtle.
+
+           At release the transform returns to zero so the
+           arm/ball geometry still lands precisely on the
+           canonical flight-path endpoint.
+           ================================================= -->
+
+      <g id="left-upper-body-rotation">
+        <animateTransform
+            attributeName="transform"
+            type="rotate"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        -2 43 108;
+                        -4 43 108;
+                        -3 43 108;
+                        0 43 108;
+                        4 43 108;
+                        1 43 108;
+                        0 43 108;
+                        0 43 108;
+                        0 43 108;
+                        1 43 108;
+                        0 43 108;
+                        -2 43 108;
+                        -2 43 108"
+        />
+
+        <g id="left-upper-body-dip">
+          <animateTransform
+              attributeName="transform"
+              type="translate"
+              dur="4s"
+              repeatCount="indefinite"
+              calcMode="linear"
+              keyTimes="
+                            0;
+                            .05;
+                            .10;
+                            .14;
+                            .22;
+                            .30;
+                            .70;
+                            .80;
+                            .86;
+                            .90;
+                            .94;
+                            .98;
+                            1"
+              values="
+                            0 0;
+                            0 -1;
+                            0 -1;
+                            0 0;
+                            0 2;
+                            0 1;
+                            0 0;
+                            0 0;
+                            0 0;
+                            0 1;
+                            0 0;
+                            0 -1;
+                            0 0"
+          />
+
+          <!-- Helmet -->
+
+          <path
+              class="athlete-helmet"
+              d="
+                            M33 61
+                            Q33 47 43 45
+                            Q54 45 57 57
+                            L56 66
+                            Q51 70 43 70
+                            Q36 69 33 64
+                            Z"
+          />
+
+          <path
+              class="athlete-helmet-stripe"
+              d="
+                            M42 46
+                            H46
+                            L48 55
+                            L46 66
+                            H43
+                            L44 55
+                            Z"
+          />
+
+          <path
+              class="athlete-visor"
+              d="
+                            M35 57
+                            Q43 53 53 57
+                            L52 63
+                            Q44 61 36 63
+                            Z"
+          />
+
+          <path
+              class="athlete-facemask"
+              d="
+                            M52 57
+                            L61 60
+                            V68
+                            H51
+
+                            M53 63
+                            H61
+
+                            M50 66
+                            L55 72"
+          />
+
+          <path class="athlete-neck-guard" d="M38 68H49L50 77H37Z"/>
+
+          <!-- Torso -->
+
+          <path
+              class="athlete-jersey"
+              d="
+                            M25 82
+                            Q31 76 39 75
+                            H47
+                            Q56 76 62 82
+                            L65 92
+                            L61 111
+                            Q53 117 43 117
+                            Q33 117 24 111
+                            L21 92
+                            Z"
+          />
+
+          <!-- Support-side shoulder -->
+
+          <path
+              class="athlete-shoulder-pad"
+              d="
+                            M25 82
+                            Q31 77 38 76
+                            L38 88
+                            L24 93
+                            L21 90
+                            Z"
+          />
+
+          <path
+              class="shoulder-accent-left"
+              d="
+                            M24 84
+                            L36 79
+                            L38 84
+                            L25 90
+                            Z"
+          />
+
+          <!-- Throwing shoulder -->
+
+          <g id="left-throwing-shoulder">
+            <animateTransform
+                attributeName="transform"
+                type="translate"
+                dur="4s"
+                repeatCount="indefinite"
+                calcMode="linear"
+                keyTimes="
+                                0;
+                                .05;
+                                .10;
+                                .14;
+                                .22;
+                                .30;
+                                1"
+                values="
+                                0 0;
+                                0 -1;
+                                0 -1;
+                                0 0;
+                                0 2;
+                                0 1;
+                                0 0"
+            />
+
+            <path
+                class="athlete-shoulder-pad"
+                d="
+                                M61 82
+                                Q55 77 48 76
+                                L48 88
+                                L62 93
+                                L65 90
+                                Z"
+            />
+
+            <path
+                class="shoulder-accent-left"
+                d="
+                                M62 84
+                                L50 79
+                                L48 84
+                                L61 90
+                                Z"
+            />
+          </g>
+
+          <text class="jersey-number" x="43" y="101">1</text>
+        </g>
+      </g>
+
+      <!-- =================================================
+           LEFT SUPPORT ARM
+
+           During the throw:
+           - guide arm points toward receiver
+           - drops during follow-through
+
+           During catch:
+           - reaches with slight elbow bend
+           - closes around ball
+           - bends inward while absorbing catch
+           ================================================= -->
+
+      <path class="athlete-upper-arm" d="M28 84L44 82">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        M29 83L44 82;
+                        M29 83L46 80;
+                        M29 83L48 79;
+                        M28 84L50 78;
+                        M27 86L36 94;
+                        M28 85L36 94;
+                        M28 84L52 76;
+                        M28 84L56 68;
+                        M28 84L57 67;
+                        M28 84L52 80;
+                        M28 84L50 85;
+                        M29 83L45 82;
+                        M29 83L44 82"
+        />
+      </path>
+
+      <path class="athlete-forearm" d="M44 82L59 80">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        M44 82L59 80;
+                        M46 80L61 78;
+                        M48 79L65 76;
+                        M50 78L67 68;
+                        M36 94L27 107;
+                        M36 94L27 107;
+                        M52 76L63 68;
+                        M56 68L67 61;
+                        M57 67L68 61;
+                        M52 80L56 76;
+                        M50 85L54 88;
+                        M45 82L57 82;
+                        M44 82L59 80"
+        />
+      </path>
+
+      <circle class="athlete-elbow" cx="44" cy="82" r="3">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        44;
+                        46;
+                        48;
+                        50;
+                        36;
+                        36;
+                        52;
+                        56;
+                        57;
+                        52;
+                        50;
+                        45;
+                        44"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        82;
+                        80;
+                        79;
+                        78;
+                        94;
+                        94;
+                        76;
+                        68;
+                        67;
+                        80;
+                        85;
+                        82;
+                        82"
+        />
+      </circle>
+
+      <circle class="athlete-hand" cx="59" cy="80" r="3.2">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        59;
+                        61;
+                        65;
+                        67;
+                        27;
+                        27;
+                        63;
+                        67;
+                        68;
+                        56;
+                        54;
+                        57;
+                        59"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        80;
+                        78;
+                        76;
+                        68;
+                        107;
+                        107;
+                        68;
+                        61;
+                        61;
+                        76;
+                        88;
+                        82;
+                        80"
+        />
+      </circle>
+
+      <!-- =================================================
+           LEFT THROWING / CATCHING ARM
+
+           QB-style throwing sequence:
+
+           1. Cock ball beside / behind helmet.
+           2. Load shoulder and torso.
+           3. Elbow drives forward before hand.
+           4. Forearm extends through release at 70,57.
+           5. Hand follows through down across body.
+
+           Catch sequence:
+
+           1. Hands rise toward incoming football.
+           2. Catch occurs at 70,57.
+           3. Elbows flex to absorb the ball.
+           4. Ball is brought into chest.
+           ================================================= -->
+
+      <path class="athlete-upper-arm" d="M59 83L65 61">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        M59 83L65 61;
+                        M60 82L66 55;
+                        M59 83L64 59;
+                        M58 84L62 67;
+                        M56 86L68 82;
+                        M57 85L66 88;
+                        M58 84L62 74;
+                        M58 84L61 67;
+                        M58 84L60 65;
+                        M58 84L63 78;
+                        M58 84L61 84;
+                        M59 83L64 64;
+                        M59 83L65 61"
+        />
+      </path>
+
+      <path class="athlete-forearm" d="M65 61L51 49">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        M65 61L51 49;
+                        M66 55L47 45;
+                        M64 59L55 50;
+                        M62 67L70 57;
+                        M68 82L64 100;
+                        M66 88L67 98;
+                        M62 74L66 64;
+                        M61 67L68 59;
+                        M60 65L70 57;
+                        M63 78L60 74;
+                        M61 84L57 90;
+                        M64 64L55 58;
+                        M65 61L51 49"
+        />
+      </path>
+
+      <circle class="athlete-elbow" cx="65" cy="61" r="3.1">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        65;
+                        66;
+                        64;
+                        62;
+                        68;
+                        66;
+                        62;
+                        61;
+                        60;
+                        63;
+                        61;
+                        64;
+                        65"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        61;
+                        55;
+                        59;
+                        67;
+                        82;
+                        88;
+                        74;
+                        67;
+                        65;
+                        78;
+                        84;
+                        64;
+                        61"
+        />
+      </circle>
+
+      <circle class="athlete-hand" cx="51" cy="49" r="3.25">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        51;
+                        47;
+                        55;
+                        70;
+                        64;
+                        67;
+                        66;
+                        68;
+                        70;
+                        60;
+                        57;
+                        55;
+                        51"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .22;
+                        .30;
+                        .70;
+                        .80;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        49;
+                        45;
+                        50;
+                        57;
+                        100;
+                        98;
+                        64;
+                        59;
+                        57;
+                        74;
+                        90;
+                        58;
+                        49"
+        />
+      </circle>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       RIGHT PLAYER
+       Geometry is mirrored horizontally.
+       ========================================================= -->
+
+  <g
+      class="athlete-anchor athlete-anchor-right"
+      transform="translate(360 0) scale(-1 1)"
+  >
+    <ellipse class="athlete-ground-shadow" cx="43" cy="151" rx="23" ry="4"/>
+
+    <g class="athlete-motion athlete-right">
+      <!-- =================================================
+           LOWER BODY
+           ================================================= -->
+
+      <path
+          class="athlete-pants"
+          d="
+                    M25 110
+                    Q43 116 61 110
+                    L59 126
+                    L50 127
+                    L43 121
+                    L36 127
+                    L27 126
+                    Z"
+      />
+
+      <path
+          class="athlete-leg"
+          d="
+                    M30 124
+                    L40 125
+                    L38 140
+                    L31 150
+                    L23 149
+                    L29 137
+                    Z"
+      />
+
+      <path
+          class="athlete-leg"
+          d="
+                    M47 125
+                    L57 124
+                    L59 138
+                    L65 149
+                    L57 151
+                    L51 140
+                    Z"
+      />
+
+      <path class="athlete-sock" d="M29 137L38 140L34 147H25Z"/>
+
+      <path class="athlete-sock" d="M51 140L59 138L63 147L56 148Z"/>
+
+      <path class="athlete-cleat" d="M22 148H34L35 152H21Z"/>
+
+      <path class="athlete-cleat" d="M56 148H68L69 152H55Z"/>
+
+      <!-- =================================================
+           RIGHT UPPER-BODY ART
+           ================================================= -->
+
+      <g id="right-upper-body-rotation">
+        <animateTransform
+            attributeName="transform"
+            type="rotate"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        0 43 108;
+                        0 43 108;
+                        0 43 108;
+                        0 43 108;
+                        1 43 108;
+                        0 43 108;
+                        -2 43 108;
+                        -4 43 108;
+                        -3 43 108;
+                        0 43 108;
+                        4 43 108;
+                        1 43 108;
+                        0 43 108"
+        />
+
+        <g id="right-upper-body-dip">
+          <animateTransform
+              attributeName="transform"
+              type="translate"
+              dur="4s"
+              repeatCount="indefinite"
+              calcMode="linear"
+              keyTimes="
+                            0;
+                            .26;
+                            .34;
+                            .36;
+                            .40;
+                            .44;
+                            .50;
+                            .56;
+                            .60;
+                            .64;
+                            .72;
+                            .80;
+                            1"
+              values="
+                            0 0;
+                            0 0;
+                            0 0;
+                            0 0;
+                            0 1;
+                            0 0;
+                            0 0;
+                            0 -1;
+                            0 -1;
+                            0 0;
+                            0 2;
+                            0 1;
+                            0 0"
+          />
+
+          <!-- Helmet -->
+
+          <path
+              class="athlete-helmet"
+              d="
+                            M33 61
+                            Q33 47 43 45
+                            Q54 45 57 57
+                            L56 66
+                            Q51 70 43 70
+                            Q36 69 33 64
+                            Z"
+          />
+
+          <path
+              class="athlete-helmet-stripe"
+              d="
+                            M42 46
+                            H46
+                            L48 55
+                            L46 66
+                            H43
+                            L44 55
+                            Z"
+          />
+
+          <path
+              class="athlete-visor"
+              d="
+                            M35 57
+                            Q43 53 53 57
+                            L52 63
+                            Q44 61 36 63
+                            Z"
+          />
+
+          <path
+              class="athlete-facemask"
+              d="
+                            M52 57
+                            L61 60
+                            V68
+                            H51
+
+                            M53 63
+                            H61
+
+                            M50 66
+                            L55 72"
+          />
+
+          <path class="athlete-neck-guard" d="M38 68H49L50 77H37Z"/>
+
+          <!-- Torso -->
+
+          <path
+              class="athlete-jersey"
+              d="
+                            M25 82
+                            Q31 76 39 75
+                            H47
+                            Q56 76 62 82
+                            L65 92
+                            L61 111
+                            Q53 117 43 117
+                            Q33 117 24 111
+                            L21 92
+                            Z"
+          />
+
+          <path
+              class="athlete-shoulder-pad"
+              d="
+                            M25 82
+                            Q31 77 38 76
+                            L38 88
+                            L24 93
+                            L21 90
+                            Z"
+          />
+
+          <path
+              class="shoulder-accent-right"
+              d="
+                            M24 84
+                            L36 79
+                            L38 84
+                            L25 90
+                            Z"
+          />
+
+          <g id="right-throwing-shoulder">
+            <animateTransform
+                attributeName="transform"
+                type="translate"
+                dur="4s"
+                repeatCount="indefinite"
+                calcMode="linear"
+                keyTimes="
+                                0;
+                                .50;
+                                .56;
+                                .60;
+                                .64;
+                                .72;
+                                .80;
+                                1"
+                values="
+                                0 0;
+                                0 0;
+                                0 -1;
+                                0 -1;
+                                0 0;
+                                0 2;
+                                0 1;
+                                0 0"
+            />
+
+            <path
+                class="athlete-shoulder-pad"
+                d="
+                                M61 82
+                                Q55 77 48 76
+                                L48 88
+                                L62 93
+                                L65 90
+                                Z"
+            />
+
+            <path
+                class="shoulder-accent-right"
+                d="
+                                M62 84
+                                L50 79
+                                L48 84
+                                L61 90
+                                Z"
+            />
+          </g>
+
+          <text
+              class="jersey-number"
+              x="43"
+              y="101"
+              transform="translate(86 0) scale(-1 1)"
+          >
+            2
+          </text>
+        </g>
+      </g>
+
+      <!-- =================================================
+           RIGHT SUPPORT ARM
+           ================================================= -->
+
+      <path class="athlete-upper-arm" d="M28 84L52 76">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        M28 84L52 76;
+                        M28 84L52 76;
+                        M28 84L56 68;
+                        M28 84L57 67;
+                        M28 84L52 80;
+                        M28 84L50 85;
+                        M29 83L45 82;
+                        M29 83L46 80;
+                        M29 83L48 79;
+                        M28 84L50 78;
+                        M27 86L36 94;
+                        M28 85L36 94;
+                        M28 84L52 76"
+        />
+      </path>
+
+      <path class="athlete-forearm" d="M52 76L63 68">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        M52 76L63 68;
+                        M52 76L63 68;
+                        M56 68L67 61;
+                        M57 67L68 61;
+                        M52 80L56 76;
+                        M50 85L54 88;
+                        M45 82L57 82;
+                        M46 80L61 78;
+                        M48 79L65 76;
+                        M50 78L67 68;
+                        M36 94L27 107;
+                        M36 94L27 107;
+                        M52 76L63 68"
+        />
+      </path>
+
+      <circle class="athlete-elbow" cx="52" cy="76" r="3">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        52;
+                        52;
+                        56;
+                        57;
+                        52;
+                        50;
+                        45;
+                        46;
+                        48;
+                        50;
+                        36;
+                        36;
+                        52"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        76;
+                        76;
+                        68;
+                        67;
+                        80;
+                        85;
+                        82;
+                        80;
+                        79;
+                        78;
+                        94;
+                        94;
+                        76"
+        />
+      </circle>
+
+      <circle class="athlete-hand" cx="63" cy="68" r="3.2">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        63;
+                        63;
+                        67;
+                        68;
+                        56;
+                        54;
+                        57;
+                        61;
+                        65;
+                        67;
+                        27;
+                        27;
+                        63"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        68;
+                        68;
+                        61;
+                        61;
+                        76;
+                        88;
+                        82;
+                        78;
+                        76;
+                        68;
+                        107;
+                        107;
+                        68"
+        />
+      </circle>
+
+      <!-- =================================================
+           RIGHT THROWING / CATCHING ARM
+           ================================================= -->
+
+      <path class="athlete-upper-arm" d="M58 84L62 74">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        M58 84L62 74;
+                        M58 84L62 74;
+                        M58 84L61 67;
+                        M58 84L60 65;
+                        M58 84L63 78;
+                        M58 84L61 84;
+                        M59 83L64 64;
+                        M60 82L66 55;
+                        M59 83L64 59;
+                        M58 84L62 67;
+                        M56 86L68 82;
+                        M57 85L66 88;
+                        M58 84L62 74"
+        />
+      </path>
+
+      <path class="athlete-forearm" d="M62 74L66 64">
+        <animate
+            attributeName="d"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        M62 74L66 64;
+                        M62 74L66 64;
+                        M61 67L68 59;
+                        M60 65L70 57;
+                        M63 78L60 74;
+                        M61 84L57 90;
+                        M64 64L55 58;
+                        M66 55L47 45;
+                        M64 59L55 50;
+                        M62 67L70 57;
+                        M68 82L64 100;
+                        M66 88L67 98;
+                        M62 74L66 64"
+        />
+      </path>
+
+      <circle class="athlete-elbow" cx="62" cy="74" r="3.1">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        62;
+                        62;
+                        61;
+                        60;
+                        63;
+                        61;
+                        64;
+                        66;
+                        64;
+                        62;
+                        68;
+                        66;
+                        62"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        74;
+                        74;
+                        67;
+                        65;
+                        78;
+                        84;
+                        64;
+                        55;
+                        59;
+                        67;
+                        82;
+                        88;
+                        74"
+        />
+      </circle>
+
+      <circle class="athlete-hand" cx="66" cy="64" r="3.25">
+        <animate
+            attributeName="cx"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        66;
+                        66;
+                        68;
+                        70;
+                        60;
+                        57;
+                        55;
+                        47;
+                        55;
+                        70;
+                        64;
+                        67;
+                        66"
+        />
+
+        <animate
+            attributeName="cy"
+            dur="4s"
+            repeatCount="indefinite"
+            keyTimes="
+                        0;
+                        .26;
+                        .34;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        .72;
+                        .80;
+                        1"
+            values="
+                        64;
+                        64;
+                        59;
+                        57;
+                        74;
+                        90;
+                        58;
+                        45;
+                        50;
+                        57;
+                        100;
+                        98;
+                        64"
+        />
+      </circle>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       CATCH SIGNALS
+       ========================================================= -->
+
+  <circle class="catch-signal" cx="290" cy="57" r="7">
+    <animate
+        attributeName="opacity"
+        dur="4s"
+        repeatCount="indefinite"
+        keyTimes="0;.33;.36;.42;1"
+        values="0;0;.3;0;0"
+    />
+
+    <animate
+        attributeName="r"
+        dur="4s"
+        repeatCount="indefinite"
+        keyTimes="0;.33;.36;.42;1"
+        values="7;7;12;15;7"
+    />
+  </circle>
+
+  <circle class="catch-signal" cx="70" cy="57" r="7">
+    <animate
+        attributeName="opacity"
+        dur="4s"
+        repeatCount="indefinite"
+        keyTimes="0;.83;.86;.92;1"
+        values="0;0;.3;0;0"
+    />
+
+    <animate
+        attributeName="r"
+        dur="4s"
+        repeatCount="indefinite"
+        keyTimes="0;.83;.86;.92;1"
+        values="7;7;12;15;7"
+    />
+  </circle>
+
+  <!-- =========================================================
+       FOOTBALL STATE SYSTEM
+
+       TIMELINE
+
+       0.00 - .14
+           Left QB holds / loads / releases
+
+       .14 - .36
+           Left -> right flight
+
+       .36 - .64
+           Right catches / absorbs / loads / releases
+
+       .64 - .86
+           Right -> left flight
+
+       .86 - 1.00
+           Left catches / absorbs / resets
+       ========================================================= -->
+
+  <!-- =========================================================
+       LEFT POSSESSION BALL
+       ========================================================= -->
+
+  <g id="football-left-possession" filter="url(#ball-shadow)">
+    <animate
+        attributeName="opacity"
+        dur="4s"
+        repeatCount="indefinite"
+        calcMode="discrete"
+        keyTimes="0;.14;.86;1"
+        values="1;0;1;1"
+    />
+
+    <g>
+      <!--
+          Exact throwing-hand tracking while possessed.
+      -->
+
+      <animateTransform
+          attributeName="transform"
+          type="translate"
+          dur="4s"
+          repeatCount="indefinite"
+          calcMode="linear"
+          keyTimes="
+                    0;
+                    .05;
+                    .10;
+                    .14;
+                    .86;
+                    .90;
+                    .94;
+                    .98;
+                    1"
+          values="
+                    51 49;
+                    47 45;
+                    55 50;
+                    70 57;
+                    70 57;
+                    60 74;
+                    57 90;
+                    55 58;
+                    51 49"
+      />
+
+      <g class="football-held-angle">
+        <animateTransform
+            attributeName="transform"
+            type="rotate"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .05;
+                        .10;
+                        .14;
+                        .86;
+                        .90;
+                        .94;
+                        .98;
+                        1"
+            values="
+                        -24;
+                        -28;
+                        -18;
+                        -7;
+                        8;
+                        14;
+                        -6;
+                        -18;
+                        -24"
+        />
+
+        <ellipse class="football-body" cx="0" cy="0" rx="9" ry="5.1"/>
+
+        <path
+            d="
+                        M-8 0
+                        Q0 -5 8 0
+                        Q0 -2 -8 0
+                        Z"
+            fill="#ef9a5a"
+            opacity=".28"
+        />
+
+        <path
+            d="
+                        M-8 0
+                        Q0 5 8 0
+                        Q0 2 -8 0
+                        Z"
+            fill="#54220f"
+            opacity=".16"
+        />
+
+        <path class="football-seam" d="M-7 0Q0 2.3 7 0"/>
+
+        <path
+            class="football-laces"
+            d="
+                        M-3 0H3
+                        M-2.4 -1.6V1.6
+                        M-.8 -1.8V1.8
+                        M.8 -1.8V1.8
+                        M2.4 -1.6V1.6"
+        />
+      </g>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       AIRBORNE FOOTBALL
+       ========================================================= -->
+
+  <g id="football-flight" filter="url(#ball-shadow)" opacity="0">
+    <animate
+        attributeName="opacity"
+        dur="4s"
+        repeatCount="indefinite"
+        calcMode="discrete"
+        keyTimes="0;.14;.36;.64;.86;1"
+        values="0;1;0;1;0;0"
+    />
+
+    <!--
+        Same canonical path as the dotted line.
+    -->
+
+    <animateMotion
+        dur="4s"
+        repeatCount="indefinite"
+        rotate="auto"
+        calcMode="linear"
+        keyPoints="0;0;1;1;1;0;0"
+        keyTimes="0;.14;.36;.44;.64;.86;1"
+    >
+      <mpath href="#football-flight-path"/>
+    </animateMotion>
+
+    <g class="football-spiral">
+      <ellipse class="football-body" cx="0" cy="0" rx="9" ry="5.1"/>
+
+      <!--
+          Long-axis spiral illusion.
+
+          The football silhouette follows the path tangent.
+          Only the surface detail rolls around its long axis.
+      -->
+
+      <g class="football-spiral-surface">
+        <animateTransform
+            attributeName="transform"
+            type="scale"
+            dur=".18s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            values="
+                        1 1;
+                        1 .15;
+                        1 -1;
+                        1 -.15;
+                        1 1"
+        />
+
+        <path
+            d="
+                        M-8 0
+                        Q0 -5 8 0
+                        Q0 -2 -8 0
+                        Z"
+            fill="#ef9a5a"
+            opacity=".28"
+        />
+
+        <path
+            d="
+                        M-8 0
+                        Q0 5 8 0
+                        Q0 2 -8 0
+                        Z"
+            fill="#54220f"
+            opacity=".16"
+        />
+
+        <path class="football-seam" d="M-7 0Q0 2.3 7 0"/>
+        <path class="football-laces" d="M-3 0H3 M-2.4 -1.6V1.6 M-.8 -1.8V1.8 M.8 -1.8V1.8 M2.4 -1.6V1.6"/>
+      </g>
+
+      <path
+          d="M-6 0Q0 -1.7 6 0"
+          fill="none"
+          stroke="#612710"
+          stroke-width=".55"
+          stroke-linecap="round"
+          opacity=".25"
+      />
+    </g>
+  </g>
+
+  <!-- =========================================================
+       RIGHT POSSESSION BALL
+
+       Right player is mirrored, so these are SCREEN coords.
+
+       local x -> screen x
+
+       70 -> 290
+       60 -> 300
+       57 -> 303
+       55 -> 305
+       47 -> 313
+       ========================================================= -->
+
+  <g id="football-right-possession" filter="url(#ball-shadow)" opacity="0">
+    <animate
+        attributeName="opacity"
+        dur="4s"
+        repeatCount="indefinite"
+        calcMode="discrete"
+        keyTimes="0;.36;.64;1"
+        values="0;1;0;0"
+    />
+
+    <g>
+      <animateTransform
+          attributeName="transform"
+          type="translate"
+          dur="4s"
+          repeatCount="indefinite"
+          calcMode="linear"
+          keyTimes="
+                    0;
+                    .36;
+                    .40;
+                    .44;
+                    .50;
+                    .56;
+                    .60;
+                    .64;
+                    1"
+          values="
+                    290 57;
+                    290 57;
+                    300 74;
+                    303 90;
+                    305 58;
+                    313 45;
+                    305 50;
+                    290 57;
+                    290 57"
+      />
+
+      <g class="football-held-angle">
+        <animateTransform
+            attributeName="transform"
+            type="rotate"
+            dur="4s"
+            repeatCount="indefinite"
+            calcMode="linear"
+            keyTimes="
+                        0;
+                        .36;
+                        .40;
+                        .44;
+                        .50;
+                        .56;
+                        .60;
+                        .64;
+                        1"
+            values="
+                        8;
+                        8;
+                        -14;
+                        6;
+                        18;
+                        28;
+                        18;
+                        7;
+                        8"
+        />
+
+        <ellipse class="football-body" cx="0" cy="0" rx="9" ry="5.1"/>
+        <path d="M-8 0 Q0 -5 8 0 Q0 -2 -8 0 Z" fill="#a05633" opacity=".28"/>
+        <path d="M-8 0 Q0 5 8 0 Q0 2 -8 0 Z" fill="#4b2513" opacity=".16"/>
+        <path class="football-seam" d="M-7 0Q0 2.3 7 0"/>
+        <path class="football-laces" d="M-3 0H3 M-2.4 -1.6V1.6 M-.8 -1.8V1.8 M.8 -1.8V1.8 M2.4 -1.6V1.6"/>
+      </g>
+    </g>
+  </g>
+</svg>

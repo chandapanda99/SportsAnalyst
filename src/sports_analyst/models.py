@@ -249,6 +249,7 @@ class AggregateEvidence(BaseModel):
 
 class PlayVisualization(BaseModel):
     model_config = ConfigDict(frozen=True)
+    source_packages: list[str] = Field(default_factory=list)
     week: int | None = None
     quarter: int | None = None
     clock: str | None = None
@@ -276,6 +277,16 @@ class PlayVisualization(BaseModel):
     air_yards: float | None = None
     yards_after_catch: float | None = None
     yards_gained: float | None = None
+    complete_pass: bool | None = None
+    interception: bool | None = None
+    fumble: bool | None = None
+    fumble_lost: bool | None = None
+    return_yards: float | None = None
+    return_team: str | None = None
+    turnover_player: str | None = None
+    recovery_player: str | None = None
+    recovery_team: str | None = None
+    recovery_yards: float | None = None
     passer: str | None = None
     receiver: str | None = None
     rusher: str | None = None

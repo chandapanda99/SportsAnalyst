@@ -39,12 +39,15 @@ export type Evidence = {
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {
+  source_packages?: string[];
   week?: number; quarter?: number; clock?: string; down?: number; yards_to_go?: number; yardline_100?: number;
   possession_team?: string; defensive_team?: string; possession_score?: number; defensive_score?: number;
   possession_timeouts?: number; defensive_timeouts?: number; score_differential?: number; goal_to_go?: boolean; play_type?: string;
   formation?: string; personnel?: string; defensive_personnel?: string; shotgun?: boolean; no_huddle?: boolean; pass_length?: string;
   pass_location?: string; run_location?: string; run_gap?: string; air_yards?: number; yards_after_catch?: number;
   yards_gained?: number; passer?: string; receiver?: string; rusher?: string; touchdown?: boolean; turnover?: boolean;
+  complete_pass?: boolean; interception?: boolean; fumble?: boolean; fumble_lost?: boolean; return_yards?: number;
+  return_team?: string; turnover_player?: string; recovery_player?: string; recovery_team?: string; recovery_yards?: number;
   sack?: boolean; penalty?: boolean; first_down?: boolean; win_probability?: number; win_probability_added?: number;
   defenders_in_box?: number; pass_rushers?: number; route?: string; coverage_type?: string; man_zone?: string;
   pressure?: boolean; time_to_throw?: number; motion?: boolean; play_action?: boolean; rpo?: boolean; screen?: boolean;

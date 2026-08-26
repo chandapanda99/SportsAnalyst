@@ -498,6 +498,7 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
     assert result.play_evidence[0].visualization.qb_location == "SHOTGUN"
     assert result.play_evidence[0].visualization.offense_names
     assert result.play_evidence[0].visualization.defense_names == ["T.J. Watt", "Minkah Fitzpatrick"]
+    assert result.play_evidence[0].visualization.source_packages == ["play_by_play", "participation", "ftn_charting"]
 
 
 def test_metric_explanation_and_player_resolution(pbp_pair) -> None:

@@ -27,6 +27,11 @@ describe('Open Sports Analyst workbench', () => {
           caveats: []
         }), { status: 200, headers: { 'content-type': 'application/json' } }));
       }
+      if (init?.method === 'POST' && url.endsWith('/investigations')) {
+        return Promise.resolve(new Response(JSON.stringify({ investigation_id: 'investigation-running' }), {
+          status: 200, headers: { 'content-type': 'application/json' }
+        }));
+      }
       const body = url.endsWith('/capabilities')
         ? { providers: ['azure_foundry', 'ollama'], configured_provider: 'azure_foundry', model_configured: false, custom_analysis: false, sports: ['nfl'] }
         : url.endsWith('/datasets')
@@ -88,6 +93,28 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
     expect(screen.getByText('Manage Local nflverse Data')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Start investigation/i })).toBeTruthy();
+  });
+
+  it('combines the animated catch loader with live investigation status', async () => {
+    class IdleEventSource {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      close() {}
+    }
+    vi.stubGlobal('EventSource', IdleEventSource);
+    render(App);
+
+    const team = await screen.findByRole('combobox', { name: 'NFL team' });
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Start investigation/i }));
+
+    const progress = await screen.findByRole('progressbar', { name: 'Investigation progress' });
+    expect(progress.getAttribute('aria-valuenow')).toBe('3');
+    expect(screen.getByText('Starting investigation')).toBeTruthy();
+    expect(document.querySelector<HTMLImageElement>('.catch-scene')?.getAttribute('src'))
+      .toBe('/open-sports-analyst-loader.svg');
+    expect(screen.getByText('Analysis still running...')).toBeTruthy();
   });
 
   it('starts with no implied team and supports searchable team selection', async () => {

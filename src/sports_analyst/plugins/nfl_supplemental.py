@@ -516,6 +516,11 @@ class NFLSupplementalMixin:
             updates: dict[str, Any] = {}
             participation_row = participation_rows.get((play.game_id, play.play_id), {})
             ftn_row = ftn_rows.get((play.game_id, play.play_id), {})
+            source_packages = list(visualization.source_packages)
+            if participation_row:
+                source_packages.append("participation")
+            if ftn_row:
+                source_packages.append("ftn_charting")
             for target, (source, converter) in participation_fields.items():
                 value = converter(participation_row, source)
                 if value is not None:
@@ -524,5 +529,6 @@ class NFLSupplementalMixin:
                 value = converter(ftn_row, source)
                 if value is not None and target not in updates:
                     updates[target] = value
+            updates["source_packages"] = list(dict.fromkeys(source_packages))
             enriched.append(play.model_copy(update={"visualization": visualization.model_copy(update=updates)}))
         return enriched

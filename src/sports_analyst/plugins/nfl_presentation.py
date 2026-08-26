@@ -49,6 +49,7 @@ class NFLPresentationMixin:
             turnover_values = [row.get(name) for name in ("interception", "fumble_lost")]
             turnover = any(bool(value) for value in turnover_values) if any(value is not None for value in turnover_values) else None
             visualization = PlayVisualization(
+                source_packages=["play_by_play"],
                 week=_row_integer(row, "week"),
                 quarter=_row_integer(row, "qtr"),
                 clock=_row_text(row, "game_clock") or _row_text(row, "time"),
@@ -75,6 +76,17 @@ class NFLPresentationMixin:
                 air_yards=_row_number(row, "air_yards"),
                 yards_after_catch=_row_number(row, "yards_after_catch"),
                 yards_gained=_row_number(row, "yards_gained"),
+                complete_pass=_row_boolean(row, "complete_pass"),
+                interception=_row_boolean(row, "interception"),
+                fumble=_row_boolean(row, "fumble"),
+                fumble_lost=_row_boolean(row, "fumble_lost"),
+                return_yards=_row_number(row, "return_yards"),
+                return_team=_row_text(row, "return_team"),
+                turnover_player=_row_text(row, "interception_player_name")
+                or _row_text(row, "fumble_recovery_1_player_name"),
+                recovery_player=_row_text(row, "fumble_recovery_1_player_name"),
+                recovery_team=_row_text(row, "fumble_recovery_1_team"),
+                recovery_yards=_row_number(row, "fumble_recovery_1_yards"),
                 passer=_row_text(row, "passer_player_name"),
                 receiver=_row_text(row, "receiver_player_name"),
                 rusher=_row_text(row, "rusher_player_name"),
