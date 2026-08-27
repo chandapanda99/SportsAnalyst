@@ -1,10 +1,12 @@
 export type DatasetManifest = {
-  manifest_id: string; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
+  manifest_id: string; sport: string; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
 };
-export type AnalysisWindow = { season: number; weeks: [number, number] };
+export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string };
 export type TeamOption = { value: string; label: string };
+export type PlayerOption = { player_id: string; name: string; teams: string[]; positions: string[]; seasons: number[] };
+export type AnalysisSubject = { type: 'team' | 'player'; id: string; team_id?: string };
 export type MetricOption = {
-  value: string; label: string; category: string; description: string; analysis_domain: 'passing' | 'rushing' | 'offense'; available_seasons: number[];
+  value: string; label: string; category: string; description: string; analysis_domain: string; available_seasons: number[]; subject_types?: string[];
 };
 export type SplitDimensionOption = {
   value: string; label: string; description: string; available_seasons: number[];
@@ -17,28 +19,35 @@ export type AnalysisOptions = {
   syncable_seasons: number[];
   metrics: MetricOption[];
   default_metrics: string[];
-  analysis_domains: Array<{ value: 'passing' | 'rushing' | 'offense'; label: string; description: string }>;
+  analysis_domains: Array<{ value: string; label: string; description: string; subject_type?: string }>;
   default_metrics_by_domain: Record<string, string[]>;
   split_dimensions: SplitDimensionOption[];
   comparison_windows: ComparisonWindowOption[];
   week_values: number[];
   syncable_datasets: string[];
   dataset_min_seasons: Record<string, number | null>;
+  subject_types?: Array<{value: 'team' | 'player'; label: string}>;
+  season_segments?: Array<{value: string; label: string; description: string}>;
+  segment_availability?: Record<string, string[]>;
+  optional_capabilities?: Record<string, boolean>;
 };
 export type InvestigationRequest = {
+  sport: string;
+  subject: AnalysisSubject;
   question: string;
-  analysis_domain: 'passing' | 'rushing' | 'offense';
-  scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: 'full_seasons' | 'week_ranges' | 'before_after' };
+  analysis_domain: string;
+  scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: string };
   metrics: string[];
   splits: string[];
 };
 export type Evidence = {
   evidence_id: string; metric?: string; label?: string; value?: number; baseline_value?: number;
   comparison_value?: number; sample_size?: number; caveats?: string[]; game_id?: string;
-  play_id?: number; season?: number; team?: string; description?: string; epa?: number; supporting?: boolean;
+  play_id?: number; season?: number; team?: string; description?: string; epa?: number; metric_value?: number; supporting?: boolean;
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {
+  sport?: string;
   source_packages?: string[];
   week?: number; quarter?: number; clock?: string; down?: number; yards_to_go?: number; yardline_100?: number;
   possession_team?: string; defensive_team?: string; possession_score?: number; defensive_score?: number;
@@ -56,12 +65,18 @@ export type PlayVisualization = {
   qb_out_of_pocket?: boolean; interception_worthy?: boolean; throw_away?: boolean; read_thrown?: string;
   contested_ball?: boolean; created_reception?: boolean; qb_sneak?: boolean; qb_fault_sack?: boolean;
   offense_names?: string[]; offense_positions?: string[]; defense_names?: string[]; defense_positions?: string[];
+  period?: number; event_type?: string; action_type?: string; player_id?: string; player_name?: string; team_id?: string;
+  team_abbreviation?: string; home_team_abbreviation?: string; away_team_abbreviation?: string; home_score?: number; away_score?: number;
+  scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
+  shot_x?: number; shot_y?: number; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
 };
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };
 export type Investigation = {
-  run: { investigation_id: string; parent_investigation_id?: string; question: string; analysis_domain?: 'passing' | 'rushing' | 'offense'; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: 'full_seasons' | 'week_ranges' | 'before_after' }; created_at: string };
+  run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };
+export type InvestigationSummary = Pick<Investigation, 'run' | 'summary' | 'model_id' | 'fallback_used'>;
 export type Capabilities = { providers: string[]; configured_provider: string; model_configured: boolean; custom_analysis: boolean; sports: string[] };
+export type SportOption = { value: string; label: string; available: boolean; live_available: boolean; live_message?: string };

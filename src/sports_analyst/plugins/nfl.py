@@ -59,12 +59,49 @@ from sports_analyst.plugins.nfl_shared import (
 from sports_analyst.plugins.nfl_supplemental import NFLSupplementalMixin
 from sports_analyst.plugins.nfl_trends import NFLTrendMixin
 
+PBP_ANALYSIS_COLUMNS = {
+    "season", "season_type", "week", "game_id", "play_id", "desc", "posteam", "defteam", "home_team", "away_team",
+    "qtr", "game_clock", "time", "down", "ydstogo", "yardline_100", "posteam_score", "defteam_score",
+    "posteam_timeouts_remaining", "defteam_timeouts_remaining", "score_differential", "goal_to_go", "play_type",
+    "qb_dropback", "rush_attempt", "qb_kneel", "qb_spike", "epa", "success", "cpoe", "yards_gained", "sack",
+    "interception", "fumble", "fumble_lost", "complete_pass", "air_yards", "yards_after_catch", "touchdown",
+    "penalty", "first_down", "wp", "wpa", "shotgun", "no_huddle", "offense_personnel", "offense_formation",
+    "pass_length", "pass_location", "run_location", "run_gap", "passer_player_id", "passer_player_name",
+    "receiver_player_id", "receiver_player_name", "rusher_player_id", "rusher_player_name", "return_yards", "return_team",
+    "interception_player_name", "fumble_recovery_1_team", "fumble_recovery_1_yards", "fumble_recovery_1_player_name",
+    "td_team", "fixed_drive", "drive", "drive_play_count", "drive_time_of_possession", "drive_first_downs",
+}
+
+ROSTER_DATASETS = {"rosters", "weekly_rosters", "injuries", "snap_counts", "player_stats", "depth_charts", "players"}
+DOMAIN_DATASETS = {
+    "passing": {"nextgen_passing", "nextgen_receiving", "pfr_passing", "pfr_receiving"},
+    "rushing": {"nextgen_rushing", "pfr_rushing"},
+    "offense": {
+        "nextgen_passing", "nextgen_receiving", "nextgen_rushing", "pfr_passing", "pfr_rushing", "pfr_receiving"
+    },
+}
+
 
 class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPresentationMixin):
     """Compose NFL planning, deterministic analysis tools, and presentation artifacts."""
 
     sport_id = "nfl"
     display_name = "NFL"
+
+    def required_play_by_play_columns(self, request: AnalysisRequest) -> set[str]:
+        del request
+        return set(PBP_ANALYSIS_COLUMNS)
+
+    def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
+        question = request.question.lower()
+        selected = {"schedules", "participation", "ftn_charting", *DOMAIN_DATASETS[request.analysis_domain]}
+        roster_terms = {
+            "player", "receiver", "quarterback", "roster", "injur", "availability", "starter", "snap", "lineup",
+            "continuity", "personnel", "position group", "target share", "usage",
+        }
+        if any(term in question for term in roster_terms):
+            selected.update(ROSTER_DATASETS)
+        return selected
 
     def tools(self) -> list[ToolDefinition]:
         tools = [
@@ -400,6 +437,26 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
                 arguments={},
                 purpose="Ground the diagnosis in source plays and counterexamples.",
             ),
+        ]
+        required_datasets = self.required_supplemental_datasets(request)
+        tool_datasets = {
+            "build_player_week_dataset": ROSTER_DATASETS | {"participation"},
+            "compare_player_usage": {"player_stats", "snap_counts", "participation"},
+            "analyze_qb_receiver_pairs": {"player_stats", "participation"},
+            "analyze_starter_availability": {"injuries", "weekly_rosters"},
+            "analyze_position_group_availability": ROSTER_DATASETS,
+            "analyze_lineup_continuity": {"snap_counts", "participation"},
+            "decompose_lineup_continuity": {"snap_counts", "participation"},
+            "join_participation_context": {"participation"},
+            "join_depth_chart_context": {"depth_charts"},
+            "join_ftn_charting": {"ftn_charting"},
+            "join_nextgen_receiving_metrics": {"nextgen_receiving"},
+            "join_nextgen_rushing_metrics": {"nextgen_rushing"},
+            "join_pfr_advanced_stats": {"pfr_passing", "pfr_rushing", "pfr_receiving", "pfr_defense"},
+        }
+        calls = [
+            call for call in calls
+            if call.tool not in tool_datasets or bool(tool_datasets[call.tool] & required_datasets)
         ]
         payload = {"question": request.question, "scope": request.scope.model_dump(), "calls": [item.model_dump() for item in calls]}
         return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
@@ -936,7 +993,7 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
         ]
         if missing_supplemental:
             caveats.append(
-                "Supplemental tools were skipped because these datasets were not synced for both windows: "
+                "Supplemental tools were skipped because these datasets were not selected for this run or were not synced for both windows: "
                 + ", ".join(missing_supplemental)
                 + "."
             )

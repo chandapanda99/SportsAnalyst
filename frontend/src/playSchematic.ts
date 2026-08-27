@@ -68,6 +68,8 @@ function shortName(name: string, position: string) {
 
 function normalizedPosition(position: string) {
   const value = position.toUpperCase().replace(/[^A-Z]/g, '');
+  if (value === 'OT') return 'T';
+  if (value === 'OG') return 'G';
   if (['LT', 'LG', 'C', 'RG', 'RT', 'OL', 'G', 'T'].includes(value)) return value;
   if (['QB'].includes(value)) return 'QB';
   if (['RB', 'HB', 'FB'].includes(value)) return value;
@@ -107,6 +109,37 @@ function distribute(index: number, total: number, minimum: number, maximum: numb
   return total <= 1 ? (minimum + maximum) / 2 : minimum + index * ((maximum - minimum) / (total - 1));
 }
 
+function placeOffensiveLine(
+  records: Array<{name: string; position: string}>,
+  startX: number,
+  centerY: number,
+) {
+  const positions = [
+    {position: 'LT', y: centerY - 10},
+    {position: 'LG', y: centerY - 5},
+    {position: 'C', y: centerY},
+    {position: 'RG', y: centerY + 5},
+    {position: 'RT', y: centerY + 10},
+  ];
+  const assigned = new Map<number, {name: string; position: string}>();
+  const remaining: Array<{name: string; position: string}> = [];
+  const exactSlots: Record<string, number> = {LT: 0, LG: 1, C: 2, RG: 3, RT: 4};
+
+  for (const record of records) {
+    const exact = exactSlots[record.position];
+    if (exact != null && !assigned.has(exact)) assigned.set(exact, record);
+    else remaining.push(record);
+  }
+  for (const record of remaining) {
+    const preferences = record.position === 'T' ? [0, 4] : record.position === 'G' ? [1, 3] : [2, 1, 3, 0, 4];
+    const slot = preferences.find(index => !assigned.has(index));
+    if (slot != null) assigned.set(slot, record);
+  }
+  return [...assigned.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([slot, record]) => ({record, x: startX - .7, y: positions[slot].y}));
+}
+
 function placeOffense(
   records: Array<{name: string; position: string}>,
   startX: number,
@@ -122,7 +155,7 @@ function placeOffense(
   }
   const slots: Array<{record: {name: string; position: string}; x: number; y: number}> = [];
   const line = groups.get('OL') ?? [];
-  line.forEach((record, index) => slots.push({record, x: startX - .7, y: distribute(index, line.length, centerY - 9, centerY + 9)}));
+  slots.push(...placeOffensiveLine(line, startX, centerY));
   (groups.get('QB') ?? []).forEach((record, index) => slots.push({record, x: startX - 4.6 - index * 1.5, y: centerY}));
   const backs = groups.get('BACK') ?? [];
   backs.forEach((record, index) => slots.push({record, x: startX - 8, y: distribute(index, backs.length, centerY - 4, centerY + 4)}));

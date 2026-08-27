@@ -1,152 +1,183 @@
-# NFL Tool Guide
+# Sports Tool Guide
 
-This guide describes the deterministic analytical capabilities registered by the NFL plugin. These tools calculate and validate evidence; the language model plans an
-investigation and explains the resulting evidence but does not execute Python or invent measurements.
+This guide describes the analytical tools and capabilities currently exposed by the NFL and NBA plugins. It distinguishes implemented investigation behavior from catalog entries that reserve the intended product surface.
 
-## Using the catalog
+## Discovering capabilities
 
-The registered catalog is available from:
+The frontend reads sport-specific options instead of hard-coding one league:
 
-```http
-GET /api/sports/nfl/tools
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/sports` | Sport labels, availability, and capability status |
+| `GET /api/sports/{sport}/options` | Seasons, subjects, periods, domains, metrics, and diagnostic cuts |
+| `GET /api/sports/{sport}/metrics/{metric}` | Metric definition and interpretation |
+| `GET /api/sports/{sport}/tools` | Tool catalog for the sport |
+| `GET /api/sports/{sport}/players` | Searchable player options when supported |
+
+There is no public generic “execute tool” endpoint. Investigations select and run the plugin behavior supported by the current analysis service. A tool appearing in the catalog does not necessarily mean that it produces a separate execution record yet; the status tables below call out that distinction.
+
+## Shared investigation contract
+
+Every investigation identifies:
+
+- a `sport` (`nfl` or `nba`);
+- a subject with a stable `id`; NFL currently accepts teams, while NBA accepts `team` or `player`;
+- two analysis windows;
+- a plugin-defined domain and selected metrics;
+- optional diagnostic cuts and a natural-language question.
+
+Legacy NFL payloads remain valid: a missing sport defaults to `nfl`, and legacy `weeks` values are migrated to an NFL `week_range`.
+
+Datasets, manifests, cached files, and SQL views are partitioned by sport, dataset, and season. Internal play-by-play queries always include the sport boundary, so an NBA investigation cannot read NFL data and vice versa.
+
+## NFL plugin
+
+NFL remains the most complete analysis plugin. It supports team-centered passing, rushing, and total-offense investigations over full seasons, week ranges, and before/after week windows.
+
+### NFL minimum samples
+
+- Every comparison window and every season in a full-season range requires at least 30 qualifying plays.
+- A subgroup or diagnostic split requires at least 10 plays.
+
+Small groups can still appear as descriptive context, but they are not promoted as reliable findings.
+
+### NFL metrics
+
+| Domain | Metric | Definition |
+|---|---|---|
+| Passing | EPA per dropback | Total passing EPA divided by qualifying dropbacks |
+| Passing | Success rate | Share of dropbacks with positive EPA |
+| Passing | CPOE | Mean completion percentage over expected |
+| Passing | Explosive pass rate | Share of dropbacks gaining at least 20 yards |
+| Passing | Yards per play | Yards gained divided by qualifying dropbacks |
+| Passing | Sack rate | Sacks divided by dropbacks |
+| Passing | Interception rate | Interceptions divided by dropbacks |
+| Passing | Air yards per attempt | Air yards divided by attempts |
+| Passing | YAC per completion | Yards after catch divided by completions |
+| Rushing | EPA per rush | Total rushing EPA divided by qualifying rushes |
+| Rushing | Rush success rate | Share of rushes with positive EPA |
+| Rushing | Yards per carry | Rushing yards divided by attempts |
+| Rushing | Explosive rush rate | Share of rushes gaining at least 10 yards |
+| Rushing | Stuff rate | Share of rushes stopped at or behind the line |
+| Rushing | First-down rate | Share of rushes gaining the yards required for a first down |
+| Offense | EPA per play | Total EPA divided by qualifying offensive plays |
+| Offense | Success rate | Share of plays with positive EPA |
+| Offense | Yards per play | Total yards divided by qualifying plays |
+| Offense | Turnover rate | Turnovers divided by qualifying plays |
+
+Metric metadata returned by the API is authoritative for exact labels, polarity, units, and availability.
+
+### NFL analysis tools
+
+| Tool | Current behavior |
+|---|---|
+| `get_analysis_options`, `validate_analysis_scope` | Discovers valid inputs and validates entities, fields, windows, and samples |
+| `compare_time_windows` | Computes the selected metrics for both windows and their changes |
+| `analyze_season_trends`, `analyze_weekly_trends` | Produces season- or week-level aggregates and uncertainty |
+| `rank_game_outliers` | Finds unusually strong or weak game performances |
+| `benchmark_against_league` | Compares the team with league and conference distributions |
+| `analyze_situational_split`, `analyze_game_state` | Supports down, distance, field position, score state, personnel, formation, and related cuts when fields exist |
+| `decompose_metric_change`, `compare_play_mix`, `identify_change_points` | Describes mix, within-group performance, usage, and timing changes |
+| `adjust_for_opponents` | Adds leave-one-game-out opponent-strength context |
+| `find_representative_plays` | Selects supporting and counterexample plays tied to computed findings |
+| `explain_metric` | Returns definitions, formulas, and interpretation guidance |
+| `query_play_by_play` | Registered catalog capability backed by a constrained internal SQL helper; it is not a public execution endpoint or persisted investigation tool record |
+
+Supplemental NFL datasets enable extra context:
+
+| Dataset | Adds |
+|---|---|
+| Weekly player stats | Player production and contribution context |
+| Participation | On-field participation and personnel detail |
+| Rosters | Player identity, position, and team context |
+| Schedules | Game boundaries and opponent context |
+
+The supplemental catalog also includes `resolve_player`, `build_player_week_dataset`, `get_roster_context`, `analyze_starter_availability`, `summarize_injured_or_inactive_players`, `compare_player_usage`, `analyze_position_group_availability`, `analyze_lineup_continuity`, `decompose_lineup_continuity`, and `analyze_qb_receiver_pairs`. Dataset join tools cover Next Gen passing/receiving/rushing, participation, depth charts, FTN charting, PFR advanced statistics, and schedules.
+
+Older tool aliases and legacy saved investigations are normalized at the service boundary so existing NFL history, exports, and follow-ups continue to load.
+
+## NBA plugin
+
+NBA v1 preserves the NFL investigation flow while using basketball-specific subjects, season segments, metrics, and evidence.
+
+### Data and subjects
+
+The default NBA sync uses published SportsDataverse bulk releases:
+
+- play-by-play;
+- schedules;
+- team box scores;
+- player box scores.
+
+NBA seasons are stored by ending year and displayed as spans. For example, season `2026` is displayed as `2025–26`. The connector translates that canonical value to each loader’s expected argument.
+
+Both teams and players are primary subjects. A player investigation normally includes all team stints in the selected period. Supplying `subject.team_id` limits a traded player to one stint.
+
+### NBA periods
+
+The plugin offers only segments whose boundaries can be validated against synced schedules:
+
+- full season;
+- regular season;
+- playoffs;
+- opening month;
+- pre-All-Star and post-All-Star;
+- post-trade-deadline;
+- play-in;
+- first round;
+- conference semifinals;
+- conference finals;
+- NBA Finals.
+
+Standard phases are derived from schedule fields and playoff labels. Non-schedule boundaries use a reviewed, versioned milestone table, currently covering ending seasons 2022 through 2026. The current before/after milestone design uses the All-Star boundary.
+
+### NBA metrics
+
+Estimated possessions use:
+
+```text
+FGA - offensive rebounds + turnovers + 0.44 × FTA
 ```
 
-Each catalog entry includes a stable tool name, description, analytics version, and—where defined—a JSON input schema. Structured UI options and field availability come from:
+Team offensive and defensive ratings are points scored or allowed per 100 estimated possessions. Other team metrics cover shooting, playmaking, rebounding, and turnovers. Player metrics cover scoring, shooting, playmaking, rebounding, a usage proxy, and plus/minus. Lineup ratings are minutes-weighted when lineup data is available.
 
-```http
-GET /api/sports/nfl/options
-```
+Use `GET /api/sports/nba/options` and the metric-definition endpoint for the exact metrics currently exposed for each domain and subject type.
 
-Metric definitions are available from `GET /api/sports/nfl/metrics/{metric}`. Player search is available from `GET /api/sports/nfl/players?query={text}`.
+### NBA v1 execution status
 
-There is intentionally no generic public endpoint that executes an arbitrary tool call. An investigation validates its typed request, creates an `AnalysisPlan`, and invokes
-registered implementations inside the NFL plugin. Constrained SQL is available internally through the application service for combinations not covered by a predefined
-operation.
+| Capability | Status |
+|---|---|
+| `compare_time_windows` | Implemented for team and player box-score metrics |
+| `analyze_season_trends` | Implemented as a multi-season chart plus the two selected-window aggregates |
+| Traded-player stint filter | Implemented |
+| `find_representative_possessions` behavior | Implemented from synced play-by-play as part of the investigation |
+| Lineup comparison | Implemented when compatible lineup seasons are synced for both windows |
+| Published V3 possession/lineup enrichment | Implemented when matching rows are available |
+| `analyze_game_trends`, `rank_game_outliers` | Catalog surface; not a separate NBA v1 execution path |
+| `benchmark_against_league`, `analyze_situational_split` | Catalog surface; selected NBA diagnostic cuts are not yet executed |
+| `decompose_metric_change`, `adjust_for_opponents` | Catalog surface |
+| `compare_shot_profiles`, `compare_possession_outcomes` | Catalog surface |
+| `compare_player_usage`, `analyze_lineup_performance` | Catalog surface |
+| `query_play_by_play` | Catalog surface |
 
-## Shared analytical rules
+The catalog-only entries preserve the intended interface without overstating current report behavior.
 
-- Each investigation selects a play population: quarterback dropbacks, qualifying rushing attempts, or overall offensive plays.
-- Comparison windows require at least 30 qualifying plays each.
-- Situational subgroups require at least 10 qualifying plays in both windows.
-- Full-season ranges analyze every synced season from the selected start through end season.
-- Formation and personnel analysis is omitted when fields are missing or materially incomplete.
-- Every result records its tool version, parameters, input dataset manifests, runtime, result hash, and stable evidence identifier.
-- Results are descriptive and observational. They do not establish causality.
+### NBA evidence and enrichment
 
-Passing metrics are EPA/dropback, success rate, CPOE, explosive-pass rate, yards/play, sack rate, interception rate, air yards/attempt, and YAC/completion. Rushing metrics are
-EPA/rush, rush success rate, yards/rush, explosive-run rate, stuff rate, and rushing first-down rate. Overall-offense metrics are EPA/play, overall success rate, overall
-yards/play, and turnover rate. Supported diagnostic cuts are down, distance, field zone, score state, shotgun, no huddle, personnel, and formation when the required source
-fields are available.
+NBA reports choose representative events from the comparison window. Scoring events can support a finding, while zero-score events can serve as counterexamples. Evidence includes period, clock, score, event type, team/player context, and shot details when the source supplies them.
 
-## Discovery and validation
+The basketball evidence view draws a half-court marker only when coordinates exist. It shows lineup cards only when on-court players are available; otherwise it falls back to a textual event or possession timeline without inventing missing data.
 
-|           Tool            | Purpose                                                                                                                                          | Data requirement                             |
-|:-------------------------:|--------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
-|  `get_analysis_options`   | Returns valid teams, synced and syncable seasons, metrics, defaults, split dimensions, comparison modes, and season-specific field availability. | Dataset manifests; no play rows are scanned. |
-| `validate_analysis_scope` | Validates team resolution, seasons, windows, metric and split names, required fields, and minimum samples before analysis.                       | Play-by-play for every requested season.     |
-|     `explain_metric`      | Returns the metric definition, formula, qualifying-play rule, interpretation guidance, preferred direction when meaningful, and limitations.     | No dataset required.                         |
+Optional datasets include shots, game rosters, season rosters, standings, season statistics, identity crosswalks, player core data, lineups, NBA Stats play-by-play, and published V3 lineup/possession data. Dataset availability is reported by season, and the UI hides or disables analysis that cannot be supported by synced data.
 
-## Core comparison and diagnosis
+Transport readiness is exposed in sport capabilities when `curl_cffi` is installed. The development `test` extra currently installs it; there is not yet a dedicated `nba-live` dependency group. Current investigations use synced bulk data and do not make live NBA Stats calls, so this capability is reserved for future fallback enrichment.
 
-|            Tool             | Purpose                                                                 | Main inputs                                                                        | Evidence produced                                                                                                        |
-|:---------------------------:|-------------------------------------------------------------------------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-|   `compare_time_windows`    | Measures selected metrics between two season/week windows.              | Team, analysis domain, baseline window, comparison window, season type, metrics.   | Baseline value, comparison value, difference, sample size, and game-bootstrap confidence interval where available.       |
-|   `analyze_season_trends`   | Measures each season in an inclusive full-season range.                 | Team, included seasons, metrics.                                                   | One measurement and confidence interval per season and metric.                                                           |
-|   `analyze_weekly_trends`   | Determines whether a change is sustained or concentrated.               | Team, one or two windows, metric; three-week moving average by default.            | Weekly values, bootstrap intervals, three-week moving averages, and sustained/mixed/outlier-concentrated classification. |
-|    `rank_game_outliers`     | Finds comparison-window games farthest from the baseline expectation.   | Team, comparison window, metric, result limit.                                     | Ranked game-level differences and qualifying-play samples.                                                               |
-| `benchmark_against_league`  | Places team performance in league context for each window.              | Team, windows, metrics.                                                            | NFL percentile, NFL rank, AFC/NFC rank, and distance from league average.                                                |
-| `analyze_situational_split` | Compares performance within registered football situations.             | Metric, split dimensions, minimum subgroup sample.                                 | Baseline, comparison, and change for every qualifying subgroup.                                                          |
-| `find_representative_plays` | Selects source plays that support or challenge the aggregate diagnosis. | Team, window, supporting and counterexample limits, optional minimum absolute EPA. | Game ID, play ID, description, EPA, support/counterexample role, and source manifest.                                    |
+## Evidence, provenance, and exports
 
-The current typed investigation scope supports full seasons, custom week ranges, and before/after-week comparisons. Rolling-N-game and arbitrary-date windows are planned
-extensions rather than current scope options.
+Both plugins return sport-correct findings, charts, representative evidence, tool records, and source manifests. Reports and export bundles retain dataset hashes and provenance. Football evidence keeps the existing field visualization; basketball evidence uses the basketball renderer described above.
 
-## Decomposition and context
+Follow-up questions reuse the saved investigation context. History can be filtered by NFL, NBA, or all sports.
 
-|           Tool            | Purpose                                                                                     | Data requirement                                                                                                  |
-|:-------------------------:|---------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
-| `decompose_metric_change` | Separates changes associated with situational mix from within-group performance changes.    | Play-by-play and selected split fields.                                                                           |
-|  `adjust_for_opponents`   | Compares raw EPA with leave-one-game-out defensive baselines.                               | Play-by-play containing offense, defense, game ID, and EPA; opponent samples require at least 30 other dropbacks. |
-|   `analyze_game_state`    | Analyzes performance while leading, tied, and trailing.                                     | Play-by-play with score differential.                                                                             |
-|    `compare_play_mix`     | Measures changes in the frequency of selected situations, personnel, formations, and tempo. | Play-by-play and selected split fields.                                                                           |
-| `identify_change_points`  | Finds descriptive week boundaries with the largest sustained shift.                         | Weekly play-by-play values for the selected metric.                                                               |
+## Adding a sport or analytical tool
 
-Decomposition results from overlapping dimensions must not be summed together. They are descriptive diagnostics, not causal attribution.
-
-## Player, roster, and availability context
-
-|                  Tool                   | Purpose                                                                                            | Primary dataset                                      |
-|:---------------------------------------:|----------------------------------------------------------------------------------------------------|------------------------------------------------------|
-|            `resolve_player`             | Resolves player names or identifiers and reports teams, positions, and seasons.                    | Rosters, player statistics, or play-by-play.         |
-|       `build_player_week_dataset`       | Resolves identities and normalizes roster, injury, snap, and play-participant data by player-week. | Play-by-play; supplemental packages enrich the rows. |
-|          `get_roster_context`           | Compares roster composition by position across windows.                                            | Rosters.                                             |
-|     `analyze_starter_availability`      | Compares recorded injury and availability reports.                                                 | Injuries.                                            |
-| `summarize_injured_or_inactive_players` | Ranks players most frequently listed unavailable.                                                  | Injuries.                                            |
-|         `compare_player_usage`          | Compares target, carry, opportunity, snap-normalized usage, and EPA per opportunity.               | Normalized player-week layer.                        |
-|  `analyze_position_group_availability`  | Estimates recorded availability by position, weighted by median healthy-week snaps when possible.  | Rosters, injuries, and snap counts.                  |
-|       `analyze_lineup_continuity`       | Measures returning snap share and weighted snap-distribution similarity overall and by position.   | Snap counts and normalized player identities.        |
-|      `decompose_lineup_continuity`      | Attributes comparison-window new-player snap share to position groups.                             | Snap counts and normalized player identities.        |
-|       `analyze_qb_receiver_pairs`       | Compares quarterback-receiver volume and EPA per target.                                           | Play-by-play with passer and receiver fields.        |
-|     `join_nextgen_passing_metrics`      | Compares supported Next Gen Stats passing measurements.                                            | Next Gen passing.                                    |
-|    `join_nextgen_receiving_metrics`     | Compares separation, cushion, expected YAC, and YAC over expectation.                              | Next Gen receiving.                                  |
-|     `join_nextgen_rushing_metrics`      | Compares rushing efficiency, box frequency, time to the line, and RYOE.                            | Next Gen rushing.                                    |
-|      `join_participation_context`       | Adds recorded on-field players, personnel, pressure, routes, and coverage.                         | Participation plus play-by-play IDs.                 |
-|       `join_depth_chart_context`        | Measures listed first-unit availability and returning-player continuity.                           | Depth charts and normalized player weeks.            |
-|           `join_ftn_charting`           | Compares motion, play action, RPO, screen, pressure, and charted outcome rates.                    | FTN charting plus play-by-play IDs.                  |
-|        `join_pfr_advanced_stats`        | Compares available advanced passing, rushing, receiving, and defensive measurements.               | Corresponding PFR advanced package.                  |
-|         `join_schedule_context`         | Adds opponent, location, scoring-margin, and schedule context.                                     | Schedules.                                           |
-
-The normalized layer prefers GSIS identifiers, maps PFR or source-specific identifiers through matching player names when possible, and falls back to a normalized name key. It
-stores team, season, week, player identity, position group, roster and injury status, offensive/defensive/special-teams snaps, targets, carries, quarterback dropbacks,
-opportunities, and participant EPA. Season-level roster membership is projected only across locally observed team weeks.
-
-When participation is synced, continuity weights use recorded play-level appearances; otherwise they fall back to game-level snap counts. Returning snap share asks how much of
-the comparison window's recorded participation belongs to players also observed in the baseline. Weighted Jaccard similarity additionally captures changes in how snaps were
-distributed among returning and new players. Position-group turnover contributions describe where new-player snaps occurred; they do not measure replacement quality or
-establish that turnover caused a performance change.
-
-Weekly rosters supersede season-level roster projection for synced seasons. Depth charts provide listed role and rank but do not prove which player started a particular play.
-Participation is available only for supported completed seasons and records lineup membership rather than player coordinates or movement.
-
-Supplemental datasets are optional. If they are unavailable for both windows, the investigation skips the affected tools and records a capability caveat instead of fabricating
-context.
-
-## SQL and compatibility aliases
-
-`query_play_by_play` represents constrained, read-only DuckDB SQL. SQL accepts one `SELECT`, `WITH`, or `EXPLAIN` statement and rejects mutation, extensions, file functions,
-network functions, comments, and multiple statements. The current service helper applies an output-row limit and returns execution duration. Persisting SQL as an investigation
-tool record and enforcing a hard query timeout remain required before SQL is exposed as a public execution endpoint.
-
-The catalog retains these compatibility aliases for older plans:
-
-- `compare_passing_efficiency` → `compare_time_windows`
-- `decompose_situational_splits` → `decompose_metric_change`
-- `rank_representative_plays` → `find_representative_plays`
-
-New plans should use the canonical names.
-
-## Evidence and provenance
-
-Analytical tools return `AggregateEvidence` or `PlayEvidence`. Measured claims must cite these records. Each execution also creates a `ToolExecutionRecord` containing:
-
-- Tool name and analytics version
-- Validated parameters
-- Start time and duration
-- Dataset manifest identifiers
-- Deterministic result hash
-- Normalized SQL when the execution path supplies it
-
-The application assigns and validates evidence IDs. Model-generated prose cannot create valid evidence records or select arbitrary identifiers outside the citation ledger.
-
-## Adding a new tool
-
-1. Add the deterministic implementation to the appropriate sport plugin.
-2. Register a canonical `ToolDefinition` with a JSON input schema.
-3. Add the tool to the plugin's typed planning rules only where it is useful.
-4. Return versioned evidence and a `ToolExecutionRecord` with all source manifests.
-5. Enforce field coverage, sample thresholds, deterministic ordering, and stable identifiers.
-6. Add a high-level test covering formulas, provenance, unsupported inputs, and reproducibility.
-7. Document required datasets, interpretation guidance, and limitations here.
-
-Algorithms that are not implemented as registered, tested tools must be reported as unsupported. They must not be approximated through model-authored Python in the current
-runtime.
+A new sport should implement the shared connector and plugin contracts, register its datasets and capabilities, normalize source schemas at the connector boundary, and keep all storage keys sport-scoped. A new tool should declare its inputs and data requirements, return deterministic evidence, and degrade explicitly when required fields or datasets are unavailable.

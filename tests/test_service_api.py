@@ -10,7 +10,7 @@ from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.service import AnalystApplication
 
 
-def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
+def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch) -> None:
     settings = Settings(data_dir=tmp_path, foundry_endpoint="")
     application = AnalystApplication(settings)
     for season, frame in pbp_pair.items():
@@ -81,6 +81,9 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert players.status_code == 200
     assert players.json()[0]["name"] == "Travis Kelce"
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}").status_code == 200
+    history = client.get("/api/investigations").json()
+    assert history[0]["run"]["investigation_id"] == bundle.run.investigation_id
+    assert "claims" not in history[0]
     exported = client.get(f"/api/investigations/{bundle.run.investigation_id}/export", params={"format": "html"})
     assert exported.status_code == 200
     assert "--team-primary:#E31837" in exported.text
@@ -88,6 +91,17 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert 'filename="report.html"' in exported.headers["content-disposition"]
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
+    batch = client.post(
+        f"/api/investigations/{bundle.run.investigation_id}/evidence/batch",
+        json={"evidence_ids": bundle.claims[0].evidence_ids},
+    )
+    assert batch.status_code == 200
+    assert [item["evidence_id"] for item in batch.json()] == bundle.claims[0].evidence_ids
+    monkeypatch.setattr(
+        application.plugin,
+        "analyze",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("follow-ups must reuse parent evidence")),
+    )
     follow_up = client.post(
         f"/api/investigations/{bundle.run.investigation_id}/follow-ups",
         json={"question": "Was the change consistent across the full sample?"},
@@ -98,6 +112,8 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair) -> None:
     assert child.run.scope == bundle.run.scope
     assert child.run.metrics == bundle.run.metrics
     assert child.summary.startswith("Follow-up:")
+    assert child.plan.calls[0].tool == "reuse_parent_evidence"
+    assert [item.execution_id for item in child.executions] == [item.execution_id for item in bundle.executions]
     thread = client.get(f"/api/investigations/{child.run.investigation_id}/thread")
     assert thread.status_code == 200
     assert [item["run"]["investigation_id"] for item in thread.json()] == [
@@ -131,6 +147,16 @@ def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:
     chunks = asyncio.run(collect())
     assert any('"stage": "timeout"' in chunk for chunk in chunks)
     assert not any('"stage": "failed"' in chunk for chunk in chunks)
+
+    client = TestClient(create_app(application))
+    pending = client.get("/api/investigations/pending-investigation/status")
+    assert pending.json()["stage"] == "pending"
+    application.events.emit("failed-investigation", "failed", "Analysis could not be saved", 1.0)
+    failed = client.get("/api/investigations/failed-investigation/status")
+    assert failed.status_code == 200
+    assert failed.json()["stage"] == "failed"
+    assert failed.json()["message"] == "Analysis could not be saved"
+    assert failed.json()["progress"] == 1.0
 
 
 def test_service_loads_every_season_in_a_full_season_range(tmp_path: Path, pbp_pair) -> None:

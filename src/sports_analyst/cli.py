@@ -26,20 +26,23 @@ def data_sync(
     season: Annotated[list[int] | None, typer.Option("--season")] = None,
     dataset: Annotated[list[str] | None, typer.Option("--dataset")] = None,
 ) -> None:
-    if sport.lower() != "nfl":
-        raise typer.BadParameter("v1 supports only nfl")
+    sport = sport.lower()
+    if sport not in {"nfl", "nba"}:
+        raise typer.BadParameter("sport must be nfl or nba")
     if not season:
         raise typer.BadParameter("provide at least one --season")
-    manifests = AnalystApplication().sync(season, datasets=dataset)
+    manifests = AnalystApplication().sync(season, datasets=dataset, sport=sport)
     for manifest in manifests:
-        typer.echo(f"{manifest.season} {manifest.dataset}: {manifest.row_count:,} rows · {manifest.manifest_id}")
+        typer.echo(f"{manifest.sport} {manifest.season} {manifest.dataset}: {manifest.row_count:,} rows · {manifest.manifest_id}")
 
 
 @data_app.command("list")
-def data_list() -> None:
-    for manifest in AnalystApplication().store.manifests():
+def data_list(sport: str | None = typer.Option(None, help="Filter by nfl or nba")) -> None:
+    if sport and sport.lower() not in {"nfl", "nba"}:
+        raise typer.BadParameter("sport must be nfl or nba")
+    for manifest in AnalystApplication().store.manifests(sport=sport.lower() if sport else None):
         season = "shared" if manifest.season == 0 else str(manifest.season)
-        typer.echo(f"{season:>6}  {manifest.dataset:<22}  {manifest.row_count:>7,} rows  {manifest.sha256[:12]}")
+        typer.echo(f"{manifest.sport:<4}  {season:>6}  {manifest.dataset:<22}  {manifest.row_count:>7,} rows  {manifest.sha256[:12]}")
 
 
 @app.command("ask")

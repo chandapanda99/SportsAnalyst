@@ -4,19 +4,22 @@
     interface Props {
         specification: Record<string, unknown>;
         team: string;
+        sport?: string;
     }
 
-    let {specification, team}: Props = $props();
+    let {specification, team, sport = 'nfl'}: Props = $props();
     let target: HTMLDivElement;
 
     $effect(() => {
-        const themedSpecification = applyTeamChartPalette(specification, team);
+        const themedSpecification = applyTeamChartPalette(specification, team, sport);
         let cancelled = false;
+        let resizeFrame = 0;
         let view: {finalize: () => void; resize: () => {runAsync: () => Promise<unknown>}} | undefined;
         const resizeObserver = typeof ResizeObserver === 'undefined'
             ? undefined
             : new ResizeObserver(() => {
-                void view?.resize().runAsync();
+                cancelAnimationFrame(resizeFrame);
+                resizeFrame = requestAnimationFrame(() => void view?.resize().runAsync());
             });
 
         async function renderChart() {
@@ -40,6 +43,7 @@
 
         return () => {
             cancelled = true;
+            cancelAnimationFrame(resizeFrame);
             resizeObserver?.disconnect();
             view?.finalize();
         };

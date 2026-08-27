@@ -1,97 +1,265 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 512 512"
+    role="img"
+    aria-labelledby="title desc">
+
   <title id="title">Open Sports Analyst</title>
-  <desc id="desc">A dimensional football, rising analytics arrow, bar chart, and open data ring.</desc>
+  <desc id="desc">
+    A balanced sports analytics emblem featuring a football, basketball, rising analytics arrow,
+    bar chart, and open data ring.
+  </desc>
 
   <defs>
-    <linearGradient id="blueRing" x1="84" y1="414" x2="414" y2="82" gradientUnits="userSpaceOnUse">
+    <linearGradient
+        id="blueRing"
+        x1="84"
+        y1="414"
+        x2="414"
+        y2="82"
+        gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#052c61"/>
       <stop offset="0.52" stop-color="#0d4a8e"/>
       <stop offset="1" stop-color="#072f68"/>
     </linearGradient>
-    <linearGradient id="greenRing" x1="410" y1="108" x2="112" y2="426" gradientUnits="userSpaceOnUse">
+
+    <linearGradient
+        id="greenRing"
+        x1="410"
+        y1="108"
+        x2="112"
+        y2="426"
+        gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00a950"/>
       <stop offset="0.56" stop-color="#13c35b"/>
       <stop offset="1" stop-color="#08a94e"/>
     </linearGradient>
-    <linearGradient id="teal" x1="126" y1="364" x2="405" y2="153" gradientUnits="userSpaceOnUse">
+
+    <linearGradient
+        id="teal"
+        x1="126"
+        y1="364"
+        x2="405"
+        y2="153"
+        gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="teal"/>
       <stop offset="1" stop-color="#00c4ff"/>
     </linearGradient>
-    <linearGradient id="football" x1="170" y1="148" x2="356" y2="278" gradientUnits="userSpaceOnUse">
+
+    <linearGradient
+        id="football"
+        x1="170"
+        y1="148"
+        x2="356"
+        y2="278"
+        gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#d74a1c"/>
       <stop offset="0.42" stop-color="#b53716"/>
       <stop offset="0.76" stop-color="#8a2513"/>
       <stop offset="1" stop-color="#65190d"/>
     </linearGradient>
+
     <radialGradient id="footballHighlight" cx="34%" cy="24%" r="78%">
       <stop offset="0" stop-color="#fff" stop-opacity="0.18"/>
       <stop offset="0.48" stop-color="#fff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#fff" stop-opacity="0"/>
     </radialGradient>
+
+    <linearGradient
+        id="basketball"
+        x1="92"
+        y1="390"
+        x2="228"
+        y2="258"
+        gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff7b24"/>
+      <stop offset="0.38" stop-color="#f05d19"/>
+      <stop offset="0.72" stop-color="#c84215"/>
+      <stop offset="1" stop-color="#972610"/>
+    </linearGradient>
+
+    <radialGradient id="basketballHighlight" cx="32%" cy="24%" r="82%">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+
     <linearGradient id="barBlue" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0f4d91"/>
       <stop offset="1" stop-color="#062d63"/>
     </linearGradient>
+
     <linearGradient id="barGreen" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#14c35b"/>
       <stop offset="1" stop-color="#05a64b"/>
     </linearGradient>
+
     <filter id="outerShadow" x="-18%" y="-18%" width="136%" height="136%">
-      <feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#001c3c" flood-opacity="0.22"/>
+      <feDropShadow
+          dx="0"
+          dy="7"
+          stdDeviation="8"
+          flood-color="#001c3c"
+          flood-opacity="0.22"/>
     </filter>
+
     <filter id="objectShadow" x="-25%" y="-25%" width="150%" height="150%">
-      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#00234b" flood-opacity="0.2"/>
+      <feDropShadow
+          dx="0"
+          dy="7"
+          stdDeviation="6"
+          flood-color="#00234b"
+          flood-opacity="0.2"/>
     </filter>
+
     <filter id="footballShadow" x="-20%" y="-24%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="5" stdDeviation="4" flood-color="#401006" flood-opacity="0.2"/>
+      <feDropShadow
+          dx="0"
+          dy="5"
+          stdDeviation="4"
+          flood-color="#401006"
+          flood-opacity="0.2"/>
     </filter>
+
     <filter id="nodeGlow" x="-90%" y="-90%" width="280%" height="280%">
-      <feDropShadow dx="0" dy="0" stdDeviation="7" flood-color="#14c7c8" flood-opacity="0.5"/>
+      <feDropShadow
+          dx="0"
+          dy="0"
+          stdDeviation="7"
+          flood-color="#14c7c8"
+          flood-opacity="0.5"/>
     </filter>
+
     <clipPath id="footballClip">
       <path d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"/>
     </clipPath>
-    <marker id="arrow" viewBox="0 0 12 12" refX="10.7" refY="6" markerWidth="5" markerHeight="10.8" orient="auto">
+
+    <clipPath id="basketballClip">
+      <circle cx="154" cy="328" r="64"/>
+    </clipPath>
+
+    <marker
+        id="arrow"
+        viewBox="0 0 12 12"
+        refX="10.7"
+        refY="6"
+        markerWidth="5"
+        markerHeight="10.8"
+        orient="auto">
       <path d="M0 0 12 6 0 12 3.6 6Z" fill="#00c4ff"/>
     </marker>
   </defs>
 
+  <!-- Outer ring -->
   <g filter="url(#outerShadow)">
     <circle cx="256" cy="256" r="204" fill="#fff"/>
-    <path d="M88 391 A216 216 0 0 1 391 88" fill="none" stroke="url(#blueRing)" stroke-width="34" stroke-linecap="round"/>
-    <path d="M424 121 A216 216 0 0 1 121 424" fill="none" stroke="url(#greenRing)" stroke-width="34" stroke-linecap="round"/>
+    <path
+        d="M88 391 A216 216 0 0 1 391 88"
+        fill="none"
+        stroke="url(#blueRing)"
+        stroke-width="34"
+        stroke-linecap="round"/>
+    <path
+        d="M424 121 A216 216 0 0 1 121 424"
+        fill="none"
+        stroke="url(#greenRing)"
+        stroke-width="34"
+        stroke-linecap="round"/>
   </g>
 
+  <!-- Ring nodes -->
   <g filter="url(#nodeGlow)">
     <circle cx="408" cy="104" r="19" fill="url(#teal)"/>
     <circle cx="104" cy="408" r="19" fill="url(#teal)"/>
   </g>
 
-  <g transform="rotate(-31 265 210)" filter="url(#footballShadow)">
-    <path d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"
-          fill="url(#football)"/>
-    <path d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"
-          fill="url(#footballHighlight)"/>
-    <g clip-path="url(#footballClip)">
-      <path d="M171 158 C188 177 196 193 196 210 C196 227 188 243 171 262" fill="none" stroke="#fff" stroke-width="18"
+  <!-- Football: slightly reduced and shifted for better balance -->
+  <g filter="url(#footballShadow)" transform="translate(24 -8)">
+    <g transform="translate(265 210) scale(0.78) translate(-265 -210)">
+      <g transform="rotate(-31 265 210)">
+        <path
+            d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"
+            fill="url(#football)"/>
+        <path
+            d="M132 210 C165 145 245 112 337 139 C370 149 391 176 398 210 C391 244 370 271 337 281 C245 308 165 275 132 210Z"
+            fill="url(#footballHighlight)"/>
+        <g clip-path="url(#footballClip)">
+          <path
+              d="M171 158 C188 177 196 193 196 210 C196 227 188 243 171 262"
+              fill="none"
+              stroke="#fff"
+              stroke-width="18"
+              stroke-linecap="round"/>
+          <path
+              d="M361 158 C344 177 336 193 336 210 C336 227 344 243 361 262"
+              fill="none"
+              stroke="#fff"
+              stroke-width="18"
+              stroke-linecap="round"/>
+        </g>
+        <path
+            d="M264 169V251 M240 184H288 M238 201H290 M238 218H290 M240 235H288"
+            fill="none"
+            stroke="#fff"
+            stroke-width="8"
             stroke-linecap="round"/>
-      <path d="M361 158 C344 177 336 193 336 210 C336 227 344 243 361 262" fill="none" stroke="#fff" stroke-width="18"
-            stroke-linecap="round"/>
+      </g>
     </g>
-    <path d="M264 169V251 M240 184H288 M238 201H290 M238 218H290 M240 235H288" fill="none" stroke="#fff" stroke-width="8"
+  </g>
+
+  <!-- Basketball: resized and repositioned to balance the football -->
+  <g filter="url(#objectShadow)">
+    <circle cx="154" cy="328" r="64" fill="url(#basketball)"/>
+    <circle cx="154" cy="328" r="64" fill="url(#basketballHighlight)"/>
+
+    <g clip-path="url(#basketballClip)">
+      <path
+          d="M154 264V392"
+          fill="none"
+          stroke="#fff"
+          stroke-width="9"
           stroke-linecap="round"/>
+
+      <path
+          d="M90 328H218"
+          fill="none"
+          stroke="#fff"
+          stroke-width="9"
+          stroke-linecap="round"/>
+
+      <path
+          d="M102 276 C132 293 148 310 154 328 C160 346 147 363 118 381"
+          fill="none"
+          stroke="#fff"
+          stroke-width="9"
+          stroke-linecap="round"/>
+
+      <path
+          d="M206 274 C177 292 161 309 154 328 C147 347 161 365 192 384"
+          fill="none"
+          stroke="#fff"
+          stroke-width="9"
+          stroke-linecap="round"/>
+    </g>
   </g>
 
+  <!-- Arrow / analytics trajectory: adjusted to work with new spacing -->
   <g filter="url(#objectShadow)">
-    <circle cx="131" cy="355" r="15" fill="url(#teal)"/>
-    <path d="M148 348 C210 321 274 292 324 251 C360 222 384 190 406 157" fill="none" stroke="url(#teal)" stroke-width="12"
-          stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="118" cy="360" r="15" fill="url(#teal)"/>
+    <path
+        d="M136 352 C198 326 266 294 321 249 C358 219 384 189 406 157"
+        fill="none"
+        stroke="url(#teal)"
+        stroke-width="12"
+        stroke-linecap="round"
+        marker-end="url(#arrow)"/>
   </g>
 
+  <!-- Bars: shifted right slightly to reduce overlap with basketball -->
   <g filter="url(#objectShadow)">
-    <rect x="190" y="350" width="39" height="47" rx="10" fill="url(#barBlue)"/>
-    <rect x="242" y="322" width="39" height="75" rx="10" fill="url(#barGreen)"/>
-    <rect x="294" y="291" width="39" height="106" rx="10" fill="url(#teal)"/>
-    <rect x="346" y="257" width="39" height="140" rx="10" fill="url(#barBlue)"/>
+    <rect x="220" y="350" width="39" height="47" rx="10" fill="url(#barBlue)"/>
+    <rect x="272" y="322" width="39" height="75" rx="10" fill="url(#barGreen)"/>
+    <rect x="324" y="291" width="39" height="106" rx="10" fill="url(#teal)"/>
+    <rect x="376" y="257" width="39" height="140" rx="10" fill="url(#barBlue)"/>
   </g>
 </svg>

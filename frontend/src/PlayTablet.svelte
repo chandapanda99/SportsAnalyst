@@ -1,12 +1,15 @@
 <script lang="ts">
     import type {Evidence} from './types';
     import {buildPlaySchematic} from './playSchematic';
-    import {teamChartDisplayPalette} from './teamPalettes';
+    import {colorContrastRatio, teamChartDisplayPalette} from './teamPalettes';
 
     export let play: Evidence;
     export let onclose: () => void;
 
-    $: palette = teamChartDisplayPalette(play.team ?? '');
+    $: offenseTeam = play.visualization?.possession_team ?? play.team ?? '';
+    $: defenseTeam = play.visualization?.defensive_team ?? '';
+    $: offensePalette = teamChartDisplayPalette(offenseTeam);
+    $: defensePalette = teamChartDisplayPalette(defenseTeam);
     $: schematic = buildPlaySchematic(play.visualization);
     $: sourcePackages = play.visualization?.source_packages ?? ['play_by_play'];
     $: markerPrefix = `play-${play.evidence_id.replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -19,8 +22,8 @@
 
     function pathColor(kind: string) {
         if (kind === 'return') return '#ff9d66';
-        if (kind === 'after-catch') return palette[1];
-        return palette[0];
+        if (kind === 'after-catch') return offensePalette[1];
+        return offensePalette[0];
     }
 
     function pathMarker(kind: string) {
@@ -29,6 +32,14 @@
 
     function playerRows(names: string[] = [], positions: string[] = []) {
         return names.map((name, index) => ({name, position: positions[index] ?? '—'}));
+    }
+
+    function playerPalette(side: 'offense' | 'defense') {
+        return side === 'offense' ? offensePalette : defensePalette;
+    }
+
+    function markerTextColor(side: 'offense' | 'defense') {
+        return colorContrastRatio(playerPalette(side)[0], '#F4F8FA') >= 4.5 ? '#F4F8FA' : '#07121D';
     }
 
     function recordedFlag(value: boolean | null | undefined, yes: string, no = 'No') {
@@ -65,6 +76,10 @@
     <div class="field-wrap">
         <svg class="field" viewBox="0 0 120 53.3" role="img" aria-label="Reconstructed play showing lineup and ball movement">
             <defs>
+                <filter id={`${markerPrefix}-glow`} x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
+                    <feGaussianBlur stdDeviation="1.05" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/></feMerge>
+                </filter>
                 {#each ['pass', 'carry', 'after-catch', 'return'] as kind}
                     <marker id={`${markerPrefix}-${kind}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto-start-reverse">
                         <path d="M 0 0 L 10 5 L 0 10 z" fill={pathColor(kind)}/>
@@ -72,8 +87,8 @@
                 {/each}
             </defs>
             <rect width="120" height="53.3" rx="1" class="turf"/>
-            <rect x="0" width="10" height="53.3" class="endzone" style={`fill:${palette[1]}`}/>
-            <rect x="110" width="10" height="53.3" class="endzone" style={`fill:${palette[0]}`}/>
+            <rect x="0" width="10" height="53.3" class="endzone" style={`fill:${offensePalette[0]}`}/>
+            <rect x="110" width="10" height="53.3" class="endzone" style={`fill:${defensePalette[0]}`}/>
             {#each Array.from({length: 11}, (_, index) => index) as marker}
                 <line x1={10 + marker * 10} x2={10 + marker * 10} y1="0" y2="53.3" class="yard-line"/>
                 {#if marker > 0 && marker < 10}
@@ -89,14 +104,17 @@
                 <line x1={schematic.lineToGainX} x2={schematic.lineToGainX} y1="2" y2="51.3" class="line-to-gain"/>
             {/if}
             {#each schematic.paths as segment}
+                <path d={segment.d} class={`play-path-glow ${segment.kind}`} style={`stroke:${pathColor(segment.kind)}`} filter={`url(#${markerPrefix}-glow)`}/>
                 <path d={segment.d} class={`play-path ${segment.kind}`} style={`stroke:${pathColor(segment.kind)}`} marker-end={pathMarker(segment.kind)}/>
             {/each}
             {#each schematic.players as player}
-                <g class={`field-player ${player.side} ${player.recorded ? 'recorded' : 'generic'}`} transform={`translate(${player.x} ${player.y})`}>
-                    <circle r="1.65" style={player.side === 'offense' ? `fill:${palette[0]};stroke:${palette[1]}` : `fill:#d9e2e8;stroke:${palette[0]}`}/>
-                    <text class="position-label" y=".12">{player.position.slice(0, 3)}</text>
-                    <text class="name-label" y="3.1">{player.label}</text>
-                    <title>{player.recorded ? `${player.name} · ${player.position}` : `${player.position} · template placement`}</title>
+                <g class={`field-player ${player.side} ${player.recorded ? 'recorded' : 'generic'}`} transform={`translate(${player.x} ${player.y})`} role="img" aria-label={player.recorded ? `${player.name}, ${player.position}` : `${player.position}, template placement`}>
+                    <circle r="1.65" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
+                    <text class="position-label" y=".12" style={`fill:${markerTextColor(player.side)}`}>{player.position.slice(0, 3)}</text>
+                    <g class="player-tooltip">
+                        <rect x={-Math.max(4.2, player.label.length * .58)} y="2" width={Math.max(8.4, player.label.length * 1.16)} height="3.4" rx=".65"/>
+                        <text class="name-label" y="4.28">{player.recorded ? player.label : `Template ${player.position}`}</text>
+                    </g>
                 </g>
             {/each}
             {#each schematic.markers as marker}
@@ -108,8 +126,8 @@
             {/each}
         </svg>
         <div class="field-legend">
-            <span><i class="offense-key"></i>{play.visualization?.possession_team ?? play.team} offense</span>
-            <span><i class="defense-key"></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
+            <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{play.visualization?.possession_team ?? play.team} offense</span>
+            <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
             <span><i class="flight-key"></i>Ball flight</span>
             {#if schematic.paths.some(path => path.kind === 'after-catch')}<span><i class="yac-key"></i>After catch</span>{/if}
             {#if schematic.paths.some(path => path.kind === 'return')}<span><i class="return-key"></i>Turnover return</span>{/if}
@@ -338,25 +356,38 @@
         stroke-dasharray: .8 .7
     }
 
-    .play-path {
+    .play-path,
+    .play-path-glow {
         fill: none;
-        stroke-width: .55;
         stroke-linecap: round;
         stroke-linejoin: round;
         stroke-dasharray: 1.2 1.15;
-        vector-effect: non-scaling-stroke;
+    }
+
+    .play-path {
+        stroke-width: .68;
         animation: draw-path .8s ease-out both, travel-dashes 1.6s linear infinite
     }
 
-    .play-path.after-catch {
+    .play-path-glow {
+        stroke-width: 1.65;
+        pointer-events: none;
+        animation: path-breathe 2.35s ease-in-out infinite, travel-dashes 1.6s linear infinite
+    }
+
+    .play-path.after-catch,
+    .play-path-glow.after-catch {
         stroke-dasharray: 2 .85
     }
 
-    .play-path.return {
+    .play-path.return,
+    .play-path-glow.return {
         stroke-dasharray: .65 .85
     }
 
     .field-player {
+        cursor: help;
+        outline: none;
         animation: settle-player .35s ease-out both
     }
 
@@ -379,12 +410,24 @@
         pointer-events: none
     }
 
+    .player-tooltip {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .14s ease-out
+    }
+
+    .field-player:hover .player-tooltip {
+        opacity: 1
+    }
+
+    .player-tooltip rect {
+        fill: rgb(4 18 29 / 96%);
+        stroke: rgb(228 240 245 / 38%);
+        stroke-width: .2
+    }
+
     .name-label {
         fill: #f4f8fa;
-        paint-order: stroke;
-        stroke: #071722;
-        stroke-width: .65px;
-        stroke-linejoin: round;
         font: 1.25px var(--font-sans);
         font-weight: 650;
         text-anchor: middle;
@@ -458,6 +501,11 @@
 
     @keyframes travel-dashes {
         to { stroke-dashoffset: -8 }
+    }
+
+    @keyframes path-breathe {
+        0%, 100% { opacity: .18; stroke-width: 1.25 }
+        50% { opacity: .58; stroke-width: 1.9 }
     }
 
     @keyframes settle-player {
@@ -625,8 +673,10 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .play-path, .field-player {
+        .play-path, .play-path-glow, .field-player {
             animation: none
         }
+
+        .play-path-glow { opacity: .32 }
     }
 </style>

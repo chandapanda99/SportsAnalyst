@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-TEAM_PALETTES: dict[str, tuple[str, str]] = {
+NFL_TEAM_PALETTES: dict[str, tuple[str, str]] = {
     "ARI": ("#97233F", "#FFB612"),
     "ATL": ("#A71930", "#A5ACAF"),
     "BAL": ("#241773", "#9E7C0C"),
@@ -37,6 +37,44 @@ TEAM_PALETTES: dict[str, tuple[str, str]] = {
     "WAS": ("#5A1414", "#FFB612"),
 }
 
+# Reference: NBA Colors (Community), Figma page 0:1.
+# Primary and secondary follow the first two palette cards after each team's logo card.
+NBA_TEAM_PALETTES: dict[str, tuple[str, str]] = {
+    "ATL": ("#E03A3E", "#F9A01B"),
+    "BOS": ("#007A33", "#BA9653"),
+    "BKN": ("#000000", "#FFFFFF"),
+    "CHA": ("#1D1160", "#00788C"),
+    "CHI": ("#CE1141", "#000000"),
+    "CLE": ("#860038", "#041E42"),
+    "DAL": ("#00538C", "#002B5E"),
+    "DEN": ("#0E2240", "#FEC524"),
+    "DET": ("#C8102E", "#1D42BA"),
+    "GSW": ("#1D428A", "#FFC72C"),
+    "HOU": ("#CE1141", "#000000"),
+    "IND": ("#002D62", "#FDBB30"),
+    "LAC": ("#C8102E", "#1D428A"),
+    "LAL": ("#552583", "#FDB927"),
+    "MEM": ("#5D76A9", "#12173F"),
+    "MIA": ("#98002E", "#F9A01B"),
+    "MIL": ("#00471B", "#EEE1C6"),
+    "MIN": ("#0C2340", "#236192"),
+    "NOP": ("#0C2340", "#C8102E"),
+    "NYK": ("#006BB6", "#F58426"),
+    "OKC": ("#007AC1", "#EF3B24"),
+    "ORL": ("#0077C0", "#C4CED4"),
+    "PHI": ("#006BB6", "#ED174C"),
+    "PHX": ("#1D1160", "#E56020"),
+    "POR": ("#E03A3E", "#000000"),
+    "SAC": ("#5A2D81", "#63727A"),
+    "SAS": ("#C4CED4", "#000000"),
+    "TOR": ("#CE1141", "#000000"),
+    "UTA": ("#002B5C", "#00471B"),
+    "WSH": ("#002B5C", "#E31837"),
+}
+
+# Retained for callers that import the original NFL-only constant.
+TEAM_PALETTES = NFL_TEAM_PALETTES
+NBA_TEAM_ALIASES = {"GS": "GSW", "NO": "NOP", "NY": "NYK", "SA": "SAS", "UTAH": "UTA"}
 DEFAULT_PALETTE = ("#6F9FD1", "#78DCCA")
 REPORT_BACKGROUND = "#09111D"
 
@@ -82,8 +120,13 @@ def _accessible_accent(color: str) -> str:
     return "#E7EDF6"
 
 
-def team_report_palette(team: str) -> TeamReportPalette:
-    primary, secondary = TEAM_PALETTES.get(team.upper(), DEFAULT_PALETTE)
+def team_report_palette(team: str, sport: str = "nfl") -> TeamReportPalette:
+    normalized = team.upper()
+    palettes = NFL_TEAM_PALETTES
+    if sport.lower() == "nba":
+        palettes = NBA_TEAM_PALETTES
+        normalized = NBA_TEAM_ALIASES.get(normalized, normalized)
+    primary, secondary = palettes.get(normalized, DEFAULT_PALETTE)
     return TeamReportPalette(primary, secondary, _accessible_accent(primary), _accessible_accent(secondary))
 
 

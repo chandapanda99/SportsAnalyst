@@ -4,6 +4,7 @@ import {
   CHART_SURFACE_COLOR,
   colorContrastRatio,
   DEFAULT_CHART_PALETTE,
+  NBA_TEAM_CHART_PALETTES,
   teamChartDisplayPalette,
   teamChartPalette,
   teamChartSeriesPalette,
@@ -116,5 +117,29 @@ describe('NFL chart palettes', () => {
     expect(themed.layer[2].mark.color).toBe('#E31837');
     expect(themed.layer[4].data.values[0].endpointLabel).toBe('2025 · +0.116');
     expect(themed.layer[4].mark.color).toBe('#FFB81C');
+  });
+});
+
+describe('NBA chart palettes', () => {
+  it('covers all current teams without colliding with NFL abbreviations', () => {
+    expect(Object.keys(NBA_TEAM_CHART_PALETTES)).toHaveLength(30);
+    expect(teamChartPalette('ATL', 'nba')).toEqual(['#E03A3E', '#F9A01B']);
+    expect(teamChartPalette('ATL', 'nfl')).toEqual(['#A71930', '#A5ACAF']);
+    expect(teamChartPalette('SAC', 'nba')).toEqual(['#5A2D81', '#63727A']);
+    expect(teamChartPalette('GS', 'nba')).toEqual(teamChartPalette('GSW', 'nba'));
+  });
+
+  it('applies NBA colors to chart series through the shared theming path', () => {
+    const palette = teamChartDisplayPalette('LAL', 'nba');
+    const themed = applyTeamChartPalette(
+      {encoding: {color: {field: 'window', type: 'nominal'}}},
+      'LAL',
+      'nba'
+    );
+
+    expect(themed).toMatchObject({
+      encoding: {color: {scale: {range: [...palette]}}}
+    });
+    expect(palette.every((color) => colorContrastRatio(color, CHART_SURFACE_COLOR) >= 3)).toBe(true);
   });
 });

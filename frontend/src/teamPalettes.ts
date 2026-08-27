@@ -2,7 +2,7 @@ export type TeamChartPalette = readonly [primary: string, secondary: string];
 
 // Reference: NFL Colors (Community), Figma node 44:26.
 // Values use this application's canonical nflverse team abbreviations.
-export const TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
+export const NFL_TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
     ARI: ['#97233F', '#FFB612'],
     ATL: ['#A71930', '#A5ACAF'],
     BAL: ['#241773', '#9E7C0C'],
@@ -37,6 +37,44 @@ export const TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
     WAS: ['#5A1414', '#FFB612']
 };
 
+// Reference: NBA Colors (Community), Figma page 0:1.
+// Primary and secondary follow the first two palette cards after each team's logo card.
+export const NBA_TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
+    ATL: ['#E03A3E', '#F9A01B'],
+    BOS: ['#007A33', '#BA9653'],
+    BKN: ['#000000', '#FFFFFF'],
+    CHA: ['#1D1160', '#00788C'],
+    CHI: ['#CE1141', '#000000'],
+    CLE: ['#860038', '#041E42'],
+    DAL: ['#00538C', '#002B5E'],
+    DEN: ['#0E2240', '#FEC524'],
+    DET: ['#C8102E', '#1D42BA'],
+    GSW: ['#1D428A', '#FFC72C'],
+    HOU: ['#CE1141', '#000000'],
+    IND: ['#002D62', '#FDBB30'],
+    LAC: ['#C8102E', '#1D428A'],
+    LAL: ['#552583', '#FDB927'],
+    MEM: ['#5D76A9', '#12173F'],
+    MIA: ['#98002E', '#F9A01B'],
+    MIL: ['#00471B', '#EEE1C6'],
+    MIN: ['#0C2340', '#236192'],
+    NOP: ['#0C2340', '#C8102E'],
+    NYK: ['#006BB6', '#F58426'],
+    OKC: ['#007AC1', '#EF3B24'],
+    ORL: ['#0077C0', '#C4CED4'],
+    PHI: ['#006BB6', '#ED174C'],
+    PHX: ['#1D1160', '#E56020'],
+    POR: ['#E03A3E', '#000000'],
+    SAC: ['#5A2D81', '#63727A'],
+    SAS: ['#C4CED4', '#000000'],
+    TOR: ['#CE1141', '#000000'],
+    UTA: ['#002B5C', '#00471B'],
+    WSH: ['#002B5C', '#E31837']
+};
+
+// Retained for callers that import the original NFL-only constant.
+export const TEAM_CHART_PALETTES = NFL_TEAM_CHART_PALETTES;
+const NBA_TEAM_ALIASES: Record<string, string> = {GS: 'GSW', NO: 'NOP', NY: 'NYK', SA: 'SAS', UTAH: 'UTA'};
 export const DEFAULT_CHART_PALETTE: TeamChartPalette = ['#6F9FD1', '#78DCCA'];
 export const CHART_SURFACE_COLOR = '#091521';
 const CHART_CONTRAST_TARGET = 3;
@@ -44,8 +82,12 @@ const CHART_OUTLINE_COLOR = '#DBE8EE';
 const CHART_LABEL_COLOR = '#A8B7C1';
 const CHART_GRID_COLOR = '#31506A';
 
-export function teamChartPalette(team: string): TeamChartPalette {
-    return TEAM_CHART_PALETTES[team.toUpperCase()] ?? DEFAULT_CHART_PALETTE;
+export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette {
+    const normalized = team.toUpperCase();
+    if (sport.toLowerCase() === 'nba') {
+        return NBA_TEAM_CHART_PALETTES[NBA_TEAM_ALIASES[normalized] ?? normalized] ?? DEFAULT_CHART_PALETTE;
+    }
+    return NFL_TEAM_CHART_PALETTES[normalized] ?? DEFAULT_CHART_PALETTE;
 }
 
 function rgb(hex: string): [number, number, number] {
@@ -87,13 +129,13 @@ function accessibleChartColor(color: string): string {
     return CHART_OUTLINE_COLOR;
 }
 
-export function teamChartDisplayPalette(team: string): TeamChartPalette {
-    const [primary, secondary] = teamChartPalette(team);
+export function teamChartDisplayPalette(team: string, sport = 'nfl'): TeamChartPalette {
+    const [primary, secondary] = teamChartPalette(team, sport);
     return [accessibleChartColor(primary), accessibleChartColor(secondary)];
 }
 
-export function teamChartSeriesPalette(team: string, count: number): string[] {
-    const [primary, secondary] = teamChartDisplayPalette(team);
+export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl'): string[] {
+    const [primary, secondary] = teamChartDisplayPalette(team, sport);
     if (count <= 2) return [primary, secondary];
     return Array.from({length: count}, (_, index) =>
         accessibleChartColor(mixColors(primary, secondary, index / (count - 1)))
@@ -133,7 +175,7 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
     };
 }
 
-export function applyTeamChartPalette(specification: Record<string, unknown>, team: string): Record<string, unknown> {
+export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl'): Record<string, unknown> {
     const themed = structuredClone(specification);
     const encoding = themed.encoding as Record<string, unknown> | undefined;
     for (const channel of ['x', 'y']) {
@@ -153,7 +195,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             ...color,
             scale: {
                 ...((color.scale as Record<string, unknown> | undefined) ?? {}),
-                range: teamChartSeriesPalette(team, Math.max(2, seriesCount))
+                range: teamChartSeriesPalette(team, Math.max(2, seriesCount), sport)
             },
             legend: {
                 ...((color.legend as Record<string, unknown> | undefined) ?? {}),
@@ -246,7 +288,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     if (xField === 'season' && typeof yField === 'string' && values && values.length > 1) {
         const ordered = [...values].sort((left, right) => Number(left.season) - Number(right.season));
         const endpoints = [ordered[0], ordered.at(-1)!];
-        const endpointColors = [...teamChartDisplayPalette(team)];
+        const endpointColors = [...teamChartDisplayPalette(team, sport)];
         endpoints.forEach((endpoint, index) => {
             const value = Number(endpoint[yField]);
             const endpointData = {

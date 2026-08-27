@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from sports_analyst.models import (
@@ -555,9 +555,9 @@ def _game_bootstrap(frame: pl.DataFrame, source: str, seed: int, iterations: int
     values = games["value"].to_list()
     if len(values) < 3:
         return None, None
-    population = [float(value) for value in values]
-    rng = random.Random(seed)
-    samples = sorted(sum(rng.choice(population) for _ in population) / len(population) for _ in range(iterations))
+    population = np.asarray(values, dtype=float)
+    rng = np.random.default_rng(seed)
+    samples = np.sort(population[rng.integers(0, len(population), size=(iterations, len(population)))].mean(axis=1))
     low_index = round(0.025 * (len(samples) - 1))
     high_index = round(0.975 * (len(samples) - 1))
     return samples[low_index], samples[high_index]
@@ -566,8 +566,9 @@ def _game_bootstrap(frame: pl.DataFrame, source: str, seed: int, iterations: int
 def _bootstrap_mean(values: list[float], seed: int, iterations: int = 500) -> tuple[float | None, float | None]:
     if len(values) < 10:
         return None, None
-    rng = random.Random(seed)
-    samples = sorted(sum(rng.choice(values) for _ in values) / len(values) for _ in range(iterations))
+    population = np.asarray(values, dtype=float)
+    rng = np.random.default_rng(seed)
+    samples = np.sort(population[rng.integers(0, len(population), size=(iterations, len(population)))].mean(axis=1))
     return samples[round(0.025 * (iterations - 1))], samples[round(0.975 * (iterations - 1))]
 
 
@@ -660,15 +661,20 @@ def _opponent_adjusted_epa(frame: pl.DataFrame, target: pl.DataFrame, team: str)
     if not required <= set(frame.columns) or not required <= set(target.columns):
         return None
     league = frame.filter((pl.col("posteam") != team) & pl.col("defteam").is_not_null() & pl.col("epa").is_not_null())
-    values: list[tuple[float, int]] = []
-    for game in target.select("game_id", "defteam").unique().iter_rows(named=True):
-        game_plays = target.filter(pl.col("game_id") == game["game_id"])
-        opponent_sample = league.filter((pl.col("defteam") == game["defteam"]) & (pl.col("game_id") != game["game_id"]))
-        if opponent_sample.height < 30:
-            continue
-        actual = game_plays["_epa"].drop_nulls().mean()
-        expected = opponent_sample["epa"].drop_nulls().mean()
-        if actual is not None and expected is not None:
-            values.append((float(actual - expected), game_plays.height))
-    total = sum(weight for _, weight in values)
-    return sum(value * weight for value, weight in values) / total if total else None
+    opponent = (
+        league.group_by("defteam")
+        .agg(pl.col("epa").drop_nulls().mean().alias("expected"), pl.col("epa").drop_nulls().len().alias("opponent_n"))
+        .filter(pl.col("opponent_n") >= 30)
+    )
+    actual = target.group_by("game_id", "defteam").agg(
+        pl.col("_epa").drop_nulls().mean().alias("actual"),
+        pl.col("_epa").drop_nulls().len().alias("weight"),
+    )
+    adjusted = actual.join(opponent, on="defteam", how="inner").drop_nulls(["actual", "expected"])
+    if adjusted.is_empty():
+        return None
+    weighted = adjusted.select(
+        ((pl.col("actual") - pl.col("expected")) * pl.col("weight")).sum().alias("weighted"),
+        pl.col("weight").sum().alias("total"),
+    ).row(0)
+    return float(weighted[0] / weighted[1]) if weighted[1] else None

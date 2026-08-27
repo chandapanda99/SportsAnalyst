@@ -29,6 +29,29 @@ def test_dataset_catalog_distinguishes_packages_within_a_season(tmp_path: Path) 
     assert len(store.manifests()) == 2
 
 
+def test_resync_supersedes_the_previous_package_manifest(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, foundry_endpoint="")
+    connector = NFLVerseConnector(settings)
+    store = LocalStore(settings)
+    path = settings.raw_dir / "play_by_play_2025.parquet"
+
+    original = pl.DataFrame({"season": [2025], "posteam": ["KC"], "epa": [-0.1]})
+    original.write_parquet(path)
+    old_manifest = connector.manifest_for(path, 2025, original)
+    store.save_manifest(old_manifest)
+
+    refreshed = pl.DataFrame({"season": [2025], "posteam": ["KC"], "epa": [0.2]})
+    refreshed.write_parquet(path)
+    new_manifest = connector.manifest_for(path, 2025, refreshed)
+    with store.connect(read_only=True) as polling_connection:
+        polling_connection.execute("SELECT count(*) FROM datasets").fetchone()
+        store.save_manifest(new_manifest)
+
+    manifests = store.manifests("play_by_play")
+    assert [manifest.manifest_id for manifest in manifests] == [new_manifest.manifest_id]
+    assert connector.load(store.manifest_for_season(2025)).get_column("epa").to_list() == [0.2]
+
+
 def test_dataset_catalog_exposes_the_extended_nflverse_wave(tmp_path: Path) -> None:
     assert {
         "participation",
@@ -121,3 +144,28 @@ def test_extended_loaders_dispatch_to_the_expected_nflreadpy_variants() -> None:
         "players",
         "teams",
     ]
+
+
+def test_connector_projects_columns_and_reuses_cached_frames(tmp_path: Path, monkeypatch) -> None:
+    settings = Settings(data_dir=tmp_path, foundry_endpoint="", dataset_cache_mb=8)
+    connector = NFLVerseConnector(settings)
+    frame = pl.DataFrame({"season": [2025, 2025], "posteam": ["KC", "BUF"], "epa": [0.1, -0.2]})
+    path = settings.raw_dir / "play_by_play_2025.parquet"
+    frame.write_parquet(path)
+    manifest = connector.manifest_for(path, 2025, frame)
+
+    scans = 0
+    original_scan = pl.scan_parquet
+
+    def counted_scan(*args, **kwargs):
+        nonlocal scans
+        scans += 1
+        return original_scan(*args, **kwargs)
+
+    monkeypatch.setattr(pl, "scan_parquet", counted_scan)
+    first = connector.load(manifest, {"posteam", "epa"})
+    second = connector.load(manifest, {"posteam", "epa"})
+
+    assert first.columns == ["posteam", "epa"]
+    assert second.equals(first)
+    assert scans == 1

@@ -8,15 +8,17 @@ from sports_analyst.models import InvestigationBundle
 from sports_analyst.team_palettes import rgb_csv, team_report_palette
 
 
-def _window_label(season: int, weeks: tuple[int, int]) -> str:
-    return f"{season} W{weeks[0]}–{weeks[1]}"
+def _window_label(window) -> str:
+    if window.segment:
+        return f"{window.season} {window.segment.replace('_', ' ').title()}"
+    return f"{window.season} W{window.weeks[0]}–{window.weeks[1]}"
 
 
 def _scope_label(scope) -> str:
     if scope.comparison_design == "full_seasons":
         return f"Full seasons {scope.baseline.season}–{scope.comparison.season} (inclusive)"
-    baseline = _window_label(scope.baseline.season, scope.baseline.weeks)
-    comparison = _window_label(scope.comparison.season, scope.comparison.weeks)
+    baseline = _window_label(scope.baseline)
+    comparison = _window_label(scope.comparison)
     return f"{baseline} → {comparison}"
 
 
@@ -27,8 +29,9 @@ def _domain_label(domain: str) -> str:
 def render_markdown(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
+    subject = bundle.run.subject.id if bundle.run.subject else scope.team
     lines = [
-        f"# {scope.team} {domain} efficiency investigation",
+        f"# {subject} {domain} investigation",
         "",
         bundle.summary,
         "",
@@ -50,23 +53,23 @@ def render_markdown(bundle: InvestigationBundle) -> str:
     if seasonal:
         lines.extend(["", "## Season-by-season measurements", "", "| Season / metric | Value | N |", "|---|---:|---:|"])
         lines.extend(f"| {item.label} | {item.value} | {item.sample_size} |" for item in seasonal)
-    lines.extend(["", "## Representative plays", ""])
+    lines.extend(["", "## Representative evidence", ""])
     for play in bundle.play_evidence:
-        lines.append(f"- `{play.game_id}/{play.play_id}` — EPA {play.epa}: {play.description} (`{play.evidence_id}`)")
+        value = f"EPA {play.epa}" if play.epa is not None else f"Value {play.metric_value}" if play.metric_value is not None else "Play"
+        lines.append(f"- `{play.game_id}/{play.play_id}` — {value}: {play.description} (`{play.evidence_id}`)")
     lines.extend(["", "## Methodological caveats", ""])
     lines.extend(f"- {caveat}" for caveat in bundle.methodological_caveats)
     lines.extend(["", "## Data provenance", ""])
     for manifest in bundle.dataset_manifests:
         lines.append(
-            f"- {manifest.season} {manifest.dataset}: `{manifest.sha256}` — {manifest.attribution} "
-            f"[{manifest.license}]({manifest.source_url})"
+            f"- {manifest.season} {manifest.dataset}: `{manifest.sha256}` — {manifest.attribution} [{manifest.license}]({manifest.source_url})"
         )
     return "\n".join(lines) + "\n"
 
 
-def _themed_chart_specification(specification: dict, team: str) -> dict:
+def _themed_chart_specification(specification: dict, team: str, sport: str = "nfl") -> dict:
     themed = deepcopy(specification)
-    palette = team_report_palette(team)
+    palette = team_report_palette(team, sport)
     encoding = themed.get("encoding")
     if isinstance(encoding, dict) and isinstance(encoding.get("color"), dict):
         color = encoding["color"]
@@ -91,8 +94,8 @@ def _themed_chart_specification(specification: dict, team: str) -> dict:
     return themed
 
 
-def _chart_svg(specification: dict, team: str) -> str:
-    themed = _themed_chart_specification(specification, team)
+def _chart_svg(specification: dict, team: str, sport: str = "nfl") -> str:
+    themed = _themed_chart_specification(specification, team, sport)
     try:
         import vl_convert as vlc
 
@@ -104,7 +107,9 @@ def _chart_svg(specification: dict, team: str) -> str:
 def render_html(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
-    palette = team_report_palette(scope.team)
+    subject = bundle.run.subject.id if bundle.run.subject else scope.team
+    palette_team = bundle.run.subject.team_id if bundle.run.subject and bundle.run.subject.team_id else scope.team
+    palette = team_report_palette(palette_team, bundle.run.sport)
     comparison_label = _scope_label(scope)
     claims = "".join(
         f'<article class="claim"><span>{html.escape(claim.claim_type.value)} · {claim.confidence}</span>'
@@ -112,11 +117,17 @@ def render_html(bundle: InvestigationBundle) -> str:
         for claim in bundle.claims
     )
     charts = "".join(
-        f'<section class="chart"><h2>{html.escape(chart.title)}</h2>{_chart_svg(chart.specification, scope.team)}</section>'
+        f'<section class="chart"><h2>{html.escape(chart.title)}</h2>'
+        f"{_chart_svg(chart.specification, palette_team, bundle.run.sport)}</section>"
         for chart in bundle.charts
     )
     plays = "".join(
-        f"<tr><td>{html.escape(play.game_id)}</td><td>{play.play_id}</td><td>{play.epa}</td><td>{html.escape(play.description)}</td></tr>"
+        "<tr>"
+        f"<td>{html.escape(play.game_id)}</td>"
+        f"<td>{play.play_id}</td>"
+        f"<td>{play.epa if play.epa is not None else play.metric_value}</td>"
+        f"<td>{html.escape(play.description)}</td>"
+        "</tr>"
         for play in bundle.play_evidence
     )
     caveats = "".join(f"<li>{html.escape(item)}</li>" for item in bundle.methodological_caveats)
@@ -147,11 +158,11 @@ footer{{margin-top:36px;padding-top:18px;border-top:2px solid var(--team-accent)
 @media print{{*{{print-color-adjust:exact;-webkit-print-color-adjust:exact}}body{{max-width:none;padding:0}}}}
 """
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{html.escape(scope.team)} {html.escape(domain)} efficiency investigation</title><style>{styles}</style></head><body>
+<title>{html.escape(subject)} {html.escape(domain)} investigation</title><style>{styles}</style></head><body>
 <header><div class="eyebrow">Open Sports Analyst · Evidence-bound report</div>
-<h1>{html.escape(scope.team)} {html.escape(domain)} efficiency</h1><p>{html.escape(bundle.summary)}</p>
+<h1>{html.escape(subject)} {html.escape(domain)} analysis</h1><p>{html.escape(bundle.summary)}</p>
 <small>{comparison_label} · {html.escape(bundle.run.investigation_id)}</small></header>
-<main><h2>Findings</h2>{claims}{charts}<h2>Representative plays</h2><table><thead>
-<tr><th>Game</th><th>Play</th><th>EPA</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>
+<main><h2>Findings</h2>{claims}{charts}<h2>Representative evidence</h2><table><thead>
+<tr><th>Game</th><th>Play</th><th>Value</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>
 <h2>Methodological caveats</h2><ul>{caveats}</ul></main>
 <footer><p>{attribution}</p></footer></body></html>"""

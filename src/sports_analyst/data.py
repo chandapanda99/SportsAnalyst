@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 
 import nflreadpy as nfl
 import polars as pl
@@ -66,6 +68,10 @@ class NFLVerseConnector:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.settings.ensure_directories()
+        self._cache: OrderedDict[tuple[str, tuple[str, ...] | None], pl.DataFrame] = OrderedDict()
+        self._cache_bytes = 0
+        self._verified_files: set[tuple[str, int, int]] = set()
+        self._cache_lock = RLock()
 
     def sync(self, seasons: list[int], datasets: list[str] | None = None) -> list[DatasetManifest]:
         selected = list(dict.fromkeys(datasets or ["play_by_play"]))
@@ -125,6 +131,7 @@ class NFLVerseConnector:
     def manifest_for(self, path: Path, season: int, frame: pl.DataFrame | None = None, dataset: str = "play_by_play") -> DatasetManifest:
         frame = frame if frame is not None else pl.read_parquet(path)
         checksum = sha256_file(path)
+        stat = path.stat()
         payload = {"dataset": dataset, "season": season, "sha256": checksum, "rows": frame.height, "columns": frame.columns}
         try:
             package_version = importlib.metadata.version("nflreadpy")
@@ -140,12 +147,66 @@ class NFLVerseConnector:
             columns=frame.columns,
             package_version=package_version,
             local_path=str(path.resolve()),
+            file_size=stat.st_size,
+            modified_ns=stat.st_mtime_ns,
         )
 
-    def load(self, manifest: DatasetManifest) -> pl.DataFrame:
+    def load(self, manifest: DatasetManifest, columns: set[str] | list[str] | tuple[str, ...] | None = None) -> pl.DataFrame:
         path = Path(manifest.local_path).resolve()
         if self.settings.raw_dir.resolve() not in path.parents:
             raise ValueError("dataset path is outside the managed data directory")
-        if sha256_file(path) != manifest.sha256:
+        self._verify(manifest, path)
+        requested = set(columns) if columns is not None else None
+        selected = tuple(column for column in manifest.columns if requested is not None and column in requested) or None
+        cache_key = (manifest.manifest_id, selected)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._cache.move_to_end(cache_key)
+                return cached
+        query = pl.scan_parquet(path)
+        if selected is not None:
+            query = query.select(selected)
+        frame = query.collect()
+        self._cache_frame(cache_key, frame)
+        return frame
+
+    def _verify(self, manifest: DatasetManifest, path: Path) -> None:
+        stat = path.stat()
+        signature = (manifest.manifest_id, stat.st_size, stat.st_mtime_ns)
+        with self._cache_lock:
+            if signature in self._verified_files:
+                return
+        metadata_changed = (
+            manifest.file_size is not None
+            and manifest.modified_ns is not None
+            and (manifest.file_size != stat.st_size or manifest.modified_ns != stat.st_mtime_ns)
+        )
+        needs_checksum = self.settings.verify_dataset_checksums_on_load or metadata_changed or manifest.file_size is None
+        if needs_checksum and sha256_file(path) != manifest.sha256:
             raise ValueError(f"dataset checksum changed: {manifest.manifest_id}")
-        return pl.read_parquet(path)
+        with self._cache_lock:
+            self._verified_files.add(signature)
+
+    def _cache_frame(self, key: tuple[str, tuple[str, ...] | None], frame: pl.DataFrame) -> None:
+        limit = self.settings.dataset_cache_mb * 1024 * 1024
+        if limit <= 0:
+            return
+        size = frame.estimated_size()
+        if size > limit:
+            return
+        with self._cache_lock:
+            previous = self._cache.pop(key, None)
+            if previous is not None:
+                self._cache_bytes -= previous.estimated_size()
+            self._cache[key] = frame
+            self._cache_bytes += size
+            while self._cache and self._cache_bytes > limit:
+                _old_key, old_frame = self._cache.popitem(last=False)
+                self._cache_bytes -= old_frame.estimated_size()
+
+    def clear_cache(self) -> None:
+        with self._cache_lock:
+            self._cache.clear()
+            self._cache_bytes = 0
+            self._verified_files.clear()

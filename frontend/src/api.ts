@@ -1,4 +1,4 @@
-import type { AnalysisOptions, Capabilities, DatasetManifest, Investigation, InvestigationRequest } from './types';
+import type { AnalysisOptions, Capabilities, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -13,14 +13,28 @@ async function empty(url: string, init?: RequestInit): Promise<void> {
 
 export const api = {
   capabilities: () => json<Capabilities>('/api/capabilities'),
-  analysisOptions: () => json<AnalysisOptions>('/api/sports/nfl/options'),
-  datasets: () => json<DatasetManifest[]>('/api/datasets'),
-  investigations: () => json<Investigation[]>('/api/investigations'),
+  sports: () => json<SportOption[]>('/api/sports'),
+  analysisOptions: (sport = 'nfl') => json<AnalysisOptions>(`/api/sports/${sport}/options`),
+  players: (sport: string, query = '') => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}`),
+  datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),
+  investigations: (limit?: number, offset = 0, sport?: string) => {
+    const params = new URLSearchParams();
+    if (limit != null) { params.set('limit', String(limit)); params.set('offset', String(offset)); }
+    if (sport) params.set('sport', sport);
+    const query = params.toString();
+    return json<InvestigationSummary[]>(`/api/investigations${query ? `?${query}` : ''}`);
+  },
   investigation: (id: string) => json<Investigation>(`/api/investigations/${id}`),
+  investigationStatus: (id: string) => json<{ stage: string; message: string; progress: number }>(
+    `/api/investigations/${id}/status`
+  ),
   investigationThread: (id: string) => json<Investigation[]>(`/api/investigations/${id}/thread`),
   deleteInvestigation: (id: string) => empty(`/api/investigations/${id}`, { method: 'DELETE' }),
   evidence: (id: string, evidence: string) => json(`/api/investigations/${id}/evidence/${evidence}`),
-  sync: (seasons: number[], datasets: string[]) => json<{ job_id: string }>('/api/datasets/nfl/sync', {
+  evidenceBatch: (id: string, evidenceIds: string[]) => json<Evidence[]>(`/api/investigations/${id}/evidence/batch`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ evidence_ids: evidenceIds })
+  }),
+  sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
   }),
   investigate: (request: InvestigationRequest) =>

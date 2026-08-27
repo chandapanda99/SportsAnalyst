@@ -42,12 +42,15 @@ class DatasetManifest(BaseModel):
     license: str = NFLVERSE_LICENSE
     attribution: str = NFLVERSE_ATTRIBUTION
     local_path: str
+    file_size: int | None = Field(default=None, ge=0)
+    modified_ns: int | None = Field(default=None, ge=0)
 
 
 class AnalysisWindow(BaseModel):
     model_config = ConfigDict(frozen=True)
     season: int = Field(ge=1999, le=2100)
     weeks: tuple[int, int] = (1, 22)
+    segment: str | None = None
 
     @field_validator("weeks", mode="before")
     @classmethod
@@ -63,6 +66,33 @@ class AnalysisWindow(BaseModel):
             raise ValueError("weeks must be an inclusive range between 1 and 22")
         return self
 
+    @field_validator("segment", mode="before")
+    @classmethod
+    def normalize_segment(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+        return normalized or None
+
+    @property
+    def period_type(self) -> str:
+        return "season_segment" if self.segment else "week_range"
+
+
+class AnalysisSubject(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    type: Literal["team", "player"] = "team"
+    id: str = Field(min_length=1, max_length=128)
+    team_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("id", "team_id", mode="before")
+    @classmethod
+    def normalize_identifier(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
 
 class AnalysisScope(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -70,7 +100,7 @@ class AnalysisScope(BaseModel):
     baseline: AnalysisWindow
     comparison: AnalysisWindow
     season_type: Literal["REG", "POST", "ALL"] = "REG"
-    comparison_design: Literal["full_seasons", "week_ranges", "before_after"] = "week_ranges"
+    comparison_design: Literal["full_seasons", "week_ranges", "before_after", "season_segments", "before_after_milestone"] = "week_ranges"
 
     @model_validator(mode="before")
     @classmethod
@@ -110,22 +140,56 @@ class AnalysisScope(BaseModel):
         if self.baseline == self.comparison:
             raise ValueError("comparison windows must differ")
         if self.comparison_design == "full_seasons":
-            if self.baseline.weeks != (1, 22) or self.comparison.weeks != (1, 22):
+            if (
+                self.baseline.segment is None
+                and self.comparison.segment is None
+                and (self.baseline.weeks != (1, 22) or self.comparison.weeks != (1, 22))
+            ):
                 raise ValueError("full-season ranges must use complete seasons")
             if self.baseline.season >= self.comparison.season:
                 raise ValueError("full-season range end must be later than its start")
-        if self.comparison_design == "before_after" and self.baseline.season != self.comparison.season:
+        if self.comparison_design in {"before_after", "before_after_milestone"} and self.baseline.season != self.comparison.season:
             raise ValueError("before-and-after windows must use the same season")
+        if self.comparison_design in {"season_segments", "before_after_milestone"} and (
+            not self.baseline.segment or not self.comparison.segment
+        ):
+            raise ValueError("NBA segment comparisons require a segment for both windows")
         return self
 
 
 class AnalysisRequest(BaseModel):
+    sport: str = "nfl"
+    subject: AnalysisSubject | None = None
     question: str = Field(min_length=3, max_length=2_000)
     scope: AnalysisScope
-    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
+    analysis_domain: str = "passing"
     metrics: list[str] = Field(default_factory=list)
     splits: list[str] = Field(default_factory=list)
     parent_investigation_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_sport_and_subject(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        sport = str(migrated.get("sport") or "nfl").strip().lower()
+        migrated["sport"] = sport
+        scope = dict(migrated.get("scope") or {})
+        subject = migrated.get("subject")
+        if subject is None:
+            team = str(scope.get("team") or "").strip()
+            if team:
+                migrated["subject"] = {"type": "team", "id": team}
+        elif isinstance(subject, dict) and not scope.get("team"):
+            scope["team"] = subject.get("team_id") or (subject.get("id") if subject.get("type", "team") == "team" else "NBA")
+            migrated["scope"] = scope
+        return migrated
+
+    @field_validator("sport", "analysis_domain", mode="before")
+    @classmethod
+    def normalize_string(cls, value: object) -> str:
+        return str(value).strip().lower()
 
     @field_validator("metrics", "splits")
     @classmethod
@@ -143,8 +207,9 @@ class MetricOption(BaseModel):
     label: str
     category: str
     description: str
-    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
+    analysis_domain: str = "passing"
     available_seasons: list[int] = Field(default_factory=list)
+    subject_types: list[str] = Field(default_factory=lambda: ["team"])
 
 
 class MetricDefinition(BaseModel):
@@ -194,6 +259,18 @@ class AnalysisOptions(BaseModel):
     week_values: list[int] = Field(default_factory=lambda: list(range(1, 23)))
     syncable_datasets: list[str] = Field(default_factory=list)
     dataset_min_seasons: dict[str, int | None] = Field(default_factory=dict)
+    subject_types: list[dict[str, str]] = Field(default_factory=lambda: [{"value": "team", "label": "Team"}])
+    season_segments: list[dict[str, str]] = Field(default_factory=list)
+    segment_availability: dict[str, list[str]] = Field(default_factory=dict)
+    optional_capabilities: dict[str, bool] = Field(default_factory=dict)
+
+
+class SportOption(BaseModel):
+    value: str
+    label: str
+    available: bool = True
+    live_available: bool = False
+    live_message: str | None = None
 
 
 class PlannedToolCall(BaseModel):
@@ -249,6 +326,7 @@ class AggregateEvidence(BaseModel):
 
 class PlayVisualization(BaseModel):
     model_config = ConfigDict(frozen=True)
+    sport: str = "nfl"
     source_packages: list[str] = Field(default_factory=list)
     week: int | None = None
     quarter: int | None = None
@@ -328,10 +406,34 @@ class PlayVisualization(BaseModel):
     offense_positions: list[str] = Field(default_factory=list)
     defense_names: list[str] = Field(default_factory=list)
     defense_positions: list[str] = Field(default_factory=list)
+    # Basketball-specific evidence. These remain optional so legacy NFL bundles
+    # continue to validate without a data migration.
+    period: int | None = None
+    event_type: str | None = None
+    action_type: str | None = None
+    player_id: str | None = None
+    player_name: str | None = None
+    team_id: str | None = None
+    team_abbreviation: str | None = None
+    home_team_abbreviation: str | None = None
+    away_team_abbreviation: str | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    scoring_play: bool | None = None
+    shooting_play: bool | None = None
+    shot_result: str | None = None
+    shot_value: int | None = None
+    shot_distance: float | None = None
+    shot_x: float | None = None
+    shot_y: float | None = None
+    possession_number: int | None = None
+    offense_player_ids: list[str] = Field(default_factory=list)
+    defense_player_ids: list[str] = Field(default_factory=list)
 
 
 class PlayEvidence(BaseModel):
     model_config = ConfigDict(frozen=True)
+    sport: str = "nfl"
     evidence_id: str
     season: int
     game_id: str
@@ -339,6 +441,7 @@ class PlayEvidence(BaseModel):
     team: str
     description: str
     epa: float | None = None
+    metric_value: float | None = None
     supporting: bool = True
     dataset_manifest_id: str
     tool_execution_id: str | None = None
@@ -367,11 +470,13 @@ class ChartArtifact(BaseModel):
 
 
 class InvestigationRun(BaseModel):
+    sport: str = "nfl"
+    subject: AnalysisSubject | None = None
     investigation_id: str
     parent_investigation_id: str | None = None
     question: str
     scope: AnalysisScope
-    analysis_domain: Literal["passing", "rushing", "offense"] = "passing"
+    analysis_domain: str = "passing"
     metrics: list[str] = Field(default_factory=list)
     splits: list[str] = Field(default_factory=list)
     status: RunStatus = RunStatus.QUEUED
@@ -403,6 +508,13 @@ class InvestigationBundle(BaseModel):
             if missing:
                 raise ValueError(f"claim {claim.claim_id} cites unknown evidence: {sorted(missing)}")
         return self
+
+
+class InvestigationSummary(BaseModel):
+    run: InvestigationRun
+    summary: str
+    model_id: str | None = None
+    fallback_used: bool = False
 
 
 class ProviderConfiguration(BaseModel):

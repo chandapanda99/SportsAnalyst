@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 
@@ -16,6 +16,17 @@ describe('Open Sports Analyst workbench', () => {
         );
         return Promise.resolve(new Response(null, { status: 204 }));
       }
+      if (init?.method === 'POST' && url.endsWith('/evidence/batch')) {
+        const identifiers = JSON.parse(String(init.body)).evidence_ids as string[];
+        return Promise.resolve(new Response(JSON.stringify(identifiers.map((identifier) => ({
+          evidence_id: identifier,
+          label: `Evidence ${identifier}`,
+          metric: 'epa_per_dropback',
+          value: 0.12,
+          sample_size: 50,
+          caveats: []
+        }))), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
       if (url.includes('/evidence/')) {
         const identifier = url.split('/').at(-1)!;
         return Promise.resolve(new Response(JSON.stringify({
@@ -32,8 +43,62 @@ describe('Open Sports Analyst workbench', () => {
           status: 200, headers: { 'content-type': 'application/json' }
         }));
       }
+      if (url.endsWith('/status')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          stage: 'pending', message: 'Investigation is still running', progress: 0.75
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      if (url.endsWith('/thread')) {
+        const identifier = url.split('/').at(-2);
+        const selected = mockInvestigations.find((item: any) => item.run.investigation_id === identifier) as any;
+        const rootId = selected?.run.parent_investigation_id ?? identifier;
+        return Promise.resolve(new Response(JSON.stringify(mockInvestigations.filter((item: any) =>
+          item.run.investigation_id === rootId || item.run.parent_investigation_id === rootId
+        )), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      const investigationMatch = url.match(/\/api\/investigations\/([^/?]+)$/);
+      if (!init?.method && investigationMatch) {
+        const selected = mockInvestigations.find((item: any) => item.run.investigation_id === investigationMatch[1]);
+        return Promise.resolve(new Response(JSON.stringify(selected ?? {}), {
+          status: selected ? 200 : 404, headers: { 'content-type': 'application/json' }
+        }));
+      }
       const body = url.endsWith('/capabilities')
-        ? { providers: ['azure_foundry', 'ollama'], configured_provider: 'azure_foundry', model_configured: false, custom_analysis: false, sports: ['nfl'] }
+        ? { providers: ['azure_foundry', 'ollama'], configured_provider: 'azure_foundry', model_configured: false, custom_analysis: false, sports: ['nfl', 'nba'] }
+        : url.endsWith('/sports')
+          ? [
+              { value: 'nfl', label: 'NFL', available: true, live_available: false },
+              { value: 'nba', label: 'NBA', available: true, live_available: false }
+            ]
+        : url.includes('/sports/nba/players')
+          ? [{ player_id: '4065648', name: 'Jayson Tatum', teams: ['BOS'], positions: ['SF'], seasons: [2024, 2025] }]
+        : url.endsWith('/sports/nba/options')
+          ? {
+              sport: 'nba', teams: [{ value: 'BOS', label: 'Boston Celtics' }], available_seasons: [2024, 2025],
+              syncable_seasons: [2025, 2024], syncable_datasets: ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'],
+              dataset_min_seasons: { play_by_play: 2002, schedules: 2002, team_boxscores: 2002, player_boxscores: 2002 },
+              default_metrics: ['points_per_game'], week_values: [], subject_types: [{ value: 'team', label: 'Team' }, { value: 'player', label: 'Player' }],
+              comparison_windows: [
+                { value: 'full_seasons', label: 'Full season range', description: 'Compare seasons.' },
+                { value: 'season_segments', label: 'Season segments', description: 'Compare segments.' }
+              ],
+              season_segments: [
+                { value: 'full_season', label: 'Full season', description: 'All games.' },
+                { value: 'regular_season', label: 'Regular season', description: 'Regular season.' },
+                { value: 'post_all_star', label: 'Post-All-Star', description: 'After the break.' }
+              ],
+              segment_availability: { '2024': ['full_season', 'regular_season', 'post_all_star'], '2025': ['full_season', 'regular_season', 'post_all_star'] },
+              split_dimensions: [], optional_capabilities: { live_nba_stats: false },
+              analysis_domains: [
+                { value: 'offense', label: 'Offense', description: 'Team offense.', subject_type: 'team' },
+                { value: 'scoring', label: 'Scoring', description: 'Player scoring.', subject_type: 'player' }
+              ],
+              default_metrics_by_domain: { offense: ['points_per_game'], scoring: ['points_per_game'] },
+              metrics: [
+                { value: 'points_per_game', label: 'Points per game', category: 'Scoring', analysis_domain: 'offense', description: 'Points.', available_seasons: [2024, 2025], subject_types: ['team'] },
+                { value: 'points_per_game', label: 'Points per game', category: 'Scoring', analysis_domain: 'scoring', description: 'Points.', available_seasons: [2024, 2025], subject_types: ['player'] }
+              ]
+            }
         : url.endsWith('/datasets')
           ? [
               { dataset: 'play_by_play', season: 2024 },
@@ -117,6 +182,26 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('Analysis still running...')).toBeTruthy();
   });
 
+  it('uses the basketball animation for NBA loading without replacing the NFL loader', async () => {
+    class IdleEventSource {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      close() {}
+    }
+    vi.stubGlobal('EventSource', IdleEventSource);
+    render(App);
+
+    await fireEvent.click(await screen.findByRole('button', { name: /NBA.*Bulk data mode/ }));
+    const team = await screen.findByRole('combobox', { name: 'NBA team' });
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Boston Celtics/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Start investigation/i }));
+
+    expect(await screen.findByText('LIVE ANALYSIS POSSESSION')).toBeTruthy();
+    expect(document.querySelector('.basketball-animation')).toBeTruthy();
+    expect(document.querySelector('.catch-scene')).toBeNull();
+  });
+
   it('starts with no implied team and supports searchable team selection', async () => {
     render(App);
     const combobox = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
@@ -142,6 +227,26 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Show another example question' }));
     expect(question.value).toBe('Did this team become more consistent, or was the change concentrated in a few periods?');
+  });
+
+  it('switches sports, supports NBA players, and restores the NFL draft', async () => {
+    render(App);
+    const nflTeam = await screen.findByRole('combobox', { name: 'NFL team' });
+    await fireEvent.focus(nflTeam);
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
+
+    await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
+    expect(await screen.findByText('Analyze and Discuss Basketball Play-by-Play Data!')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
+    const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLSelectElement;
+    const tatum = await screen.findByRole('option', { name: /Jayson Tatum/ }) as HTMLOptionElement;
+    tatum.selected = true;
+    await fireEvent.change(player);
+    expect(player.value).toBe('4065648');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'NFL' }));
+    const restored = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
+    await waitFor(() => expect(restored.value).toBe('Kansas City Chiefs (KC)'));
   });
 
   it('supports explicit all-metric and recommended-metric selection', async () => {
