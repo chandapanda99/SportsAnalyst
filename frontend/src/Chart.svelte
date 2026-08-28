@@ -9,6 +9,7 @@
 
     let {specification, team, sport = 'nfl'}: Props = $props();
     let target: HTMLDivElement;
+    let renderError = $state('');
 
     $effect(() => {
         const themedSpecification = applyTeamChartPalette(specification, team, sport);
@@ -23,20 +24,30 @@
             });
 
         async function renderChart() {
-            const {default: embed} = await import('vega-embed');
-            const result = await embed(target, themedSpecification, {
-                actions: false,
-                theme: 'dark',
-                renderer: 'svg'
-            });
-
-            if (cancelled) {
-                result.view.finalize();
+            const values = (themedSpecification.data as {values?: unknown[]} | undefined)?.values;
+            if (Array.isArray(values) && values.length === 0) {
+                renderError = 'No chartable values were produced for this analysis.';
                 return;
             }
+            renderError = '';
+            try {
+                const {default: embed} = await import('vega-embed');
+                const result = await embed(target, themedSpecification, {
+                    actions: false,
+                    theme: 'dark',
+                    renderer: 'svg'
+                });
 
-            view = result.view;
-            resizeObserver?.observe(target);
+                if (cancelled) {
+                    result.view.finalize();
+                    return;
+                }
+
+                view = result.view;
+                resizeObserver?.observe(target);
+            } catch (problem) {
+                if (!cancelled) renderError = `Unable to render chart: ${problem instanceof Error ? problem.message : String(problem)}`;
+            }
         }
 
         void renderChart();
@@ -49,4 +60,6 @@
         };
     });
 </script>
-<div class="chart" bind:this={target}></div>
+<div class="chart" class:has-error={renderError} bind:this={target}>
+    {#if renderError}<p class="chart-error">{renderError}</p>{/if}
+</div>

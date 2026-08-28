@@ -38,6 +38,9 @@
         passing: "Why did this team's passing efficiency change?",
         rushing: "How did this team's rushing performance change?",
         offense: "How did this team's overall offensive efficiency change?",
+        quarterback: "How did this quarterback's efficiency and passing outcomes change?",
+        receiving: "How did this receiver's volume and efficiency change?",
+        running: "How did this ball carrier's rushing volume and efficiency change?",
         defense: "How did this team's defensive efficiency change?",
         scoring: "How did this player's scoring change?",
         shooting: "How did the shot profile and shooting efficiency change?",
@@ -82,7 +85,14 @@
     let subjectType: 'team' | 'player' = 'team';
     let players: PlayerOption[] = [];
     let selectedPlayerId = '';
+    let playerInput = '';
+    let playerFilter = '';
+    let playerComboboxOpen = false;
+    let activePlayerIndex = 0;
+    let playerSearchTimer: ReturnType<typeof setTimeout> | undefined;
+    let playerSearchVersion = 0;
     let playerTeamId = '';
+    let scopeSeasons: number[] = [];
     let seasonType: 'REG' | 'POST' | 'ALL' = 'REG';
     let selectedMetrics: string[] = [];
     let selectedSplits: string[] = [];
@@ -99,7 +109,7 @@
     let pendingFollowup = '';
     type DraftState = {
         question: string; team: string; teamInput: string; baseline: number; comparison: number;
-        comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string;
+        comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string; playerInput: string;
         playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
         selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[];
     };
@@ -112,11 +122,23 @@
             : [baseline, comparison];
     $: resolvedTeam = resolveTeam(teamInput);
     $: selectedPlayer = players.find((player) => player.player_id === selectedPlayerId) ?? null;
+    $: scopeSeasons = (() => {
+        const local = [...(analysisOptions?.available_seasons ?? [])].sort((left, right) => right - left);
+        if (subjectType !== 'player' || !selectedPlayer) return local;
+        const played = new Set(playerSeasonsForDomain(selectedPlayer).map(Number));
+        return local.filter((season) => played.has(season));
+    })();
     $: resolvedSubject = subjectType === 'player' ? selectedPlayerId : resolvedTeam;
     $: filteredTeams = (analysisOptions?.teams ?? []).filter((option) => {
         const query = teamFilter.trim().toUpperCase();
         return !query || option.value.includes(query) || option.label.toUpperCase().includes(query);
     });
+    $: filteredPlayers = players.filter((player) => {
+        const query = playerFilter.trim().toLowerCase();
+        return !query || player.name.toLowerCase().includes(query) || player.player_id.toLowerCase().includes(query)
+            || player.teams.some((value) => value.toLowerCase().includes(query));
+    });
+    $: visibleDomains = (analysisOptions?.analysis_domains ?? []).filter((domain) => domainAvailableForSubject(domain, subjectType));
     $: windowsDiffer = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
         || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
             ? baseline !== comparison || baselineSegment !== comparisonSegment
@@ -125,8 +147,13 @@
             || baselineEndWeek !== comparisonEndWeek);
     $: missingRequiredSeasons = requiredSeasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
     $: hasRequiredData = requiredSeasons.every((season) => analysisOptions?.available_seasons.includes(season));
+    $: missingPlayerSeasons = subjectType === 'player' && selectedPlayer
+        ? requiredSeasons.filter((season) => !scopeSeasons.includes(season))
+        : [];
+    $: hasSubjectData = missingPlayerSeasons.length === 0;
     $: canRun = Boolean(
-        resolvedSubject && question.trim().length >= 3 && windowsDiffer && hasRequiredData && selectedAvailableMetricCount > 0
+        resolvedSubject && question.trim().length >= 3 && windowsDiffer && hasRequiredData && hasSubjectData
+        && selectedAvailableMetricCount > 0
     );
     $: indexedSeasonCount = new Set(datasets.filter((dataset) => dataset.dataset === 'play_by_play').map((dataset) => dataset.season)).size;
     $: domainMetrics = (analysisOptions?.metrics ?? []).filter((metric) =>
@@ -148,8 +175,8 @@
 
     async function refresh() {
         try {
-            const [nextCapabilities, nextSports, nextOptions, nextDatasets, nextHistory] = await Promise.all([
-                api.capabilities(), api.sports(), api.analysisOptions(activeSport), api.datasets(), api.investigations()
+            const [nextCapabilities, nextSports, nextOptions, nextDatasets, nextHistory, nextPlayers] = await Promise.all([
+                api.capabilities(), api.sports(), api.analysisOptions(activeSport), api.datasets(), api.investigations(), api.players(activeSport)
             ]);
             capabilities = nextCapabilities;
             sports = nextSports.length ? nextSports : [
@@ -165,7 +192,7 @@
             analysisOptions = nextOptions;
             datasets = nextDatasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport);
             history = nextHistory;
-            players = activeSport === 'nba' ? await api.players(activeSport) : [];
+            players = nextOptions.subject_types?.some((item) => item.value === 'player') ? nextPlayers : [];
             initializeSelections();
             const roots = history.filter((item) => !item.run.parent_investigation_id);
             const identifier = active?.run.investigation_id ?? roots[0]?.run.investigation_id;
@@ -182,7 +209,7 @@
         if (sport === activeSport || busy) return;
         sportDrafts[activeSport] = {
             question, team, teamInput, baseline, comparison, comparisonMode, analysisDomain, subjectType,
-            selectedPlayerId, playerTeamId, baselineSegment, comparisonSegment,
+            selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
             selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
             syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets]
         };
@@ -194,6 +221,7 @@
         team = '';
         teamInput = '';
         selectedPlayerId = '';
+        playerInput = '';
         playerTeamId = '';
         subjectType = 'team';
         analysisDomain = sport === 'nba' ? 'offense' : 'passing';
@@ -206,7 +234,7 @@
         if (draft) {
             ({
                 question, team, teamInput, baseline, comparison, comparisonMode, analysisDomain, subjectType,
-                selectedPlayerId, playerTeamId, baselineSegment, comparisonSegment
+                selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment
             } = draft);
             selectedMetrics = [...draft.selectedMetrics];
             selectedSplits = [...draft.selectedSplits];
@@ -233,21 +261,125 @@
             selectLocallyAvailablePackages();
             initializedSelections = true;
         }
-        const validDomains = analysisOptions.analysis_domains.filter(domainAvailableForSubject);
+        const validDomains = analysisOptions.analysis_domains.filter((domain) => domainAvailableForSubject(domain));
         if (!validDomains.some((domain) => domain.value === analysisDomain)) {
             analysisDomain = validDomains[0]?.value ?? analysisOptions.analysis_domains[0]?.value ?? analysisDomain;
             useRecommendedMetrics();
         }
     }
 
-    function domainAvailableForSubject(domain: { subject_type?: string }) {
-        return !domain.subject_type || domain.subject_type === 'both' || domain.subject_type === subjectType;
+    function domainAvailableForSubject(domain: { value?: string; subject_type?: string }, type = subjectType) {
+        if (domain.subject_type) {
+            return domain.subject_type === 'both' || domain.subject_type === type;
+        }
+        // Keep older saved/stale option payloads from exposing team domains to
+        // player investigations when they predate explicit subject metadata.
+        const inferredPlayerDomains = activeSport === 'nfl'
+            ? new Set(['quarterback', 'receiving', 'running'])
+            : new Set(['scoring', 'usage', 'impact']);
+        const inferredTeamDomains = activeSport === 'nfl'
+            ? new Set(['passing', 'rushing', 'offense'])
+            : new Set(['offense', 'defense', 'lineups']);
+        if (inferredPlayerDomains.has(domain.value ?? '')) return type === 'player';
+        if (inferredTeamDomains.has(domain.value ?? '')) return type === 'team';
+        return true;
     }
 
     function selectSubjectType(type: 'team' | 'player') {
         subjectType = type;
-        const nextDomain = (analysisOptions?.analysis_domains ?? []).find(domainAvailableForSubject)?.value;
-        if (nextDomain) selectAnalysisDomain(nextDomain);
+        if (type === 'team') {
+            selectedPlayerId = '';
+            playerInput = '';
+            playerTeamId = '';
+        }
+        selectedSplits = [];
+        const nextDomain = (analysisOptions?.analysis_domains ?? []).find((domain) => domainAvailableForSubject(domain, type))?.value;
+        if (nextDomain) selectAnalysisDomain(nextDomain, true);
+        else selectedMetrics = [];
+    }
+
+    function playerDisplay(player: PlayerOption) {
+        return `${player.name}${player.teams.length ? ` · ${player.teams.join('/')}` : ''}`;
+    }
+
+    function openPlayerCombobox(event: FocusEvent) {
+        playerFilter = '';
+        playerComboboxOpen = true;
+        activePlayerIndex = Math.max(0, players.findIndex((player) => player.player_id === selectedPlayerId));
+        (event.currentTarget as HTMLInputElement).select();
+    }
+
+    function updatePlayerFilter() {
+        playerFilter = playerInput;
+        selectedPlayerId = '';
+        playerTeamId = '';
+        playerComboboxOpen = true;
+        activePlayerIndex = 0;
+        const version = ++playerSearchVersion;
+        const query = playerFilter;
+        if (playerSearchTimer) clearTimeout(playerSearchTimer);
+        playerSearchTimer = setTimeout(async () => {
+            try {
+                const matches = await api.players(activeSport, query);
+                if (version === playerSearchVersion) players = matches;
+            } catch (problem) {
+                if (version === playerSearchVersion) error = String(problem);
+            }
+        }, 150);
+    }
+
+    function selectPlayer(player: PlayerOption) {
+        playerSearchVersion += 1;
+        if (playerSearchTimer) clearTimeout(playerSearchTimer);
+        selectedPlayerId = player.player_id;
+        playerInput = playerDisplay(player);
+        playerFilter = '';
+        playerTeamId = player.teams.length === 1 ? player.teams[0] : '';
+        normalizePlayerSeasonSelection(player);
+        playerComboboxOpen = false;
+    }
+
+    function normalizePlayerSeasonSelection(player: PlayerOption) {
+        const local = new Set(analysisOptions?.available_seasons ?? []);
+        const seasons = playerSeasonsForDomain(player).map(Number).filter((season) => local.has(season)).sort((left, right) => right - left);
+        if (!seasons.length) return;
+        if (!seasons.includes(comparison)) comparison = seasons[0];
+        if (!seasons.includes(baseline)) baseline = seasons[1] ?? seasons[0];
+        if (comparisonMode === 'full_seasons' && seasons.length > 1 && baseline >= comparison) {
+            baseline = seasons[1];
+            comparison = seasons[0];
+        }
+    }
+
+    function playerSeasonsForDomain(player: PlayerOption) {
+        if (activeSport === 'nfl' && player.seasons_by_domain) {
+            return player.seasons_by_domain[analysisDomain] ?? [];
+        }
+        return player.seasons;
+    }
+
+    function movePlayerHighlight(index: number) {
+        if (!filteredPlayers.length) return;
+        activePlayerIndex = (index + filteredPlayers.length) % filteredPlayers.length;
+        requestAnimationFrame(() => document.getElementById(`player-option-${filteredPlayers[activePlayerIndex]?.player_id}`)?.scrollIntoView({block: 'nearest'}));
+    }
+
+    function handlePlayerKeydown(event: KeyboardEvent) {
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (!playerComboboxOpen) playerComboboxOpen = true;
+            else movePlayerHighlight(activePlayerIndex + 1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (!playerComboboxOpen) playerComboboxOpen = true;
+            else movePlayerHighlight(activePlayerIndex - 1);
+        } else if (event.key === 'Enter' && playerComboboxOpen && filteredPlayers[activePlayerIndex]) {
+            event.preventDefault();
+            selectPlayer(filteredPlayers[activePlayerIndex]);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            playerComboboxOpen = false;
+        }
     }
 
     function teamDisplay(value: string, label: string) {
@@ -332,16 +464,19 @@
         selectedMetrics = availableMetrics.filter((metric) => recommended.has(metric.value)).map((metric) => metric.value);
     }
 
-    function selectAnalysisDomain(domain: string) {
-        if (analysisDomain === domain) return;
+    function selectAnalysisDomain(domain: string, force = false) {
+        if (analysisDomain === domain && !force) return;
         analysisDomain = domain;
         const recommended = new Set(analysisOptions?.default_metrics_by_domain?.[domain] ?? []);
         selectedMetrics = (analysisOptions?.metrics ?? [])
-            .filter((metric) => metric.analysis_domain === domain && metricAvailable(metric) && recommended.has(metric.value))
+            .filter((metric) => metric.analysis_domain === domain
+                && (!metric.subject_types?.length || metric.subject_types.includes(subjectType))
+                && metricAvailable(metric) && recommended.has(metric.value))
             .map((metric) => metric.value);
         if (Object.values(domainExampleQuestions).includes(question)) {
             question = domainExampleQuestions[domain] ?? question;
         }
+        if (selectedPlayer) normalizePlayerSeasonSelection(selectedPlayer);
     }
 
     function selectAllMetrics() {
@@ -412,13 +547,25 @@
             player_boxscores: 'Player Box Scores',
             shots: 'Shots',
             game_rosters: 'Game Rosters',
+            officials: 'Officials',
             standings: 'Standings',
             player_season_stats: 'Player Season Stats',
             team_season_stats: 'Team Season Stats',
+            draft: 'Draft Results',
+            stats_schedules: 'NBA Stats Schedules',
+            stats_coaches: 'NBA Stats Coaches',
+            stats_game_rosters: 'NBA Stats Game Rosters',
             lineups: 'Five-player Lineups',
+            stats_officials: 'NBA Stats Officials',
             stats_play_by_play: 'NBA Stats Play By Play',
-            lineups_v3: 'On-court Lineups',
-            possessions_v3: 'Possessions',
+            stats_player_boxscores: 'NBA Stats Player Box Scores',
+            stats_player_game_logs: 'NBA Stats Player Game Logs',
+            stats_player_season_stats: 'NBA Stats Player Season Stats',
+            stats_rosters: 'NBA Stats Rosters',
+            stats_shots: 'NBA Stats Shots',
+            stats_standings: 'NBA Stats Standings',
+            stats_team_boxscores: 'NBA Stats Team Box Scores',
+            stats_team_season_stats: 'NBA Stats Team Season Stats',
             player_crosswalk: 'Player Crosswalk',
             schedule_crosswalk: 'Schedule Crosswalk',
             team_crosswalk: 'Team Crosswalk',
@@ -453,7 +600,17 @@
         return Number.isFinite(value) && value > 0 ? value : null;
     }
 
+    function datasetAvailableSeasons(dataset: string) {
+        const seasons = analysisOptions?.dataset_available_seasons?.[dataset];
+        return Array.isArray(seasons) ? seasons.map(Number).filter(Number.isFinite) : null;
+    }
+
     function eligibleSelectedSeasons(dataset: string, selectedSeasons = syncSeasons) {
+        const published = datasetAvailableSeasons(dataset);
+        if (published) {
+            const offered = new Set(published);
+            return selectedSeasons.map(Number).filter((season) => Number.isFinite(season) && offered.has(season));
+        }
         const minimum = datasetMinimumSeason(dataset);
         return selectedSeasons.map(Number).filter((season) => Number.isFinite(season) && (!minimum || season >= minimum));
     }
@@ -477,8 +634,16 @@
         const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
         const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
         const minimum = datasetMinimumSeason(dataset);
-        if (!eligibleSeasons.length) return `not offered · ${minimum}+`;
-        return `${local}/${eligibleSeasons.length} local${minimum ? ` · ${minimum}+` : ''}`;
+        const published = datasetAvailableSeasons(dataset);
+        if (published) {
+            if (!eligibleSeasons.length) return 'not offered for selected seasons';
+            const first = Math.min(...published);
+            const last = Math.max(...published);
+            return `${local}/${eligibleSeasons.length} local · ${seasonLabel(first)} to ${seasonLabel(last)}`;
+        }
+        const minimumLabel = minimum ? `${seasonLabel(minimum)}+` : '';
+        if (!eligibleSeasons.length) return `not offered · ${minimumLabel}`;
+        return `${local}/${eligibleSeasons.length} local${minimum ? ` · ${minimumLabel}` : ''}`;
     }
 
     function packageEligible(dataset: string, selectedSeasons = syncSeasons) {
@@ -657,7 +822,7 @@
                 question: question.trim(),
                 analysis_domain: analysisDomain,
                 scope: {
-                    team: subjectType === 'team' ? resolvedTeam : playerTeamId || 'NBA',
+                    team: subjectType === 'team' ? resolvedTeam : playerTeamId || (activeSport === 'nba' ? 'NBA' : 'NFL'),
                     baseline: baselineWindow,
                     comparison: comparisonWindow,
                     season_type: seasonType,
@@ -682,11 +847,15 @@
 
     async function syncData() {
         if (!syncSeasons.length || !syncDatasets.length) return;
+        const offeredDatasets = new Set(analysisOptions?.syncable_datasets ?? []);
+        const requestedDatasets = syncDatasets.filter((dataset) => offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons));
+        const requestedSeasons = syncSeasons.map(Number).filter((season) => Number.isInteger(season));
+        if (!requestedSeasons.length || !requestedDatasets.length) return;
         error = '';
         busy = true;
         stage = 'Preparing data sync';
         try {
-            const {job_id} = await api.sync(activeSport, syncSeasons, syncDatasets);
+            const {job_id} = await api.sync(activeSport, requestedSeasons, requestedDatasets);
             stream(`/api/dataset-jobs/${job_id}/events`, async () => {
                 await refresh();
             });
@@ -959,27 +1128,51 @@
                     <div class="scope-heading">
                         <div><span class="eyebrow">01 · SCOPE</span>
                             <h3 id="scope-heading">Define Comparison</h3></div>
-                        <span>{analysisOptions?.available_seasons.length ?? 0} seasons available</span></div>
+                        <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
                     <div class="scope-controls">
-                        {#if activeSport === 'nba'}
+                        {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
                             <div class="subject-toggle" role="group" aria-label="Analysis subject">
                                 <span>Analyze</span>
                                 <button type="button" class:active={subjectType === 'team'} on:click={() => selectSubjectType('team')}>Team</button>
                                 <button type="button" class:active={subjectType === 'player'} on:click={() => selectSubjectType('player')}>Player</button>
                             </div>
                         {/if}
-                        {#if subjectType === 'player' && activeSport === 'nba'}
-                            <label>Player
-                                <select bind:value={selectedPlayerId}>
-                                    <option value="">Choose a player…</option>
-                                    {#each players as player}
-                                        <option value={player.player_id}>{player.name}{player.teams.length ? ` · ${player.teams.join('/')}` : ''}</option>
-                                    {/each}
-                                </select>
-                            </label>
+                        {#if subjectType === 'player'}
+                            <div class="team-control">
+                                <label for="sport-player">Player</label>
+                                <div class="team-combobox">
+                                    <input id="sport-player" role="combobox" bind:value={playerInput} aria-label="Player"
+                                           aria-expanded={playerComboboxOpen}
+                                           aria-controls="sport-player-options"
+                                           aria-autocomplete="list"
+                                           aria-activedescendant={playerComboboxOpen && filteredPlayers[activePlayerIndex] ? `player-option-${filteredPlayers[activePlayerIndex].player_id}` : undefined}
+                                           aria-invalid={Boolean(playerInput && !selectedPlayerId)} autocomplete="off" placeholder="Search Players…"
+                                           on:focus={openPlayerCombobox}
+                                           on:input={updatePlayerFilter} on:keydown={handlePlayerKeydown} on:blur={() => playerComboboxOpen = false}/>
+                                    <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} players`} tabindex="-1"
+                                            on:mousedown|preventDefault={() => playerComboboxOpen = !playerComboboxOpen}>
+                                        <Icon name="chevron-down" size={17}/>
+                                    </button>
+                                    {#if playerComboboxOpen}
+                                        <div class="team-options" id="sport-player-options" role="listbox" aria-label={`${activeSport.toUpperCase()} players`}>
+                                            {#each filteredPlayers as player, index}
+                                                <button id={`player-option-${player.player_id}`} type="button" role="option" aria-selected={selectedPlayerId === player.player_id}
+                                                        class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
+                                                        on:mouseenter={() => activePlayerIndex = index}>
+                                                    <span>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
+                                                    <b>{player.teams.join('/')}</b>
+                                                </button>
+                                            {:else}
+                                                <div class="no-team-results">No players match “{playerFilter}”</div>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
+                                {#if playerInput && !selectedPlayerId}<small class="validation">Choose a player from the list.</small>{/if}
+                            </div>
                             {#if selectedPlayer?.teams.length}
                                 <label>Team stint <select bind:value={playerTeamId}>
-                                    <option value="">All teams</option>
+                                    <option value="">All teams in window</option>
                                     {#each selectedPlayer.teams as playerTeam}
                                         <option value={playerTeam}>{playerTeam}</option>
                                     {/each}
@@ -1022,7 +1215,7 @@
                             <select bind:value={comparisonMode}>
                                 {#each analysisOptions?.comparison_windows ?? [] as option}
                                     <option value={option.value}
-                                            disabled={option.value === 'full_seasons' && (analysisOptions?.available_seasons.length ?? 0) < 2}>{option.label}</option>
+                                            disabled={option.value === 'full_seasons' && scopeSeasons.length < 2}>{option.label}</option>
                                 {/each}
                             </select>
                         </label>
@@ -1035,7 +1228,7 @@
                         </label>{/if}
                     </div>
 
-                    {#if analysisOptions?.available_seasons.length}
+                    {#if scopeSeasons.length}
                         {#if activeSport === 'nba'}
                             <div class="window-grid">
                                 <fieldset>
@@ -1044,7 +1237,7 @@
                                         if (comparisonMode === 'before_after_milestone') comparison = baseline;
                                         if (!availableSegments(baseline).some(segment => segment.value === baselineSegment)) baselineSegment = availableSegments(baseline)[0]?.value ?? 'regular_season';
                                     }}>
-                                        {#each [...analysisOptions.available_seasons].sort((a, b) => b - a) as season}
+                                        {#each scopeSeasons as season}
                                             <option value={season}>{seasonLabel(season)}</option>
                                         {/each}
                                     </select></label>
@@ -1062,7 +1255,7 @@
                                 <fieldset>
                                     <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Comparison segment'}</legend>
                                     <label>Season<select bind:value={comparison} disabled={comparisonMode === 'before_after_milestone'}>
-                                        {#each [...analysisOptions.available_seasons].sort((a, b) => b - a) as season}
+                                        {#each scopeSeasons as season}
                                             <option value={season}>{seasonLabel(season)}</option>
                                         {/each}
                                     </select></label>
@@ -1083,12 +1276,12 @@
                         {:else if comparisonMode === 'before_after'}
                             <div class="window-grid before-after">
                                 <label>Season<select bind:value={baseline}>
-                                    {#each [...analysisOptions.available_seasons].sort((a, b) => b - a) as season}
+                                    {#each scopeSeasons as season}
                                         <option value={season}>{seasonLabel(season)}</option>
                                     {/each}
                                 </select></label>
                                 <label>First week after split<select bind:value={splitWeek}>
-                                    {#each analysisOptions.week_values.filter((week) => week > 1) as week}
+                                    {#each (analysisOptions?.week_values ?? []).filter((week) => week > 1) as week}
                                         <option value={week}>Week {week}</option>
                                     {/each}
                                 </select></label>
@@ -1100,17 +1293,17 @@
                                 <fieldset>
                                     <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Baseline window'}</legend>
                                     <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline}>
-                                        {#each [...analysisOptions.available_seasons].sort((a, b) => b - a) as season}
+                                        {#each scopeSeasons as season}
                                             <option value={season}>{seasonLabel(season)}</option>
                                         {/each}
                                     </select></label>
                                     {#if comparisonMode === 'week_ranges'}
                                         <div class="week-pair"><label>Start<select bind:value={baselineStartWeek}>
-                                            {#each analysisOptions.week_values as week}
+                                            {#each analysisOptions?.week_values ?? [] as week}
                                                 <option value={week} disabled={week > baselineEndWeek}>W{week}</option>
                                             {/each}
                                         </select></label><label>End<select bind:value={baselineEndWeek}>
-                                            {#each analysisOptions.week_values as week}
+                                            {#each analysisOptions?.week_values ?? [] as week}
                                                 <option value={week} disabled={week < baselineStartWeek}>W{week}</option>
                                             {/each}
                                         </select></label></div>
@@ -1120,17 +1313,17 @@
                                 <fieldset>
                                     <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Comparison window'}</legend>
                                     <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison}>
-                                        {#each [...analysisOptions.available_seasons].sort((a, b) => b - a) as season}
+                                        {#each scopeSeasons as season}
                                             <option value={season}>{seasonLabel(season)}</option>
                                         {/each}
                                     </select></label>
                                     {#if comparisonMode === 'week_ranges'}
                                         <div class="week-pair"><label>Start<select bind:value={comparisonStartWeek}>
-                                            {#each analysisOptions.week_values as week}
+                                            {#each analysisOptions?.week_values ?? [] as week}
                                                 <option value={week} disabled={week > comparisonEndWeek}>W{week}</option>
                                             {/each}
                                         </select></label><label>End<select bind:value={comparisonEndWeek}>
-                                            {#each analysisOptions.week_values as week}
+                                            {#each analysisOptions?.week_values ?? [] as week}
                                                 <option value={week} disabled={week < comparisonStartWeek}>W{week}</option>
                                             {/each}
                                         </select></label></div>
@@ -1144,20 +1337,25 @@
                                 <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
                             {/if}
                             {#if windowsDiffer && missingRequiredSeasons.length}
-                                <p class="validation">Sync the missing season{missingRequiredSeasons.length === 1 ? '' : 's'}before running this
+                                <p class="validation">Sync the missing season{missingRequiredSeasons.length === 1 ? '' : 's'} before running this
                                     range: {missingRequiredSeasons.join(', ')}.</p>
+                            {/if}
+                            {#if windowsDiffer && missingPlayerSeasons.length}
+                                <p class="validation">The selected player has no recorded data for season{missingPlayerSeasons.length === 1 ? '' : 's'}
+                                    {missingPlayerSeasons.join(', ')}. Choose a continuous range from the available player seasons.</p>
                             {/if}
                         {/if}
                     {:else}
-                        <p class="empty-state">Sync at least one {activeSport === 'nba' ? 'SportsDataverse NBA' : 'nflverse'} season to configure an
-                            investigation.</p>
+                        <p class="empty-state">{subjectType === 'player' && selectedPlayer
+                            ? 'No locally synced seasons overlap this player’s recorded career.'
+                            : `Sync at least one ${activeSport === 'nba' ? 'SportsDataverse NBA' : 'nflverse'} season to configure an investigation.`}</p>
                     {/if}
                 </section>
 
                 <section class="metric-card" aria-labelledby="metric-heading">
                     <div class="scope-heading">
                         <div><span class="eyebrow">02 · METRICS</span>
-                            <h3 id="metric-heading">Choose what to measure</h3></div>
+                            <h3 id="metric-heading">Choose {subjectType === 'player' ? 'player metrics' : 'what to measure'}</h3></div>
                         <div class="metric-actions">
                             <button class="text-button" type="button" on:click={selectAllMetrics} disabled={allAvailableMetricsSelected || !availableMetrics.length}>
                                 <Icon name="clipboard-plus" size={16}/>
@@ -1170,15 +1368,15 @@
                         </div>
                     </div>
                     <div class="domain-selector" role="group" aria-label="Analysis domain">
-                        {#each (analysisOptions?.analysis_domains ?? []).filter(domainAvailableForSubject) as domain}
+                        {#each visibleDomains as domain}
                             <button type="button" class:active={analysisDomain === domain.value} aria-pressed={analysisDomain === domain.value}
                                     on:click={() => selectAnalysisDomain(domain.value)}>
                                 <strong>{domain.label}</strong><span>{domain.description}</span>
                             </button>
                         {/each}
                     </div>
-                    <p class="section-help"><strong>Recommended metrics are selected by default.</strong> Checked metrics are included and unchecked metrics are
-                        excluded. Use Recommended Metrics replaces the current selection with the recommended set.</p>
+                    <p class="section-help"><strong>{subjectType === 'player' ? 'Only player-compatible metrics are shown.' : 'Recommended metrics are selected by default.'}</strong>
+                        Checked metrics are included and unchecked metrics are excluded. Use Recommended Metrics replaces the current selection with the recommended set.</p>
                     <div class="metric-groups">
                         {#each metricCategories as category}
                             <section class="metric-group" role="group" aria-label={category}>
@@ -1200,20 +1398,27 @@
                     {#if analysisOptions && selectedAvailableMetricCount === 0}
                         <p class="selection-warning">Select AT LEAST ONE available metric to start an investigation!</p>
                     {/if}
-                    <div class="split-selector">
-                        <div><h4>Diagnostic Cuts</h4>
-                            <p>Checked cuts are included as situational breakdowns. Once you select cuts, unchecked cuts are skipped. Leave all clear to use the
-                                recommended diagnostic cuts automatically.</p></div>
-                        <div class="split-options">
-                            {#each analysisOptions?.split_dimensions ?? [] as split}
-                                <label class:unavailable={!splitAvailable(split.available_seasons)} title={split.description}>
-                                    <input type="checkbox" checked={selectedSplits.includes(split.value)} disabled={!splitAvailable(split.available_seasons)}
-                                           on:change={() => toggleSplit(split.value)}/>
-                                    <span>{split.label}</span>
-                                </label>
-                            {/each}
+                    {#if activeSport === 'nfl' && subjectType === 'player'}
+                        <div class="split-selector player-diagnostic-note">
+                            <div><h4>Player Context</h4>
+                                <p>Player comparisons use attributed plays plus compatible synced player statistics. Team-oriented diagnostic cuts are disabled for player investigations.</p></div>
                         </div>
-                    </div>
+                    {:else}
+                        <div class="split-selector">
+                            <div><h4>Diagnostic Cuts</h4>
+                                <p>Checked cuts are included as situational breakdowns. Once you select cuts, unchecked cuts are skipped. Leave all clear to use the
+                                    recommended diagnostic cuts automatically.</p></div>
+                            <div class="split-options">
+                                {#each analysisOptions?.split_dimensions ?? [] as split}
+                                    <label class:unavailable={!splitAvailable(split.available_seasons)} title={split.description}>
+                                        <input type="checkbox" checked={selectedSplits.includes(split.value)} disabled={!splitAvailable(split.available_seasons)}
+                                               on:change={() => toggleSplit(split.value)}/>
+                                        <span>{split.label}</span>
+                                    </label>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
                 </section>
 
                 <div class="question-field">

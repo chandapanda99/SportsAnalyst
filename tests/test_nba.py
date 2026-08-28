@@ -5,11 +5,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
+from sportsdataverse.errors import SeasonNotFoundError
 
 from sports_analyst.api import create_app
 from sports_analyst.config import Settings
 from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisSubject, AnalysisWindow
 from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
+from sports_analyst.plugins.nba import NBAPlugin
 from sports_analyst.service import AnalystApplication
 
 
@@ -20,7 +22,7 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
             {
                 "game_id": [game_id, game_id],
                 "sequence_number": [1, 2],
-                "text": ["Jayson Tatum makes 3-pt jump shot", "Jayson Tatum misses layup"],
+                "text": ["Jayson Tatum makes 26-foot 3-pt jump shot", "Jayson Tatum misses layup"],
                 "period_number": [1, 4],
                 "clock_display_value": ["11:42", "00:08"],
                 "team_id": ["2", "2"],
@@ -88,6 +90,16 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
                 "plus_minus": [7],
             }
         ),
+        "lineups": pl.DataFrame(
+            {
+                "team_abbreviation": ["BOS", "BOS"],
+                "group_id": ["4065648-4433134-1628369-1628401-201143", "4065648-4433134-1628369-201143-1630202"],
+                "min": [18.0, 12.0],
+                "off_rating": [114.0 + season - 2024, 109.0 + season - 2024],
+                "def_rating": [108.0, 111.0],
+                "net_rating": [6.0 + season - 2024, -2.0 + season - 2024],
+            }
+        ),
         "lineups_v3": pl.DataFrame(
             {
                 "game_id": [game_id],
@@ -146,7 +158,63 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
         connector.load(manifests[0].model_copy(update={"sport": "nfl"}))
 
 
-def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path) -> None:
+def test_nba_connector_keeps_core_data_when_optional_release_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+    connector = SportsDataverseNBAConnector(Settings(data_dir=tmp_path))
+
+    def unavailable(_seasons: list[int], return_as_pandas: bool) -> pl.DataFrame:
+        assert return_as_pandas is False
+        raise SeasonNotFoundError("season is not published")
+
+    monkeypatch.setattr(
+        connector,
+        "_loader_registry",
+        lambda: {
+            "play_by_play": lambda seasons, return_as_pandas: _nba_frames(seasons[0], 108)["play_by_play"],
+            "player_crosswalk": unavailable,
+        },
+    )
+
+    manifests = connector.sync([2026], ["play_by_play", "player_crosswalk"])
+
+    assert [(item.dataset, item.season) for item in manifests] == [("play_by_play", 2026)]
+
+
+def test_nba_subject_options_are_limited_to_franchises_and_their_players() -> None:
+    plugin = NBAPlugin()
+    options = plugin.analysis_options(
+        [],
+        {
+            "teams": pl.DataFrame(
+                {
+                    "team_abbreviation": ["BOS", "EAST", "RISING"],
+                    "team_name": ["Boston Celtics", "Eastern Conference All-Stars", "Rising Stars"],
+                }
+            )
+        },
+    )
+    players = plugin.resolve_players(
+        "",
+        [
+            (
+                2025,
+                pl.DataFrame(
+                    {
+                        "player_id": ["4065648", "4065648", "exhibition-only"],
+                        "player_name": ["Jayson Tatum", "Jayson Tatum", "Exhibition Player"],
+                        "team_abbreviation": ["BOS", "EAST", "RISING"],
+                    }
+                ),
+            )
+        ],
+    )
+
+    assert len(options.teams) == 30
+    assert {team.value for team in options.teams} >= {"BOS", "LAL", "OKC"}
+    assert not {"EAST", "WEST", "RISING"} & {team.value for team in options.teams}
+    assert [(player.name, player.teams) for player in players] == [("Jayson Tatum", ["BOS"])]
+
+
+def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, monkeypatch) -> None:
     application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
     connector = application.connectors["nba"]
     for season, points in ((2024, 105), (2025, 114)):
@@ -182,11 +250,35 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path) -
             metrics=["points_per_game", "true_shooting_pct"],
         )
     )
+    lineup = application.investigate(
+        AnalysisRequest(
+            sport="nba",
+            subject=AnalysisSubject(type="team", id="BOS"),
+            question="How did Boston's lineup performance change across seasons?",
+            scope=AnalysisScope(
+                team="BOS",
+                baseline=AnalysisWindow(season=2024, segment="full_season"),
+                comparison=AnalysisWindow(season=2025, segment="full_season"),
+                season_type="ALL",
+                comparison_design="full_seasons",
+            ),
+            analysis_domain="lineups",
+            metrics=["lineup_net_rating", "lineup_off_rating", "lineup_def_rating"],
+        )
+    )
 
     assert team.run.sport == player.run.sport == "nba"
     assert team.aggregate_evidence and player.aggregate_evidence
+    assert [chart.title for chart in lineup.charts] == ["NBA range endpoints", "Season-by-season Lineup net rating"]
+    assert all(chart.specification["data"]["values"] for chart in lineup.charts)
+    assert {row["season"] for row in lineup.charts[1].specification["data"]["values"]} == {2024, 2025}
     assert team.play_evidence[0].visualization.sport == "nba"
     assert team.play_evidence[0].visualization.shot_x is not None
+    made_shot = next(item for item in team.play_evidence if "makes 26-foot" in item.description)
+    assert made_shot.visualization.shot_result == "Made"
+    assert made_shot.visualization.shot_distance == 26
+    assert (made_shot.visualization.shot_x, made_shot.visualization.shot_y) == (8.0, 23.0)
+    assert made_shot.visualization.shot_coordinate_system == "court_feet"
     enriched = next(item for item in team.play_evidence if item.visualization.possession_number == 1)
     assert len(enriched.visualization.offense_player_ids) == 5
     assert {item.sport for item in team.dataset_manifests} == {"nba"}
@@ -206,6 +298,33 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path) -
     assert options["available_seasons"] == [2024, 2025]
     assert {item["value"] for item in options["subject_types"]} == {"team", "player"}
     assert "regular_season" in options["segment_availability"]["2025"]
+    assert options["dataset_min_seasons"]["rosters"] == 2025
+    assert options["dataset_min_seasons"]["lineups"] == 2008
+    assert options["dataset_min_seasons"]["stats_rosters"] == 1997
+    assert options["dataset_min_seasons"]["player_crosswalk"] == 2026
+    assert options["dataset_available_seasons"]["stats_rosters"] == list(range(1997, 2027))
+    assert options["syncable_seasons"][0] == 2027
+    assert options["syncable_seasons"][-1] == 1996
+    assert "stats_game_rosters" in options["syncable_datasets"]
+    assert "lineups_v3" not in options["syncable_datasets"]
+    assert "possessions_v3" not in options["syncable_datasets"]
+    synced: dict[str, object] = {}
+
+    def capture_sync(seasons, _job_id, datasets, sport):
+        synced.update(seasons=seasons, datasets=datasets, sport=sport)
+        return []
+
+    monkeypatch.setattr(application, "sync", capture_sync)
+    full_sync = client.post(
+        "/api/datasets/nba/sync",
+        json={"seasons": options["syncable_seasons"], "datasets": options["syncable_datasets"]},
+    )
+    assert full_sync.status_code == 202
+    assert synced == {
+        "seasons": options["syncable_seasons"],
+        "datasets": options["syncable_datasets"],
+        "sport": "nba",
+    }
     assert client.get("/api/investigations", params={"sport": "nfl"}).json() == []
     assert application.query_sql("SELECT count(*) AS plays FROM pbp", sport="nba") == [{"plays": 4}]
     with pytest.raises(ValueError, match="no datasets"):

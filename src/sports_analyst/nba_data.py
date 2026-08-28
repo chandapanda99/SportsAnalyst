@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import logging
 from collections import OrderedDict
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
+from typing import NamedTuple
 
 import polars as pl
 
@@ -14,30 +16,83 @@ from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import sha256_file
 from sports_analyst.models import DatasetManifest, stable_id
 
+logger = logging.getLogger(__name__)
+
 NBA_ATTRIBUTION = "Data loaded through SportsDataverse from its published NBA data releases."
 NBA_LICENSE = "See the source release metadata for the selected dataset."
 
-NBA_DATASETS: dict[str, tuple[str, int, str]] = {
-    "play_by_play": ("load_nba_pbp", 2002, "espn_nba_pbp"),
-    "schedules": ("load_nba_schedule", 2002, "espn_nba_schedules"),
-    "team_boxscores": ("load_nba_team_boxscore", 2002, "espn_nba_team_boxscores"),
-    "player_boxscores": ("load_nba_player_boxscore", 2002, "espn_nba_player_boxscores"),
-    "shots": ("load_nba_shots", 2002, "espn_nba_shots"),
-    "game_rosters": ("load_nba_game_rosters", 2002, "espn_nba_game_rosters"),
-    "rosters": ("load_nba_rosters", 2002, "espn_nba_rosters"),
-    "standings": ("load_nba_standings", 2002, "espn_nba_standings"),
-    "player_season_stats": ("load_nba_player_season_stats", 2002, "espn_nba_player_season_stats"),
-    "team_season_stats": ("load_nba_team_season_stats", 2002, "espn_nba_team_season_stats"),
-    "lineups": ("load_nba_stats_lineups", 2007, "nba_stats_lineups"),
-    "stats_play_by_play": ("load_nba_stats_pbp", 2002, "nba_stats_pbp"),
-    "lineups_v3": ("load_nba_stats_lineups_v3", 2025, "nba_stats_lineups_v3"),
-    "possessions_v3": ("load_nba_stats_possessions_v3", 2025, "nba_stats_possessions_v3"),
-    "player_crosswalk": ("load_nba_player_crosswalk", 2002, "nba_player_crosswalk"),
-    "schedule_crosswalk": ("load_nba_schedule_crosswalk", 2002, "nba_schedule_crosswalk"),
-    "team_crosswalk": ("load_nba_team_crosswalk", 2002, "nba_team_crosswalk"),
-    "player_core": ("load_nba_player_core", 2002, "nba_player_core"),
-    "player_impact": ("load_nba_player_impact", 2002, "nba_player_impact"),
+class NBADatasetDefinition(NamedTuple):
+    loader: str
+    minimum: int
+    release: str
+    available_seasons: tuple[int, ...]
+
+
+def _seasons(first: int, last: int) -> tuple[int, ...]:
+    return tuple(range(first, last + 1))
+
+
+# Reviewed against the published sportsdataverse-data assets on 2026-08-28.
+# Only high-level release loaders belong in the sync UI; live endpoint wrappers
+# and predictive/model helpers remain behind analysis tools.
+NBA_DATASETS: dict[str, NBADatasetDefinition] = {
+    "play_by_play": NBADatasetDefinition("load_nba_pbp", 2002, "espn_nba_pbp", _seasons(2002, 2026)),
+    "schedules": NBADatasetDefinition("load_nba_schedule", 2002, "espn_nba_schedules", _seasons(2002, 2027)),
+    "team_boxscores": NBADatasetDefinition("load_nba_team_boxscore", 2002, "espn_nba_team_boxscores", _seasons(2002, 2026)),
+    "player_boxscores": NBADatasetDefinition("load_nba_player_boxscore", 2002, "espn_nba_player_boxscores", _seasons(2002, 2026)),
+    "shots": NBADatasetDefinition("load_nba_shots", 2002, "espn_nba_shots", _seasons(2002, 2026)),
+    "game_rosters": NBADatasetDefinition("load_nba_game_rosters", 2002, "espn_nba_game_rosters", _seasons(2002, 2026)),
+    "rosters": NBADatasetDefinition("load_nba_rosters", 2025, "espn_nba_rosters", _seasons(2025, 2027)),
+    "officials": NBADatasetDefinition("load_nba_officials", 2002, "espn_nba_officials", _seasons(2002, 2026)),
+    "standings": NBADatasetDefinition("load_nba_standings", 2002, "espn_nba_standings", _seasons(2002, 2026)),
+    "player_season_stats": NBADatasetDefinition(
+        "load_nba_player_season_stats", 2002, "espn_nba_player_season_stats", _seasons(2002, 2026)
+    ),
+    "team_season_stats": NBADatasetDefinition(
+        "load_nba_team_season_stats", 2002, "espn_nba_team_season_stats", _seasons(2002, 2026)
+    ),
+    "draft": NBADatasetDefinition("load_nba_draft", 2003, "espn_nba_draft", _seasons(2003, 2027)),
+    "stats_schedules": NBADatasetDefinition("load_nba_stats_schedules", 1996, "nba_stats_schedules", _seasons(1996, 2026)),
+    "stats_coaches": NBADatasetDefinition("load_nba_stats_coaches", 1997, "nba_stats_coaches", _seasons(1997, 2026)),
+    "stats_game_rosters": NBADatasetDefinition(
+        "load_nba_stats_game_rosters", 1997, "nba_stats_game_rosters", _seasons(1997, 2026)
+    ),
+    "lineups": NBADatasetDefinition("load_nba_stats_lineups", 2008, "nba_stats_lineups", _seasons(2008, 2026)),
+    "stats_officials": NBADatasetDefinition("load_nba_stats_officials", 1997, "nba_stats_officials", _seasons(1997, 2026)),
+    "stats_play_by_play": NBADatasetDefinition("load_nba_stats_pbp", 1996, "nba_stats_pbp", _seasons(1996, 2026)),
+    "stats_player_boxscores": NBADatasetDefinition(
+        "load_nba_stats_player_boxscores", 1997, "nba_stats_player_boxscores", _seasons(1997, 2026)
+    ),
+    "stats_player_game_logs": NBADatasetDefinition(
+        "load_nba_stats_player_game_logs", 1997, "nba_stats_player_game_logs", _seasons(1997, 2026)
+    ),
+    "stats_player_season_stats": NBADatasetDefinition(
+        "load_nba_stats_player_season_stats", 1997, "nba_stats_player_season_stats", _seasons(1997, 2026)
+    ),
+    "stats_rosters": NBADatasetDefinition("load_nba_stats_rosters", 1997, "nba_stats_rosters", _seasons(1997, 2026)),
+    "stats_shots": NBADatasetDefinition("load_nba_stats_shots", 1997, "nba_stats_shots", _seasons(1997, 2026)),
+    "stats_standings": NBADatasetDefinition("load_nba_stats_standings", 1997, "nba_stats_standings", _seasons(1997, 2026)),
+    "stats_team_boxscores": NBADatasetDefinition(
+        "load_nba_stats_team_boxscores", 1997, "nba_stats_team_boxscores", _seasons(1997, 2026)
+    ),
+    "stats_team_season_stats": NBADatasetDefinition(
+        "load_nba_stats_team_season_stats", 1997, "nba_stats_team_season_stats", _seasons(1997, 2026)
+    ),
+    "player_crosswalk": NBADatasetDefinition("load_nba_player_crosswalk", 2026, "nba_crosswalk", _seasons(2026, 2027)),
+    "schedule_crosswalk": NBADatasetDefinition("load_nba_schedule_crosswalk", 2026, "nba_crosswalk", _seasons(2026, 2027)),
+    "team_crosswalk": NBADatasetDefinition("load_nba_team_crosswalk", 2026, "nba_crosswalk", _seasons(2026, 2027)),
+    "player_core": NBADatasetDefinition("load_nba_player_core", 2002, "espn_nba_player_core", _seasons(2002, 2026)),
+    "player_impact": NBADatasetDefinition("load_nba_player_impact", 1997, "nba_player_impact", _seasons(1997, 2026)),
 }
+
+# Loadable for saved/local investigations, but deliberately not syncable: the
+# SportsDataverse loaders exist while their bulk release tags do not.
+NBA_LOCAL_ONLY_DATASETS: dict[str, NBADatasetDefinition] = {
+    "lineups_v3": NBADatasetDefinition("load_nba_stats_lineups_v3", 2025, "nba_stats_lineups_v3", ()),
+    "stats_play_by_play_v3": NBADatasetDefinition("load_nba_stats_pbp_v3", 2025, "nba_stats_pbpv3", ()),
+    "possessions_v3": NBADatasetDefinition("load_nba_stats_possessions_v3", 2025, "nba_stats_possessions_v3", ()),
+}
+NBA_ALL_DATASETS = {**NBA_DATASETS, **NBA_LOCAL_ONLY_DATASETS}
 
 NBA_DEFAULT_DATASETS = ["play_by_play", "schedules", "team_boxscores", "player_boxscores"]
 
@@ -80,13 +135,27 @@ class SportsDataverseNBAConnector:
         if unknown:
             raise ValueError(f"unsupported SportsDataverse NBA datasets: {unknown}")
         loaders = self._loader_registry()
+        from sportsdataverse.errors import SeasonNotFoundError
+
         manifests: list[DatasetManifest] = []
         for season in sorted(set(seasons)):
             for dataset in selected:
-                _loader_name, minimum, _release = NBA_DATASETS[dataset]
-                if season < minimum:
+                definition = NBA_DATASETS[dataset]
+                if season not in definition.available_seasons:
                     continue
-                raw = loaders[dataset]([season], return_as_pandas=False)
+                try:
+                    raw = loaders[dataset]([season], return_as_pandas=False)
+                except SeasonNotFoundError as error:
+                    # SportsDataverse's release catalog can lag its loader
+                    # metadata. An unavailable optional season must not discard
+                    # core datasets that loaded successfully in the same job.
+                    logger.info(
+                        "nba_dataset_season_unavailable dataset=%s season=%d reason=%s",
+                        dataset,
+                        season,
+                        error,
+                    )
+                    continue
                 frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
                 if frame.is_empty():
                     continue
@@ -95,7 +164,10 @@ class SportsDataverseNBAConnector:
                 frame.write_parquet(path)
                 manifests.append(self.manifest_for(path, season, frame, dataset))
         if not manifests:
-            raise ValueError("none of the selected NBA datasets are available for the selected seasons")
+            raise ValueError(
+                "none of the selected NBA datasets are available for the selected seasons; "
+                "choose a supported season or include a core dataset"
+            )
         return manifests
 
     @staticmethod
@@ -106,7 +178,8 @@ class SportsDataverseNBAConnector:
             "period": ("period", "period_number", "qtr"),
             "clock": ("clock_display_value", "time", "clock"),
             "player_id": ("athlete_id", "person_id"),
-            "player_name": ("athlete_display_name", "athlete_name_1", "player_name"),
+            "player_name": ("athlete_display_name", "athlete_name_1", "player_name", "display_name", "full_name", "player"),
+            "team_abbreviation": ("team_tricode", "team_abbrev", "team_abbreviation"),
             "game_date": ("game_date", "date", "start_date"),
             "home_team_abbrev": ("home_team_abbrev", "home_abbreviation"),
             "away_team_abbrev": ("away_team_abbrev", "away_abbreviation"),
@@ -138,7 +211,7 @@ class SportsDataverseNBAConnector:
         return frame
 
     def register_local(self, path: Path, season: int, dataset: str = "play_by_play") -> DatasetManifest:
-        if dataset not in NBA_DATASETS:
+        if dataset not in NBA_ALL_DATASETS:
             raise ValueError(f"unsupported SportsDataverse NBA dataset: {dataset}")
         frame = self.normalize(pl.read_parquet(path), season, dataset)
         target = self.data_dir / f"{dataset}_{season}.parquet"
@@ -150,7 +223,7 @@ class SportsDataverseNBAConnector:
         frame = frame if frame is not None else pl.read_parquet(path)
         checksum = sha256_file(path)
         stat = path.stat()
-        _loader, _minimum, release = NBA_DATASETS[dataset]
+        _loader, _minimum, release, available_seasons = NBA_ALL_DATASETS[dataset]
         payload = {
             "sport": self.sport_id,
             "dataset": dataset,
@@ -168,7 +241,11 @@ class SportsDataverseNBAConnector:
             sport=self.sport_id,
             dataset=dataset,
             season=season,
-            source_url=f"https://github.com/sportsdataverse/sportsdataverse-data/releases/tag/{release}",
+            source_url=(
+                f"https://github.com/sportsdataverse/sportsdataverse-data/releases/tag/{release}"
+                if available_seasons
+                else "https://py.sportsdataverse.org/docs/nba/"
+            ),
             sha256=checksum,
             row_count=frame.height,
             columns=frame.columns,

@@ -6,7 +6,13 @@
     export let onclose: () => void;
 
     $: visualization = play.visualization;
-    $: shot = courtPoint(visualization?.shot_x, visualization?.shot_y);
+    $: shot = courtPoint(visualization?.shot_x, visualization?.shot_y, visualization?.shot_coordinate_system);
+    $: shotDistance = visualization?.shot_distance ?? describedDistance(play.description ?? '');
+    $: madeShot = visualization?.shot_result?.toLowerCase() === 'made'
+        || visualization?.scoring_play === true
+        || /\b(?:makes|made)\b/i.test(play.description ?? '');
+    $: missedShot = visualization?.shot_result?.toLowerCase() === 'missed'
+        || /\b(?:misses|missed)\b/i.test(play.description ?? '');
     $: home = visualization?.home_team_abbreviation ?? 'Home';
     $: away = visualization?.away_team_abbreviation ?? 'Away';
     $: eventTeam = visualization?.team_abbreviation ?? play.team ?? '';
@@ -14,11 +20,20 @@
     $: homePalette = teamChartDisplayPalette(home, 'nba');
     $: awayPalette = teamChartDisplayPalette(away, 'nba');
 
-    function courtPoint(rawX?: number, rawY?: number) {
+    function courtPoint(rawX?: number, rawY?: number, coordinateSystem?: string) {
         if (rawX == null || rawY == null || !Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
-        const x = rawX >= -25 && rawX <= 25 ? rawX + 25 : rawX >= 0 && rawX <= 50 ? rawX : rawX / 2;
-        const y = rawY >= 0 && rawY <= 47 ? rawY : rawY * .47;
-        return x >= 0 && x <= 50 && y >= 0 && y <= 47 ? {x, y} : null;
+        if (coordinateSystem === 'court_feet') {
+            return rawX >= 0 && rawX <= 50 && rawY >= 0 && rawY <= 47 ? {x: rawX, y: rawY} : null;
+        }
+        // Legacy evidence stored SportsDataverse's centered/transformed values.
+        const legacy = {x: 25 - rawY, y: 41.75 - rawX};
+        if (legacy.x >= 0 && legacy.x <= 50 && legacy.y >= 0 && legacy.y <= 47) return legacy;
+        return rawX >= 0 && rawX <= 50 && rawY >= 0 && rawY <= 47 ? {x: rawX, y: rawY} : null;
+    }
+
+    function describedDistance(description: string) {
+        const match = description.match(/(\d+(?:\.\d+)?)\s*[- ]\s*(?:foot|feet)\b/i);
+        return match ? Number(match[1]) : undefined;
     }
 </script>
 
@@ -47,8 +62,13 @@
                 <line x1="22" x2="28" y1="4" y2="4" class="backboard"/>
                 <circle cx="25" cy="5.25" r=".75" class="rim"/>
                 {#if shot}
-                    <g class:made={visualization?.scoring_play} class="shot" transform={`translate(${shot.x} ${shot.y})`}>
-                        <circle r="1.45"/><path d="M-1 -1 L1 1 M1 -1 L-1 1"/>
+                    <g class:made={madeShot} class:missed={missedShot} class="shot" transform={`translate(${shot.x} ${shot.y})`}>
+                        <circle r="1.45"/>
+                        {#if madeShot}
+                            <circle class="made-dot" r=".42"/>
+                        {:else if missedShot}
+                            <path d="M-1 -1 L1 1 M1 -1 L-1 1"/>
+                        {/if}
                     </g>
                 {/if}
             </svg>
@@ -60,8 +80,8 @@
             <p>{play.description}</p>
             <dl>
                 <div><dt>Shot value</dt><dd>{visualization?.shot_value ?? '—'}</dd></div>
-                <div><dt>Result</dt><dd>{visualization?.shot_result ?? (visualization?.scoring_play ? 'Made / scoring' : 'Not recorded')}</dd></div>
-                <div><dt>Distance</dt><dd>{visualization?.shot_distance != null ? `${visualization.shot_distance} ft` : '—'}</dd></div>
+                <div><dt>Result</dt><dd>{visualization?.shot_result ?? (madeShot ? 'Made' : missedShot ? 'Missed' : 'Not recorded')}</dd></div>
+                <div><dt>Distance</dt><dd>{shotDistance != null ? `${shotDistance} ft` : '—'}</dd></div>
                 <div><dt>Evidence value</dt><dd>{play.metric_value ?? play.epa ?? '—'}</dd></div>
             </dl>
             {#if visualization?.offense_player_ids?.length || visualization?.defense_player_ids?.length}
@@ -81,7 +101,7 @@
     header span,.event-card>span{font:10px var(--font-mono);letter-spacing:.12em;color:var(--nba-primary)}
     h3,h4{margin:4px 0 0} header button{width:32px;height:32px;border:1px solid var(--color-border-strong);border-radius:6px;background:var(--color-surface-control);color:var(--ink);font-size:22px;cursor:pointer}
     .scorebar{justify-content:flex-start;background:var(--color-surface-raised);font-size:13px}.scorebar strong{display:flex;align-items:center;gap:7px;margin-right:auto}.scorebar strong i{color:var(--color-text-tertiary);font-style:normal}.scorebar strong .team-score{color:var(--score-color)}.scorebar>span{color:var(--color-text-secondary)}.scorebar b{color:var(--nba-secondary)}
-    .body{display:grid;grid-template-columns:minmax(300px,1.1fr) minmax(260px,.9fr);gap:20px;padding:20px}.court-wrap{display:grid;gap:8px}.court{width:100%;max-height:430px;background:#d7a765;border:1px solid #f2cf91}.court rect,.court line,.court circle,.court path{fill:none;stroke:#fff7e5;stroke-width:.35}.court .backboard{stroke-width:.65}.court .rim{stroke:#dd5b32;stroke-width:.55}.shot circle{fill:var(--nba-secondary);stroke:#fff;stroke-width:.35}.shot path{stroke:#fff;stroke-width:.45}.shot.made circle{fill:var(--nba-primary)}.court-wrap small,footer{color:var(--color-text-tertiary);font-size:10px}
+    .body{display:grid;grid-template-columns:minmax(300px,1.1fr) minmax(260px,.9fr);gap:20px;padding:20px}.court-wrap{display:grid;gap:8px}.court{width:100%;max-height:430px;background:#d7a765;border:1px solid #f2cf91}.court rect,.court line,.court circle,.court path{fill:none;stroke:#fff7e5;stroke-width:.35}.court .backboard{stroke-width:.65}.court .rim{stroke:#dd5b32;stroke-width:.55}.shot>circle:first-child{fill:var(--nba-secondary);stroke:#fff;stroke-width:.35}.shot path{stroke:#fff;stroke-width:.45}.shot.made>circle:first-child{fill:var(--nba-primary)}.shot .made-dot{fill:#fff;stroke:none}.court-wrap small,footer{color:var(--color-text-tertiary);font-size:10px}
     .event-card{padding:18px;border:1px solid color-mix(in srgb,var(--nba-primary) 48%,var(--line));background:var(--color-surface-raised)}.event-card p{color:var(--color-text-secondary);line-height:1.55}.event-card dl{display:grid;grid-template-columns:1fr 1fr;gap:8px}.event-card dl div{padding:9px;background:var(--color-surface-panel)}dt{color:var(--muted);font-size:10px;text-transform:uppercase}dd{margin:3px 0 0}.lineups{display:grid;gap:7px;margin-top:12px}.lineups div{display:grid;gap:3px;padding:8px;border:1px solid var(--line)}.lineups span{font:10px var(--font-mono);color:var(--color-text-secondary)}footer{padding:11px 20px;border-top:1px solid var(--line)}
     @media(max-width:760px){.body{grid-template-columns:1fr}.scorebar{flex-wrap:wrap}}
 </style>

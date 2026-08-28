@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -31,7 +33,7 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
-from sports_analyst.nba_data import NBA_DATASETS, nba_live_transport_available
+from sports_analyst.nba_data import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available
 from sports_analyst.plugins.nba_segments import NBA_SEGMENTS, available_segments, segment_game_ids
 
 NBA_TEAMS = {
@@ -72,6 +74,154 @@ NBA_TEAMS = {
     "WSH": "Washington Wizards",
 }
 TEAM_ALIASES = {"GS": "GSW", "NO": "NOP", "NY": "NYK", "SA": "SAS", "UTAH": "UTA"}
+NBA_TEAM_CODES = frozenset(code for code in NBA_TEAMS if code not in TEAM_ALIASES)
+NBA_TEAM_NAMES = {name.upper(): code for code, name in NBA_TEAMS.items() if code in NBA_TEAM_CODES}
+SHOT_DISTANCE_PATTERN = re.compile(r"(?P<distance>\d+(?:\.\d+)?)\s*[- ]\s*(?:foot|feet)\b", re.IGNORECASE)
+
+
+def _recorded_boolean(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "t", "yes", "y", "1"}:
+            return True
+        if normalized in {"false", "f", "no", "n", "0", ""}:
+            return False
+    return bool(value)
+
+
+def _shot_result(description: str, scoring_play: Any, shooting_play: Any) -> str | None:
+    text = description.casefold()
+    if re.search(r"\b(?:makes|made)\b", text):
+        return "Made"
+    if re.search(r"\b(?:misses|missed)\b", text):
+        return "Missed"
+    if _recorded_boolean(shooting_play) and _recorded_boolean(scoring_play):
+        return "Made"
+    return None
+
+
+def _shot_distance(description: str, row: dict[str, Any], point: tuple[float, float] | None) -> float | None:
+    recorded = row.get("shot_distance")
+    if recorded is not None:
+        return float(recorded)
+    match = SHOT_DISTANCE_PATTERN.search(description)
+    if match:
+        return float(match.group("distance"))
+    if point:
+        # NBA hoop center is 5.25 feet from the baseline on a 50-foot-wide court.
+        return round(math.hypot(point[0] - 25.0, point[1] - 5.25), 1)
+    return None
+
+
+def _shot_value(description: str, row: dict[str, Any]) -> int | None:
+    attempted = row.get("points_attempted")
+    if attempted not in (None, 0, "0"):
+        return int(attempted)
+    text = description.casefold()
+    if "three point" in text or "three-point" in text or "3-pt" in text or "3 point" in text:
+        return 3
+    score = row.get("score_value")
+    return int(score) if score not in (None, 0, "0") else None
+
+
+def _shot_point(row: dict[str, Any]) -> tuple[float, float] | None:
+    """Normalize source coordinates to half-court feet with the near basket at y=5.25."""
+    raw_x, raw_y = row.get("coordinate_x_raw"), row.get("coordinate_y_raw")
+    if raw_x is not None and raw_y is not None:
+        x, y = float(raw_x), float(raw_y)
+        if 0 <= x <= 50 and 0 <= y <= 47:
+            return x, y
+        if 0 <= x <= 50 and 47 < y <= 94:
+            return 50 - x, 94 - y
+    x, y = row.get("coordinate_x"), row.get("coordinate_y")
+    if x is None or y is None:
+        return None
+    x, y = float(x), float(y)
+    return (x, y) if 0 <= x <= 50 and 0 <= y <= 47 else None
+
+
+ESPN_TEAM_IDS = {
+    "1": "ATL",
+    "2": "BOS",
+    "3": "NOP",
+    "4": "CHI",
+    "5": "CLE",
+    "6": "DAL",
+    "7": "DEN",
+    "8": "DET",
+    "9": "GSW",
+    "10": "HOU",
+    "11": "IND",
+    "12": "LAC",
+    "13": "LAL",
+    "14": "MIA",
+    "15": "MIL",
+    "16": "MIN",
+    "17": "BKN",
+    "18": "NYK",
+    "19": "ORL",
+    "20": "PHI",
+    "21": "PHX",
+    "22": "POR",
+    "23": "SAC",
+    "24": "SAS",
+    "25": "OKC",
+    "26": "UTA",
+    "27": "WSH",
+    "28": "TOR",
+    "29": "MEM",
+    "30": "CHA",
+}
+NBA_STATS_TEAM_IDS = {
+    str(1610612737 + index): code
+    for index, code in enumerate(
+        (
+            "ATL",
+            "BOS",
+            "CLE",
+            "NOP",
+            "CHI",
+            "DAL",
+            "DEN",
+            "GSW",
+            "HOU",
+            "LAC",
+            "LAL",
+            "MIA",
+            "MIL",
+            "MIN",
+            "BKN",
+            "NYK",
+            "ORL",
+            "IND",
+            "PHI",
+            "PHX",
+            "POR",
+            "SAC",
+            "SAS",
+            "OKC",
+            "TOR",
+            "UTA",
+            "MEM",
+            "WSH",
+            "DET",
+            "CHA",
+        )
+    )
+}
+
+
+def canonical_nba_team(value: Any) -> str | None:
+    token = str(value or "").strip().upper()
+    if token.endswith(".0") and token[:-2].isdigit():
+        token = token[:-2]
+    token = TEAM_ALIASES.get(token, token)
+    if token in NBA_TEAM_CODES:
+        return token
+    return NBA_TEAM_NAMES.get(token) or ESPN_TEAM_IDS.get(token) or NBA_STATS_TEAM_IDS.get(token)
+
 
 # metric -> label, category, domain, subjects, description, higher-is-better
 METRICS: dict[str, tuple[str, str, str, list[str], str, bool | None]] = {
@@ -226,10 +376,10 @@ def _possessions(frame: pl.DataFrame) -> float | None:
         return None
     value = frame.select(
         (
-                _numeric(frame, "field_goals_attempted")
-                - _numeric(frame, "offensive_rebounds")
-                + _numeric(frame, "turnovers")
-                + 0.44 * _numeric(frame, "free_throws_attempted")
+            _numeric(frame, "field_goals_attempted")
+            - _numeric(frame, "offensive_rebounds")
+            + _numeric(frame, "turnovers")
+            + 0.44 * _numeric(frame, "free_throws_attempted")
         ).sum()
     ).item()
     return float(value) if value is not None else None
@@ -298,8 +448,7 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
             return None
         minutes = _sum(frame, "minutes") or 0
         events = (
-                (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (
-                    _sum(frame, turnover_col) or 0)
+            (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (_sum(frame, turnover_col) or 0)
         )
         return float(events / minutes) if minutes else None
     if name == "plus_minus_per_game":
@@ -355,6 +504,8 @@ class NBAPlugin:
             "points_attempted",
             "coordinate_x",
             "coordinate_y",
+            "coordinate_x_raw",
+            "coordinate_y_raw",
             "game_date",
         }
 
@@ -399,29 +550,14 @@ class NBAPlugin:
         context = context if isinstance(context, dict) else {}
         pbp_manifests = [item for item in manifests if item.dataset == "play_by_play"]
         available = sorted({item.season for item in pbp_manifests})
-        team_frame = context.get("teams", pl.DataFrame())
-        teams = []
-        if isinstance(team_frame, pl.DataFrame) and not team_frame.is_empty():
-            code = "team_abbreviation" if "team_abbreviation" in team_frame.columns else None
-            name = (
-                "team_display_name"
-                if "team_display_name" in team_frame.columns
-                else "team_name"
-                if "team_name" in team_frame.columns
-                else None
-            )
-            if code and name:
-                teams = [
-                    TeamOption(value=str(row[0]), label=str(row[1]))
-                    for row in team_frame.select(code, name).drop_nulls().unique().sort(code).iter_rows()
-                ]
-        if not teams:
-            teams = [TeamOption(value=code, label=label) for code, label in NBA_TEAMS.items() if code not in TEAM_ALIASES]
+        # Exhibition entries can appear in schedule and box-score releases. The
+        # analysis subject list is intentionally limited to the 30 NBA franchises.
+        teams = [TeamOption(value=code, label=NBA_TEAMS[code]) for code in sorted(NBA_TEAM_CODES)]
         availability: dict[str, list[str]] = {}
         schedules = context.get("schedules", {})
         for season, schedule in schedules.items():
             availability[str(season)] = [item["value"] for item in available_segments(schedule, int(season))]
-        dataset_seasons = {dataset: sorted({item.season for item in manifests if item.dataset == dataset}) for dataset in NBA_DATASETS}
+        dataset_seasons = {dataset: sorted({item.season for item in manifests if item.dataset == dataset}) for dataset in NBA_ALL_DATASETS}
         metric_options = [
             MetricOption(
                 value=value,
@@ -438,7 +574,7 @@ class NBAPlugin:
             sport=self.sport_id,
             teams=teams,
             available_seasons=available,
-            syncable_seasons=list(range(datetime.now(UTC).year + 1, 2001, -1)),
+            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons}, reverse=True),
             metrics=metric_options,
             default_metrics=DEFAULTS["offense"],
             analysis_domains=DOMAINS,
@@ -474,7 +610,8 @@ class NBAPlugin:
             ],
             week_values=[],
             syncable_datasets=list(NBA_DATASETS),
-            dataset_min_seasons={dataset: definition[1] for dataset, definition in NBA_DATASETS.items()},
+            dataset_min_seasons={dataset: definition.minimum for dataset, definition in NBA_DATASETS.items()},
+            dataset_available_seasons={dataset: list(definition.available_seasons) for dataset, definition in NBA_DATASETS.items()},
             subject_types=[{"value": "team", "label": "Team"}, {"value": "player", "label": "Player"}],
             season_segments=NBA_SEGMENTS,
             segment_availability=availability,
@@ -517,33 +654,72 @@ class NBAPlugin:
         needle = query.strip().lower()
         found: dict[str, dict[str, Any]] = {}
         for season, frame in sources:
-            id_col = next((name for name in ("player_id", "athlete_id", "nba_id") if name in frame.columns), None)
-            name_col = next((name for name in ("player_name", "athlete_display_name", "display_name", "name") if name in frame.columns), None)
+            id_candidates = ("athlete_id", "espn_athlete_id", "player_id", "nba_player_id", "nba_id", "person_id")
+            id_col = next((name for name in id_candidates if name in frame.columns), None)
+            name_col = next(
+                (
+                    name
+                    for name in (
+                        "display_name",
+                        "athlete_display_name",
+                        "espn_full_name",
+                        "player_name",
+                        "player",
+                        "full_name",
+                        "nba_player_name",
+                        "name",
+                    )
+                    if name in frame.columns
+                ),
+                None,
+            )
+            if not name_col and {"first_name", "last_name"} <= set(frame.columns):
+                name_col = "__resolved_player_name"
+                frame = frame.with_columns(pl.concat_str("first_name", "last_name", separator=" ").alias(name_col))
             if not id_col or not name_col:
                 continue
             team_col = next((name for name in ("team_abbreviation", "team_name", "team_id") if name in frame.columns), None)
-            position_col = next((name for name in ("athlete_position_abbreviation", "position") if name in frame.columns), None)
+            position_col = next(
+                (
+                    name
+                    for name in ("athlete_position_abbreviation", "athlete_position", "position_abbreviation", "position", "nba_position")
+                    if name in frame.columns
+                ),
+                None,
+            )
             columns = [id_col, name_col, *([team_col] if team_col else []), *([position_col] if position_col else [])]
             for row in frame.select(columns).drop_nulls([id_col, name_col]).unique().iter_rows(named=True):
                 player_id, name = str(row[id_col]), str(row[name_col])
-                if needle and needle not in name.lower() and needle not in player_id.lower():
+                team_code = canonical_nba_team(row.get(team_col)) if team_col else None
+                if team_col and row.get(team_col) and not team_code:
                     continue
-                item = found.setdefault(player_id, {"name": name, "teams": set(), "positions": set(), "seasons": set()})
+                if needle and needle not in name.lower() and needle not in player_id.lower() and needle not in (team_code or "").lower():
+                    continue
+                identity_key = " ".join(name.casefold().split())
+                priority = id_candidates.index(id_col)
+                item = found.setdefault(
+                    identity_key,
+                    {"player_id": player_id, "id_priority": priority, "name": name, "teams": set(), "positions": set(), "seasons": set()},
+                )
+                if priority < item["id_priority"]:
+                    item.update(player_id=player_id, id_priority=priority, name=name)
                 item["seasons"].add(season)
-                if team_col and row.get(team_col):
-                    item["teams"].add(str(row[team_col]))
+                if team_code:
+                    item["teams"].add(team_code)
                 if position_col and row.get(position_col):
                     item["positions"].add(str(row[position_col]))
-        return [
+        players = [
             PlayerOption(
-                player_id=identifier,
+                player_id=item["player_id"],
                 name=item["name"],
                 teams=sorted(item["teams"]),
                 positions=sorted(item["positions"]),
                 seasons=sorted(item["seasons"]),
             )
-            for identifier, item in sorted(found.items(), key=lambda pair: pair[1]["name"])[:100]
+            for _identity, item in sorted(found.items(), key=lambda pair: pair[1]["name"])
+            if item["teams"]
         ]
+        return players[:200]
 
     def default_plan(self, request: AnalysisRequest) -> AnalysisPlan:
         calls = [
@@ -568,10 +744,10 @@ class NBAPlugin:
 
     @staticmethod
     def _window_frame(
-            request: AnalysisRequest,
-            season: int,
-            segment: str,
-            supplemental: dict[str, dict[int, pl.DataFrame]],
+        request: AnalysisRequest,
+        season: int,
+        segment: str,
+        supplemental: dict[str, dict[int, pl.DataFrame]],
     ) -> pl.DataFrame:
         subject = request.subject
         dataset = "team_boxscores" if subject is None or subject.type == "team" else "player_boxscores"
@@ -614,12 +790,12 @@ class NBAPlugin:
         return frame
 
     def analyze(
-            self,
-            request: AnalysisRequest,
-            datasets: dict[int, pl.DataFrame],
-            manifests: dict[int, DatasetManifest],
-            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+        self,
+        request: AnalysisRequest,
+        datasets: dict[int, pl.DataFrame],
+        manifests: dict[int, DatasetManifest],
+        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NBAAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
@@ -696,56 +872,75 @@ class NBAPlugin:
         plays = self._representative_plays(
             request, datasets[request.scope.comparison.season], supplemental, manifests[request.scope.comparison.season]
         )
-        chart_values: list[dict[str, Any]] = []
-        if request.scope.comparison_design == "full_seasons":
-            for season in request.scope.included_seasons:
-                season_frame = self._window_frame(request, season, "full_season", supplemental)
-                for item in aggregate:
-                    value = _metric(season_frame, item.metric, subject_type)
-                    if value is not None:
-                        chart_values.append({"metric": item.label, "window": str(season), "season": season, "value": value})
-        else:
-            chart_values = [
-                {"metric": item.label, "window": window, "value": value}
-                for item in aggregate
-                for window, value in (("Baseline", item.baseline_value), ("Comparison", item.comparison_value))
-            ]
-        chart = ChartArtifact(
-            chart_id=stable_id("chart", parameters),
+        endpoint_labels = (
+            (str(request.scope.baseline.season), str(request.scope.comparison.season))
+            if request.scope.comparison_design == "full_seasons"
+            else ("Baseline", "Comparison")
+        )
+        comparison_values = [
+            {"metric": item.label, "window": window, "value": value}
+            for item in aggregate
+            for window, value in zip(endpoint_labels, (item.baseline_value, item.comparison_value), strict=True)
+        ]
+        comparison_chart = ChartArtifact(
+            chart_id=stable_id("chart", {**parameters, "view": "endpoint-comparison"}),
             title=(
-                "NBA season trend"
+                "NBA range endpoints"
                 if request.scope.comparison_design == "full_seasons"
                 else f"{baseline_segment.replace('_', ' ').title()} vs {comparison_segment.replace('_', ' ').title()}"
             ),
             specification={
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                "data": {"values": chart_values},
-                "mark": "line" if request.scope.comparison_design == "full_seasons" else "bar",
-                "encoding": (
-                    {
-                        "x": {"field": "season", "type": "ordinal"},
-                        "y": {"field": "value", "type": "quantitative"},
-                        "color": {"field": "metric", "type": "nominal"},
-                        "tooltip": ["season", "metric", "value"],
-                    }
-                    if request.scope.comparison_design == "full_seasons"
-                    else {
-                        "x": {"field": "metric", "type": "nominal", "axis": {"labelAngle": -25}},
-                        "y": {"field": "value", "type": "quantitative"},
-                        "color": {"field": "window", "type": "nominal"},
-                        "xOffset": {"field": "window"},
-                    }
-                ),
+                "data": {"values": comparison_values},
+                "mark": {"type": "bar", "cornerRadiusEnd": 3},
+                "encoding": {
+                    "x": {"field": "metric", "type": "nominal", "axis": {"labelAngle": -25}},
+                    "y": {"field": "value", "type": "quantitative"},
+                    "color": {"field": "window", "type": "nominal"},
+                    "xOffset": {"field": "window"},
+                    "tooltip": ["window", "metric", "value"],
+                },
             },
             evidence_ids=[item.evidence_id for item in aggregate],
         )
+        charts = [comparison_chart]
+        if request.scope.comparison_design == "full_seasons":
+            primary = aggregate[0]
+            trend_values: list[dict[str, Any]] = []
+            for season in request.scope.included_seasons:
+                if primary.metric.startswith("lineup_"):
+                    season_frame = self._scope_lineups(supplemental.get("lineups", {}).get(season, pl.DataFrame()), subject)
+                else:
+                    season_frame = self._window_frame(request, season, "full_season", supplemental)
+                value = _metric(season_frame, primary.metric, subject_type)
+                if value is not None:
+                    trend_values.append({"series": primary.label, "season": season, "value": value})
+            if trend_values:
+                charts.append(
+                    ChartArtifact(
+                        chart_id=stable_id("chart", {**parameters, "view": "season-trend", "metric": primary.metric}),
+                        title=f"Season-by-season {primary.label}",
+                        specification={
+                            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                            "data": {"values": trend_values},
+                            "mark": {"type": "line", "point": True},
+                            "encoding": {
+                                "x": {"field": "season", "type": "ordinal", "sort": "ascending"},
+                                "y": {"field": "value", "type": "quantitative", "axis": {"title": primary.label}},
+                                "color": {"field": "series", "type": "nominal", "legend": None},
+                                "tooltip": ["season", "series", "value"],
+                            },
+                        },
+                        evidence_ids=[primary.evidence_id],
+                    )
+                )
         caveats = [
             "SportsDataverse bulk releases are authoritative for this investigation; live NBA Stats data is optional.",
             "Detailed segments are shown only when schedule labels or reviewed milestone dates resolve them.",
         ]
         if request.analysis_domain in {"lineups", "impact"} and "lineups" not in supplemental:
             caveats.append("Lineup analysis was unavailable because the NBA Stats lineup package was not synced.")
-        return NBAAnalysisResult(aggregate, plays, [chart], [execution], caveats)
+        return NBAAnalysisResult(aggregate, plays, charts, [execution], caveats)
 
     @staticmethod
     def _scope_lineups(frame: pl.DataFrame, subject: Any) -> pl.DataFrame:
@@ -765,10 +960,10 @@ class NBAPlugin:
 
     @staticmethod
     def _representative_plays(
-            request: AnalysisRequest,
-            frame: pl.DataFrame,
-            supplemental: dict[str, dict[int, pl.DataFrame]],
-            manifest: DatasetManifest,
+        request: AnalysisRequest,
+        frame: pl.DataFrame,
+        supplemental: dict[str, dict[int, pl.DataFrame]],
+        manifest: DatasetManifest,
     ) -> list[PlayEvidence]:
         subject = request.subject
         if subject is None or frame.is_empty():
@@ -862,7 +1057,11 @@ class NBAPlugin:
                         offense_players, defense_players = home_players, away_players
                     source_packages.append("lineups_v3")
             payload = {"season": season, "game": game_id, "play": play_id, "subject": subject.id}
-            shot_result = "Made" if row.get("scoring_play") else "Missed" if "miss" in description.lower() else None
+            scoring_play = _recorded_boolean(row.get("scoring_play"))
+            shooting_play = _recorded_boolean(row.get("shooting_play"))
+            shot_result = _shot_result(description, scoring_play, shooting_play)
+            shot_point = _shot_point(row) if shooting_play or shot_result else None
+            shot_distance = _shot_distance(description, row, shot_point) if shooting_play or shot_result else None
             evidence.append(
                 PlayEvidence(
                     evidence_id=stable_id("play", payload),
@@ -890,13 +1089,14 @@ class NBAPlugin:
                         away_team_abbreviation=str(row.get("away_team_abbrev") or "") or None,
                         home_score=int(row.get("home_score") or 0),
                         away_score=int(row.get("away_score") or 0),
-                        scoring_play=bool(row.get("scoring_play")) if row.get("scoring_play") is not None else None,
-                        shooting_play=bool(row.get("shooting_play")) if row.get("shooting_play") is not None else None,
+                        scoring_play=scoring_play,
+                        shooting_play=shooting_play,
                         shot_result=shot_result,
-                        shot_value=int(row.get("points_attempted") or row.get("score_value") or 0) or None,
-                        shot_distance=float(row.get("shot_distance")) if row.get("shot_distance") is not None else None,
-                        shot_x=float(row.get("coordinate_x")) if row.get("coordinate_x") is not None else None,
-                        shot_y=float(row.get("coordinate_y")) if row.get("coordinate_y") is not None else None,
+                        shot_value=_shot_value(description, row) if shooting_play or shot_result else None,
+                        shot_distance=shot_distance,
+                        shot_x=shot_point[0] if shot_point else None,
+                        shot_y=shot_point[1] if shot_point else None,
+                        shot_coordinate_system="court_feet" if shot_point else None,
                         possession_number=int(possession_number) if possession_number is not None else None,
                         offense_player_ids=offense_players,
                         defense_player_ids=defense_players,

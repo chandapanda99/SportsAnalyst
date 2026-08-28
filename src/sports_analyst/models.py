@@ -230,6 +230,7 @@ class PlayerOption(BaseModel):
     teams: list[str] = Field(default_factory=list)
     positions: list[str] = Field(default_factory=list)
     seasons: list[int] = Field(default_factory=list)
+    seasons_by_domain: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class SplitDimensionOption(BaseModel):
@@ -259,6 +260,7 @@ class AnalysisOptions(BaseModel):
     week_values: list[int] = Field(default_factory=lambda: list(range(1, 23)))
     syncable_datasets: list[str] = Field(default_factory=list)
     dataset_min_seasons: dict[str, int | None] = Field(default_factory=dict)
+    dataset_available_seasons: dict[str, list[int]] = Field(default_factory=dict)
     subject_types: list[dict[str, str]] = Field(default_factory=lambda: [{"value": "team", "label": "Team"}])
     season_segments: list[dict[str, str]] = Field(default_factory=list)
     segment_availability: dict[str, list[str]] = Field(default_factory=dict)
@@ -426,6 +428,7 @@ class PlayVisualization(BaseModel):
     shot_distance: float | None = None
     shot_x: float | None = None
     shot_y: float | None = None
+    shot_coordinate_system: str | None = None
     possession_number: int | None = None
     offense_player_ids: list[str] = Field(default_factory=list)
     defense_player_ids: list[str] = Field(default_factory=list)

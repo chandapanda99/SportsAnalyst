@@ -43,7 +43,15 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert options["available_seasons"] == [2024, 2025]
     assert {item["value"] for item in options["teams"]} >= {"KC", "BUF"}
     assert {item["value"] for item in options["metrics"]} >= {"epa_per_dropback", "sack_rate"}
-    assert {item["value"] for item in options["analysis_domains"]} == {"passing", "rushing", "offense"}
+    assert {item["value"] for item in options["analysis_domains"]} == {
+        "passing",
+        "rushing",
+        "offense",
+        "quarterback",
+        "receiving",
+        "running",
+    }
+    assert {item["value"] for item in options["subject_types"]} == {"team", "player"}
     assert options["default_metrics_by_domain"]["rushing"][0] == "epa_per_rush"
     assert {"play_by_play", "rosters", "injuries", "nextgen_passing"} <= set(options["syncable_datasets"])
     metric = client.get("/api/sports/nfl/metrics/epa_per_dropback")

@@ -111,7 +111,17 @@ class AnalystApplication:
         allowed = (
             {"play_by_play", "rosters", "weekly_rosters", "player_stats", "players"}
             if sport == "nfl"
-            else {"player_boxscores", "rosters", "game_rosters", "player_crosswalk", "player_core", "play_by_play"}
+            else {
+                "player_boxscores",
+                "stats_player_boxscores",
+                "rosters",
+                "stats_rosters",
+                "game_rosters",
+                "stats_game_rosters",
+                "player_crosswalk",
+                "player_core",
+                "play_by_play",
+            }
         )
         manifests = [manifest for manifest in self.store.manifests(sport=sport) if manifest.dataset in allowed]
         sources = [(manifest.season, connector.load(manifest)) for manifest in manifests]

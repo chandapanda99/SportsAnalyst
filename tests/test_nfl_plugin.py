@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import polars as pl
 
-from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisWindow, DatasetManifest
+from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisSubject, AnalysisWindow, DatasetManifest
 from sports_analyst.plugins.nfl import NFLPlugin
 
 
@@ -55,6 +55,149 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
         "league_average_delta_epa_per_dropback",
     } <= benchmark_metrics
     assert "analyze_situational_split" in {item.tool for item in first.executions}
+
+
+def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair) -> None:
+    plugin = NFLPlugin()
+    request = AnalysisRequest(
+        question="How did Patrick Mahomes' quarterback performance change?",
+        subject=AnalysisSubject(type="player", id="00-0033873", team_id="KC"),
+        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        analysis_domain="quarterback",
+        metrics=["qb_epa_per_dropback", "qb_sack_rate"],
+    )
+    manifests = {season: manifest(season, frame.columns) for season, frame in pbp_pair.items()}
+
+    result = plugin.analyze(request, pbp_pair, manifests)
+
+    quarterback_epa = next(item for item in result.aggregate_evidence if item.metric == "qb_epa_per_dropback")
+    assert quarterback_epa.value == -0.1
+    assert quarterback_epa.sample_size == 160
+    assert result.play_evidence and all(play.visualization.passer == "Patrick Mahomes" for play in result.play_evidence)
+    assert {execution.tool for execution in result.executions} >= {
+        "compare_player_windows",
+        "analyze_player_trends",
+        "find_player_representative_plays",
+    }
+
+    directory = pl.DataFrame(
+        {
+            "gsis_id": ["00-0033873"],
+            "pfr_id": ["MahoPa00"],
+            "display_name": ["Patrick Mahomes"],
+        }
+    )
+    alias_result = plugin.analyze(
+        request.model_copy(update={"subject": AnalysisSubject(type="player", id="MahoPa00", team_id="KC")}),
+        pbp_pair,
+        manifests,
+        {"players": {0: directory}},
+        {"players": {0: manifest(0, directory.columns, "players")}},
+    )
+    assert any(item.metric == "qb_epa_per_dropback" for item in alias_result.aggregate_evidence)
+
+    receiving = plugin.analyze(
+        AnalysisRequest(
+            question="How did Travis Kelce's receiving efficiency change?",
+            subject=AnalysisSubject(type="player", id="00-0030506", team_id="KC"),
+            scope=request.scope,
+            analysis_domain="receiving",
+            metrics=["receiver_epa_per_target", "receiver_yards_per_target"],
+        ),
+        pbp_pair,
+        manifests,
+    )
+    assert {item.metric for item in receiving.aggregate_evidence} >= {
+        "receiver_epa_per_target",
+        "receiver_yards_per_target",
+    }
+    assert receiving.play_evidence and all(play.visualization.receiver == "Travis Kelce" for play in receiving.play_evidence)
+
+    rushing_frames = {
+        season: frame.head(40).with_columns(
+            pl.lit(0).alias("qb_dropback"),
+            pl.lit(1).alias("rush_attempt"),
+            pl.lit("run").alias("play_type"),
+            pl.lit("00-0039999").alias("rusher_player_id"),
+            pl.lit("Test Runner").alias("rusher_player_name"),
+        )
+        for season, frame in pbp_pair.items()
+    }
+    rushing_manifests = {season: manifest(season, frame.columns) for season, frame in rushing_frames.items()}
+    rushing = plugin.analyze(
+        AnalysisRequest(
+            question="How did this player's rushing change?",
+            subject=AnalysisSubject(type="player", id="00-0039999", team_id="KC"),
+            scope=request.scope,
+            analysis_domain="running",
+            metrics=["rusher_epa_per_carry", "rusher_yards_per_carry"],
+        ),
+        rushing_frames,
+        rushing_manifests,
+    )
+    assert {item.metric for item in rushing.aggregate_evidence} >= {
+        "rusher_epa_per_carry",
+        "rusher_yards_per_carry",
+    }
+    assert rushing.play_evidence and all(play.visualization.rusher == "Test Runner" for play in rushing.play_evidence)
+
+
+def test_player_analysis_uses_sparse_plays_and_published_qb_fallbacks(pbp_pair) -> None:
+    plugin = NFLPlugin()
+    request = AnalysisRequest(
+        question="How did Patrick Mahomes' quarterback performance change?",
+        subject=AnalysisSubject(type="player", id="00-0033873", team_id="KC"),
+        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        analysis_domain="quarterback",
+        metrics=["qb_epa_per_dropback"],
+    )
+    sparse = {season: frame.head(5) for season, frame in pbp_pair.items()}
+    sparse_manifests = {season: manifest(season, frame.columns) for season, frame in sparse.items()}
+
+    sparse_result = plugin.analyze(request, sparse, sparse_manifests)
+
+    sparse_epa = next(item for item in sparse_result.aggregate_evidence if item.metric == "qb_epa_per_dropback")
+    assert sparse_epa.sample_size == 5
+    assert sparse_epa.confidence_low is None and sparse_epa.confidence_high is None
+    assert any("all available plays are included" in caveat for caveat in sparse_epa.caveats)
+
+    empty_pbp = {season: frame.head(0) for season, frame in pbp_pair.items()}
+    empty_manifests = {season: manifest(season, frame.columns) for season, frame in empty_pbp.items()}
+    player_stats = {
+        season: pl.DataFrame(
+            {
+                "player_id": ["00-0033873", "00-0033873"],
+                "recent_team": ["KC", "KC"],
+                "season_type": ["REG", "REG"],
+                "week": [1, 2],
+                "attempts": [4, 3 if season == 2024 else 5],
+                "completions": [3, 2 if season == 2024 else 4],
+                "passing_yards": [45, 30 if season == 2024 else 70],
+                "passing_tds": [0, 1],
+                "passing_interceptions": [0, 1 if season == 2024 else 0],
+                "sacks_suffered": [1, 0],
+                "passing_epa": [0.2, 0.1 if season == 2024 else 0.5],
+                "passing_cpoe": [1.0, 2.0 if season == 2024 else 4.0],
+            }
+        )
+        for season in (2024, 2025)
+    }
+    supplemental = {"player_stats": player_stats}
+    supplemental_manifests = {
+        "player_stats": {
+            season: manifest(season, frame.columns, "player_stats") for season, frame in player_stats.items()
+        }
+    }
+
+    fallback_result = plugin.analyze(
+        request, empty_pbp, empty_manifests, supplemental, supplemental_manifests
+    )
+
+    fallback_metrics = {item.metric for item in fallback_result.aggregate_evidence}
+    assert {"player_stats_attempts", "player_stats_completion_percentage", "player_stats_epa_per_dropback"} <= fallback_metrics
+    assert not {"qb_epa_per_dropback"} & fallback_metrics
+    assert any("published statistics instead" in caveat for caveat in fallback_result.caveats)
+    assert any(chart.title == "Supplemental published quarterback statistics" for chart in fallback_result.charts)
 
 
 def test_rushing_and_overall_offense_domains_scope_the_correct_plays(pbp_pair) -> None:
@@ -509,3 +652,5 @@ def test_metric_explanation_and_player_resolution(pbp_pair) -> None:
     assert "higher is generally better" in definition.interpretation
     players = plugin.resolve_players("kelce", [(2025, pbp_pair[2025])])
     assert players[0].name == "Travis Kelce"
+    assert players[0].seasons_by_domain["receiving"] == [2025]
+    assert players[0].seasons_by_domain["quarterback"] == []

@@ -31,8 +31,10 @@ logger = logging.getLogger("sports_analyst.api")
 
 
 class SyncRequest(BaseModel):
-    seasons: list[int] = Field(min_length=1, max_length=27)
-    datasets: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    # NBA currently exposes 32 reviewed seasons and 31 bulk packages. Keep a
+    # bounded payload without rejecting a valid full-catalog selection.
+    seasons: list[int] = Field(min_length=1, max_length=64)
+    datasets: list[str] | None = Field(default=None, min_length=1, max_length=64)
 
 
 class FollowUpRequest(BaseModel):

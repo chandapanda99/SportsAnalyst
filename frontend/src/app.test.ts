@@ -70,13 +70,19 @@ describe('Open Sports Analyst workbench', () => {
               { value: 'nfl', label: 'NFL', available: true, live_available: false },
               { value: 'nba', label: 'NBA', available: true, live_available: false }
             ]
+        : url.includes('/sports/nfl/players')
+          ? [{ player_id: '00-0033873', name: 'Patrick Mahomes', teams: ['KC'], positions: ['QB'], seasons: [2024, 2025] }]
         : url.includes('/sports/nba/players')
-          ? [{ player_id: '4065648', name: 'Jayson Tatum', teams: ['BOS'], positions: ['SF'], seasons: [2024, 2025] }]
+          ? [
+              { player_id: '4065648', name: 'Jayson Tatum', teams: ['BOS'], positions: ['SF'], seasons: [2024] },
+              { player_id: '3917376', name: 'Jaylen Brown', teams: ['BOS'], positions: ['SG'], seasons: [2024, 2025] }
+            ]
         : url.endsWith('/sports/nba/options')
           ? {
               sport: 'nba', teams: [{ value: 'BOS', label: 'Boston Celtics' }], available_seasons: [2024, 2025],
-              syncable_seasons: [2025, 2024], syncable_datasets: ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'],
-              dataset_min_seasons: { play_by_play: 2002, schedules: 2002, team_boxscores: 2002, player_boxscores: 2002 },
+              syncable_seasons: [2025, 2024], syncable_datasets: ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores', 'lineups', 'stats_rosters', 'stats_game_rosters', 'player_crosswalk'],
+              dataset_min_seasons: { play_by_play: 2002, schedules: 2002, team_boxscores: 2002, player_boxscores: 2002, lineups: 2008, stats_rosters: 1997, stats_game_rosters: 1997, player_crosswalk: 2026 },
+              dataset_available_seasons: { play_by_play: [2024, 2025], schedules: [2024, 2025], team_boxscores: [2024, 2025], player_boxscores: [2024, 2025], lineups: [2024, 2025], stats_rosters: [2024, 2025], stats_game_rosters: [2024, 2025], player_crosswalk: [2026] },
               default_metrics: ['points_per_game'], week_values: [], subject_types: [{ value: 'team', label: 'Team' }, { value: 'player', label: 'Player' }],
               comparison_windows: [
                 { value: 'full_seasons', label: 'Full season range', description: 'Compare seasons.' },
@@ -116,24 +122,34 @@ describe('Open Sports Analyst workbench', () => {
               syncable_seasons: [2025, 2024, 2023, 2022], syncable_datasets: ['play_by_play', 'rosters', 'injuries', 'nextgen_passing'],
               dataset_min_seasons: { play_by_play: 1999, rosters: 1920, injuries: 2009, nextgen_passing: 2016 },
               default_metrics: ['epa_per_dropback'], week_values: [1, 2, 3, 4, 5],
+              subject_types: [{ value: 'team', label: 'Team' }, { value: 'player', label: 'Player' }],
               comparison_windows: [
                 { value: 'full_seasons', label: 'Full seasons', description: 'Compare seasons.' },
                 { value: 'week_ranges', label: 'Custom week ranges', description: 'Compare ranges.' }
               ],
-              split_dimensions: [],
+              split_dimensions: [
+                { value: 'down', label: 'Down', description: 'Compare by down.', available_seasons: [2024, 2025] }
+              ],
               analysis_domains: [
-                { value: 'passing', label: 'Passing', description: 'Quarterback dropbacks.' },
-                { value: 'rushing', label: 'Rushing', description: 'Rushing attempts.' },
-                { value: 'offense', label: 'Overall offense', description: 'All qualifying offensive plays.' }
+                { value: 'passing', label: 'Passing', description: 'Quarterback dropbacks.', subject_type: 'team' },
+                { value: 'rushing', label: 'Rushing', description: 'Rushing attempts.', subject_type: 'team' },
+                { value: 'offense', label: 'Overall offense', description: 'All qualifying offensive plays.', subject_type: 'team' },
+                { value: 'quarterback', label: 'Quarterback', description: 'Player passing outcomes.', subject_type: 'player' },
+                { value: 'receiving', label: 'Receiving', description: 'Player receiving outcomes.', subject_type: 'player' },
+                { value: 'running', label: 'Rushing', description: 'Player rushing outcomes.', subject_type: 'player' }
               ],
               default_metrics_by_domain: {
-                passing: ['epa_per_dropback'], rushing: ['epa_per_rush'], offense: ['epa_per_play']
+                passing: ['epa_per_dropback'], rushing: ['epa_per_rush'], offense: ['epa_per_play'],
+                quarterback: ['qb_epa_per_dropback'], receiving: ['receiver_epa_per_target'], running: ['rusher_epa_per_carry']
               },
               metrics: [
-                { value: 'epa_per_dropback', label: 'EPA/dropback', category: 'Efficiency', analysis_domain: 'passing', description: 'EPA per dropback.', available_seasons: [2024, 2025] },
-                { value: 'success_rate', label: 'Success rate', category: 'Efficiency', analysis_domain: 'passing', description: 'Share with positive EPA.', available_seasons: [2024, 2025] },
-                { value: 'epa_per_rush', label: 'EPA/rush', category: 'Rushing Efficiency', analysis_domain: 'rushing', description: 'EPA per rush.', available_seasons: [2024, 2025] },
-                { value: 'epa_per_play', label: 'EPA/play', category: 'Overall Efficiency', analysis_domain: 'offense', description: 'EPA per play.', available_seasons: [2024, 2025] }
+                { value: 'epa_per_dropback', label: 'EPA/dropback', category: 'Efficiency', analysis_domain: 'passing', description: 'EPA per dropback.', available_seasons: [2024, 2025], subject_types: ['team'] },
+                { value: 'success_rate', label: 'Success rate', category: 'Efficiency', analysis_domain: 'passing', description: 'Share with positive EPA.', available_seasons: [2024, 2025], subject_types: ['team'] },
+                { value: 'epa_per_rush', label: 'EPA/rush', category: 'Rushing Efficiency', analysis_domain: 'rushing', description: 'EPA per rush.', available_seasons: [2024, 2025], subject_types: ['team'] },
+                { value: 'epa_per_play', label: 'EPA/play', category: 'Overall Efficiency', analysis_domain: 'offense', description: 'EPA per play.', available_seasons: [2024, 2025], subject_types: ['team'] },
+                { value: 'qb_epa_per_dropback', label: 'QB EPA/dropback', category: 'Efficiency', analysis_domain: 'quarterback', description: 'Player EPA per dropback.', available_seasons: [2024, 2025], subject_types: ['player'] },
+                { value: 'receiver_epa_per_target', label: 'EPA/target', category: 'Efficiency', analysis_domain: 'receiving', description: 'Player EPA per target.', available_seasons: [2024, 2025], subject_types: ['player'] },
+                { value: 'rusher_epa_per_carry', label: 'EPA/carry', category: 'Efficiency', analysis_domain: 'running', description: 'Player EPA per carry.', available_seasons: [2024, 2025], subject_types: ['player'] }
               ]
             }
           : url.endsWith('/investigations')
@@ -237,12 +253,21 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
     expect(await screen.findByText('Analyze and Discuss Basketball Play-by-Play Data!')).toBeTruthy();
+    expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
+    expect(screen.getByText('not offered for selected seasons')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
-    const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLSelectElement;
-    const tatum = await screen.findByRole('option', { name: /Jayson Tatum/ }) as HTMLOptionElement;
-    tatum.selected = true;
-    await fireEvent.change(player);
-    expect(player.value).toBe('4065648');
+    const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLInputElement;
+    await fireEvent.focus(player);
+    await fireEvent.input(player, { target: { value: 'tatum' } });
+    expect(screen.queryByRole('option', { name: /Jaylen Brown/i })).toBeNull();
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Jayson Tatum/ }));
+    expect(player.value).toBe('Jayson Tatum · BOS');
+    expect(player.getAttribute('aria-invalid')).toBe('false');
+    const playerSeasonSelectors = screen.getAllByLabelText('Season') as HTMLSelectElement[];
+    expect(playerSeasonSelectors).toHaveLength(2);
+    expect(playerSeasonSelectors.every((select) => [...select.options].map((option) => option.value).join(',') === '2024')).toBe(true);
+    expect(screen.getByText('1 player seasons available')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'NFL' }));
     const restored = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
@@ -272,6 +297,28 @@ describe('Open Sports Analyst workbench', () => {
     const rushEpa = screen.getByRole('checkbox', { name: /EPA\/rush/ }) as HTMLInputElement;
     expect(rushEpa.checked).toBe(true);
     expect(screen.queryByRole('checkbox', { name: /EPA\/dropback/ })).toBeNull();
+  });
+
+  it('switches metric domains and controls between team and player analysis', async () => {
+    render(App);
+    expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: /EPA\/dropback/ })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Down' })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
+
+    expect(await screen.findByRole('button', { name: /^Quarterback/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: /QB EPA\/dropback/ })).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: /^EPA\/dropback/ })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Down' })).toBeNull();
+    expect(screen.getByText(/Team-oriented diagnostic cuts are disabled/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Team' }));
+
+    expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: /QB EPA\/dropback/ })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Down' })).toBeTruthy();
   });
 
   it('treats full seasons as an inclusive season range', async () => {

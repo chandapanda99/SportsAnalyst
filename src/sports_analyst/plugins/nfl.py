@@ -26,6 +26,13 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.plugins.nfl_personnel import NFLPersonnelMixin
+from sports_analyst.plugins.nfl_player import (
+    PLAYER_DEFAULTS,
+    PLAYER_METRICS,
+    NFLPlayerAnalysisMixin,
+    player_metric_definition,
+    player_metric_options,
+)
 from sports_analyst.plugins.nfl_player_weeks import (
     normalize_player_weeks,
 )
@@ -60,29 +67,89 @@ from sports_analyst.plugins.nfl_supplemental import NFLSupplementalMixin
 from sports_analyst.plugins.nfl_trends import NFLTrendMixin
 
 PBP_ANALYSIS_COLUMNS = {
-    "season", "season_type", "week", "game_id", "play_id", "desc", "posteam", "defteam", "home_team", "away_team",
-    "qtr", "game_clock", "time", "down", "ydstogo", "yardline_100", "posteam_score", "defteam_score",
-    "posteam_timeouts_remaining", "defteam_timeouts_remaining", "score_differential", "goal_to_go", "play_type",
-    "qb_dropback", "rush_attempt", "qb_kneel", "qb_spike", "epa", "success", "cpoe", "yards_gained", "sack",
-    "interception", "fumble", "fumble_lost", "complete_pass", "air_yards", "yards_after_catch", "touchdown",
-    "penalty", "first_down", "wp", "wpa", "shotgun", "no_huddle", "offense_personnel", "offense_formation",
-    "pass_length", "pass_location", "run_location", "run_gap", "passer_player_id", "passer_player_name",
-    "receiver_player_id", "receiver_player_name", "rusher_player_id", "rusher_player_name", "return_yards", "return_team",
-    "interception_player_name", "fumble_recovery_1_team", "fumble_recovery_1_yards", "fumble_recovery_1_player_name",
-    "td_team", "fixed_drive", "drive", "drive_play_count", "drive_time_of_possession", "drive_first_downs",
+    "season",
+    "season_type",
+    "week",
+    "game_id",
+    "play_id",
+    "desc",
+    "posteam",
+    "defteam",
+    "home_team",
+    "away_team",
+    "qtr",
+    "game_clock",
+    "time",
+    "down",
+    "ydstogo",
+    "yardline_100",
+    "posteam_score",
+    "defteam_score",
+    "posteam_timeouts_remaining",
+    "defteam_timeouts_remaining",
+    "score_differential",
+    "goal_to_go",
+    "play_type",
+    "qb_dropback",
+    "rush_attempt",
+    "qb_kneel",
+    "qb_spike",
+    "epa",
+    "success",
+    "cpoe",
+    "yards_gained",
+    "sack",
+    "interception",
+    "fumble",
+    "fumble_lost",
+    "complete_pass",
+    "air_yards",
+    "yards_after_catch",
+    "touchdown",
+    "penalty",
+    "first_down",
+    "wp",
+    "wpa",
+    "shotgun",
+    "no_huddle",
+    "offense_personnel",
+    "offense_formation",
+    "pass_length",
+    "pass_location",
+    "run_location",
+    "run_gap",
+    "passer_player_id",
+    "passer_player_name",
+    "receiver_player_id",
+    "receiver_player_name",
+    "rusher_player_id",
+    "rusher_player_name",
+    "return_yards",
+    "return_team",
+    "interception_player_name",
+    "fumble_recovery_1_team",
+    "fumble_recovery_1_yards",
+    "fumble_recovery_1_player_name",
+    "td_team",
+    "fixed_drive",
+    "drive",
+    "drive_play_count",
+    "drive_time_of_possession",
+    "drive_first_downs",
 }
 
 ROSTER_DATASETS = {"rosters", "weekly_rosters", "injuries", "snap_counts", "player_stats", "depth_charts", "players"}
 DOMAIN_DATASETS = {
     "passing": {"nextgen_passing", "nextgen_receiving", "pfr_passing", "pfr_receiving"},
     "rushing": {"nextgen_rushing", "pfr_rushing"},
-    "offense": {
-        "nextgen_passing", "nextgen_receiving", "nextgen_rushing", "pfr_passing", "pfr_rushing", "pfr_receiving"
-    },
+    "offense": {"nextgen_passing", "nextgen_receiving", "nextgen_rushing", "pfr_passing", "pfr_rushing", "pfr_receiving"},
+    "quarterback": {"nextgen_passing", "pfr_passing"},
+    "receiving": {"nextgen_receiving", "pfr_receiving"},
+    "running": {"nextgen_rushing", "pfr_rushing"},
 }
 
 
-class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPresentationMixin):
+class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPresentationMixin):
     """Compose NFL planning, deterministic analysis tools, and presentation artifacts."""
 
     sport_id = "nfl"
@@ -95,9 +162,23 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
         question = request.question.lower()
         selected = {"schedules", "participation", "ftn_charting", *DOMAIN_DATASETS[request.analysis_domain]}
+        if request.subject and request.subject.type == "player":
+            selected.update(ROSTER_DATASETS)
         roster_terms = {
-            "player", "receiver", "quarterback", "roster", "injur", "availability", "starter", "snap", "lineup",
-            "continuity", "personnel", "position group", "target share", "usage",
+            "player",
+            "receiver",
+            "quarterback",
+            "roster",
+            "injur",
+            "availability",
+            "starter",
+            "snap",
+            "lineup",
+            "continuity",
+            "personnel",
+            "position group",
+            "target share",
+            "usage",
         }
         if any(term in question for term in roster_terms):
             selected.update(ROSTER_DATASETS)
@@ -122,17 +203,31 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             ToolDefinition(name="identify_change_points", description="Find descriptive week boundaries with the largest sustained shift."),
             ToolDefinition(name="resolve_player", description="Resolve a player name or identifier from synced play and roster data."),
             ToolDefinition(
+                name="compare_player_windows", description="Compare quarterback, receiving, or rushing metrics for one selected player."
+            ),
+            ToolDefinition(
+                name="compare_player_published_stats",
+                description="Compare compatible synced weekly player, Next Gen, and PFR statistics for one selected player.",
+            ),
+            ToolDefinition(name="analyze_player_trends", description="Measure a selected player's season-by-season performance trajectory."),
+            ToolDefinition(name="find_player_representative_plays", description="Return source plays attributed to the selected player."),
+            ToolDefinition(
                 name="build_player_week_dataset",
                 description="Normalize rosters, injuries, snap counts, and play participants to one player-week grain.",
             ),
             ToolDefinition(name="get_roster_context", description="Compare roster composition by position across windows."),
             ToolDefinition(name="analyze_starter_availability", description="Summarize injured, inactive, and limited-player availability."),
-            ToolDefinition(name="compare_player_usage",
-                           description="Compare target, carry, dropback, opportunity, and snap-normalized player usage across windows."),
-            ToolDefinition(name="analyze_position_group_availability",
-                           description="Estimate snap-weighted recorded availability by position group."),
-            ToolDefinition(name="analyze_lineup_continuity",
-                           description="Measure returning snap share and snap-distribution similarity overall and by position group."),
+            ToolDefinition(
+                name="compare_player_usage",
+                description="Compare target, carry, dropback, opportunity, and snap-normalized player usage across windows.",
+            ),
+            ToolDefinition(
+                name="analyze_position_group_availability", description="Estimate snap-weighted recorded availability by position group."
+            ),
+            ToolDefinition(
+                name="analyze_lineup_continuity",
+                description="Measure returning snap share and snap-distribution similarity overall and by position group.",
+            ),
             ToolDefinition(name="decompose_lineup_continuity", description="Attribute comparison-window lineup turnover to position groups."),
             ToolDefinition(name="analyze_qb_receiver_pairs", description="Compare quarterback-receiver volume and efficiency."),
             ToolDefinition(name="summarize_injured_or_inactive_players", description="Rank players most frequently listed unavailable."),
@@ -176,7 +271,7 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
                 available_seasons=seasons_with(METRIC_METADATA[value][2]),
             )
             for value in METRICS
-        ]
+        ] + player_metric_options(seasons_with)
         splits = [
             SplitDimensionOption(
                 value=value,
@@ -203,11 +298,44 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             metrics=metrics,
             default_metrics=DEFAULT_METRICS,
             analysis_domains=[
-                {"value": "passing", "label": "Passing", "description": "Quarterback dropbacks and passing outcomes."},
-                {"value": "rushing", "label": "Rushing", "description": "Qualifying rushing attempts excluding kneels and spikes."},
-                {"value": "offense", "label": "Overall offense", "description": "Rushing attempts and quarterback dropbacks together."},
+                {
+                    "value": "passing",
+                    "label": "Passing",
+                    "description": "Team quarterback dropbacks and passing outcomes.",
+                    "subject_type": "team",
+                },
+                {
+                    "value": "rushing",
+                    "label": "Rushing",
+                    "description": "Team rushing attempts excluding kneels and spikes.",
+                    "subject_type": "team",
+                },
+                {
+                    "value": "offense",
+                    "label": "Overall offense",
+                    "description": "Team rushing attempts and quarterback dropbacks together.",
+                    "subject_type": "team",
+                },
+                {
+                    "value": "quarterback",
+                    "label": "Quarterback",
+                    "description": "Passing efficiency and outcomes attributed to one quarterback.",
+                    "subject_type": "player",
+                },
+                {
+                    "value": "receiving",
+                    "label": "Receiving",
+                    "description": "Targets, efficiency, and production attributed to one receiver.",
+                    "subject_type": "player",
+                },
+                {
+                    "value": "running",
+                    "label": "Rushing",
+                    "description": "Carries, efficiency, and production attributed to one ball carrier.",
+                    "subject_type": "player",
+                },
             ],
-            default_metrics_by_domain=DEFAULT_METRICS_BY_DOMAIN,
+            default_metrics_by_domain={**DEFAULT_METRICS_BY_DOMAIN, **PLAYER_DEFAULTS},
             split_dimensions=splits,
             comparison_windows=[
                 ComparisonWindowOption(
@@ -224,13 +352,15 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             ],
             syncable_datasets=list(SUPPORTED_DATASETS),
             dataset_min_seasons={
-                dataset: None if dataset in REFERENCE_DATASETS else DATASET_MIN_SEASONS[dataset]
-                for dataset in SUPPORTED_DATASETS
+                dataset: None if dataset in REFERENCE_DATASETS else DATASET_MIN_SEASONS[dataset] for dataset in SUPPORTED_DATASETS
             },
+            subject_types=[{"value": "team", "label": "Team"}, {"value": "player", "label": "Player"}],
         )
 
     def explain_metric(self, metric: str) -> MetricDefinition:
         normalized = metric.strip().lower()
+        if normalized in PLAYER_METRICS:
+            return player_metric_definition(normalized)
         if normalized not in METRICS:
             raise ValueError(f"unsupported metric {metric!r}")
         category, description, _required = METRIC_METADATA[normalized]
@@ -263,35 +393,72 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
                 ("player_id", "player_name", "recent_team", "position"),
                 ("passer_player_id", "passer_player_name", "posteam", None),
                 ("receiver_player_id", "receiver_player_name", "posteam", None),
+                ("rusher_player_id", "rusher_player_name", "posteam", None),
             ]
             for id_column, name_column, team_column, position_column in candidates:
                 if id_column not in frame.columns or name_column not in frame.columns:
                     continue
                 selected_columns = [id_column, name_column]
                 selected_columns.extend(column for column in (team_column, position_column) if column and column in frame.columns)
+                activity_columns = [
+                    column for column in ("attempts", "targets", "carries") if column in frame.columns
+                ]
+                selected_columns.extend(activity_columns)
                 for row in frame.select(selected_columns).drop_nulls([id_column, name_column]).unique().iter_rows(named=True):
                     player_id, name = str(row[id_column]), str(row[name_column])
                     if token and token not in player_id.lower() and token not in name.lower():
                         continue
                     record = players.setdefault(
                         player_id,
-                        {"player_id": player_id, "name": name, "teams": set(), "positions": set(), "seasons": set()},
+                        {
+                            "player_id": player_id,
+                            "name": name,
+                            "teams": set(),
+                            "positions": set(),
+                            "activity_seasons": set(),
+                            "listed_seasons": set(),
+                            "domain_seasons": {"quarterback": set(), "receiving": set(), "running": set()},
+                        },
                     )
                     if team_column and row.get(team_column):
                         record["teams"].add(str(row[team_column]))
                     if position_column and row.get(position_column):
                         record["positions"].add(str(row[position_column]))
                     if season:
-                        record["seasons"].add(season)
+                        record["listed_seasons"].add(season)
+                        role_attribution = id_column in {
+                            "passer_player_id",
+                            "receiver_player_id",
+                            "rusher_player_id",
+                        }
+                        published_activity = any(float(row.get(column) or 0) > 0 for column in activity_columns)
+                        if role_attribution or published_activity:
+                            record["activity_seasons"].add(season)
+                        role_domain = {
+                            "passer_player_id": "quarterback",
+                            "receiver_player_id": "receiving",
+                            "rusher_player_id": "running",
+                        }.get(id_column)
+                        if role_domain:
+                            record["domain_seasons"][role_domain].add(season)
+                        if float(row.get("attempts") or 0) > 0:
+                            record["domain_seasons"]["quarterback"].add(season)
+                        if float(row.get("targets") or 0) > 0:
+                            record["domain_seasons"]["receiving"].add(season)
+                        if float(row.get("carries") or 0) > 0:
+                            record["domain_seasons"]["running"].add(season)
         return [
             PlayerOption(
                 player_id=record["player_id"],
                 name=record["name"],
                 teams=sorted(record["teams"]),
                 positions=sorted(record["positions"]),
-                seasons=sorted(record["seasons"]),
+                seasons=sorted(record["activity_seasons"] or record["listed_seasons"]),
+                seasons_by_domain={
+                    domain: sorted(seasons) for domain, seasons in record["domain_seasons"].items()
+                },
             )
-            for record in sorted(players.values(), key=lambda item: (item["name"], item["player_id"]))[:25]
+            for record in sorted(players.values(), key=lambda item: (item["name"], item["player_id"]))[:10000]
         ]
 
     def resolve_team(self, team: str) -> str:
@@ -302,6 +469,45 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
         return resolved
 
     def default_plan(self, request: AnalysisRequest) -> AnalysisPlan:
+        if request.subject and request.subject.type == "player":
+            calls = [
+                PlannedToolCall(
+                    tool="validate_analysis_scope",
+                    arguments={"subject": request.subject.model_dump()},
+                    purpose="Validate player identity, windows, and attributed-play coverage.",
+                ),
+                PlannedToolCall(
+                    tool="compare_player_windows",
+                    arguments={"domain": request.analysis_domain, "metrics": request.metrics},
+                    purpose="Compare the selected player's performance across windows.",
+                ),
+                PlannedToolCall(
+                    tool="analyze_player_trends",
+                    arguments={"domain": request.analysis_domain},
+                    purpose="Measure whether the player's change was sustained across seasons.",
+                ),
+                PlannedToolCall(
+                    tool="find_player_representative_plays",
+                    arguments={"player_id": request.subject.id},
+                    purpose="Ground the analysis in plays attributed to the selected player.",
+                ),
+            ]
+            if request.analysis_domain == "quarterback":
+                calls.insert(
+                    2,
+                    PlannedToolCall(
+                        tool="compare_player_published_stats",
+                        arguments={"player_id": request.subject.id},
+                        purpose="Supplement sparse play-derived results with compatible synced published quarterback statistics.",
+                    ),
+                )
+            payload = {
+                "question": request.question,
+                "scope": request.scope.model_dump(),
+                "subject": request.subject.model_dump(),
+                "calls": [item.model_dump() for item in calls],
+            }
+            return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
         default_metrics = DEFAULT_METRICS_BY_DOMAIN[request.analysis_domain]
         calls = [
             PlannedToolCall(
@@ -454,23 +660,22 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             "join_nextgen_rushing_metrics": {"nextgen_rushing"},
             "join_pfr_advanced_stats": {"pfr_passing", "pfr_rushing", "pfr_receiving", "pfr_defense"},
         }
-        calls = [
-            call for call in calls
-            if call.tool not in tool_datasets or bool(tool_datasets[call.tool] & required_datasets)
-        ]
+        calls = [call for call in calls if call.tool not in tool_datasets or bool(tool_datasets[call.tool] & required_datasets)]
         payload = {"question": request.question, "scope": request.scope.model_dump(), "calls": [item.model_dump() for item in calls]}
         return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
 
     def analyze(
-            self,
-            request: AnalysisRequest,
-            datasets: dict[int, pl.DataFrame],
-            manifests: dict[int, DatasetManifest],
-            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+        self,
+        request: AnalysisRequest,
+        datasets: dict[int, pl.DataFrame],
+        manifests: dict[int, DatasetManifest],
+        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NFLAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
+        if request.subject and request.subject.type == "player":
+            return self.analyze_player(request, datasets, manifests, supplemental, supplemental_manifests)
         team = self.resolve_team(request.scope.team)
         analysis_domain = request.analysis_domain
         seasons = request.scope.included_seasons
@@ -494,9 +699,7 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
         if season_frames:
             undersized = [season for season, frame in season_frames.items() if frame.height < 30]
             if undersized:
-                raise ValueError(
-                    f"each season in a full-season range requires at least 30 qualifying {analysis_domain} plays: {undersized}"
-                )
+                raise ValueError(f"each season in a full-season range requires at least 30 qualifying {analysis_domain} plays: {undersized}")
 
         unknown_metrics = sorted(set(request.metrics) - set(METRICS))
         if unknown_metrics:
@@ -758,9 +961,7 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             depth_charts=supplemental.get("depth_charts", {}),
             player_directory=supplemental.get("players", {}).get(0),
         )
-        player_week_evidence, player_week_execution = self._player_week_coverage(
-            team, windows, player_weeks, player_manifests
-        )
+        player_week_evidence, player_week_execution = self._player_week_coverage(team, windows, player_weeks, player_manifests)
         aggregate.extend(player_week_evidence)
         executions.append(player_week_execution)
 
@@ -940,9 +1141,7 @@ class NFLPlugin(NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPrese
             else:
                 missing_supplemental.append(dataset_name)
 
-        schedule_result = self._schedule_context(
-            team, windows, supplemental.get("schedules", {}), supplemental_manifests.get("schedules", {})
-        )
+        schedule_result = self._schedule_context(team, windows, supplemental.get("schedules", {}), supplemental_manifests.get("schedules", {}))
         if schedule_result:
             schedule_evidence, schedule_execution = schedule_result
             aggregate.extend(schedule_evidence)

@@ -50,6 +50,12 @@ POSITIVE_IS_BETTER.update(
 )
 LOWER_IS_BETTER.update({"defensive_rating", "turnovers_per_game", "lineup_def_rating"})
 
+
+def _sample_confidence(sample_size: int) -> str:
+    if sample_size < 10:
+        return "low"
+    return "high" if sample_size >= 100 else "medium"
+
 ANALYST_VOICE_GUIDE = """
 Write like an experienced NFL analyst briefing an informed reader, not like a model summarizing a table.
 
@@ -226,7 +232,7 @@ def _fallback_synthesis(
                 f"a change of {float(primary.value or 0):+.3f} across {primary.sample_size} comparison-window observations."
             ),
             evidence_ids=[primary.evidence_id],
-            confidence="high" if primary.sample_size >= 100 else "medium",
+            confidence=_sample_confidence(primary.sample_size),
         )
     ]
     seasonal = [item for item in aggregate if item.metric == f"seasonal_{primary.metric}" and item.value is not None]
@@ -239,7 +245,7 @@ def _fallback_synthesis(
                 claim_type=ClaimType.MEASURED,
                 statement=f"Across the inclusive season range, {primary.label} measured {trajectory}.",
                 evidence_ids=[item.evidence_id for item in seasonal],
-                confidence="high" if min(item.sample_size for item in seasonal) >= 100 else "medium",
+                confidence=_sample_confidence(min(item.sample_size for item in seasonal)),
             )
         )
     supporting = sorted(
@@ -254,7 +260,7 @@ def _fallback_synthesis(
                 claim_type=ClaimType.MEASURED,
                 statement=f"{item.label} changed from {item.baseline_value:.3f} to {item.comparison_value:.3f}.",
                 evidence_ids=[item.evidence_id],
-                confidence="high" if item.sample_size >= 100 else "medium",
+                confidence=_sample_confidence(item.sample_size),
             )
         )
     decompositions = [item for item in aggregate if item.metric.endswith("_decomposition")][:3]

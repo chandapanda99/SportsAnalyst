@@ -3,7 +3,14 @@ export type DatasetManifest = {
 };
 export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string };
 export type TeamOption = { value: string; label: string };
-export type PlayerOption = { player_id: string; name: string; teams: string[]; positions: string[]; seasons: number[] };
+export type PlayerOption = {
+  player_id: string;
+  name: string;
+  teams: string[];
+  positions: string[];
+  seasons: number[];
+  seasons_by_domain?: Record<string, number[]>;
+};
 export type AnalysisSubject = { type: 'team' | 'player'; id: string; team_id?: string };
 export type MetricOption = {
   value: string; label: string; category: string; description: string; analysis_domain: string; available_seasons: number[]; subject_types?: string[];
@@ -26,6 +33,7 @@ export type AnalysisOptions = {
   week_values: number[];
   syncable_datasets: string[];
   dataset_min_seasons: Record<string, number | null>;
+  dataset_available_seasons?: Record<string, number[]>;
   subject_types?: Array<{value: 'team' | 'player'; label: string}>;
   season_segments?: Array<{value: string; label: string; description: string}>;
   segment_availability?: Record<string, string[]>;
@@ -68,7 +76,7 @@ export type PlayVisualization = {
   period?: number; event_type?: string; action_type?: string; player_id?: string; player_name?: string; team_id?: string;
   team_abbreviation?: string; home_team_abbreviation?: string; away_team_abbreviation?: string; home_score?: number; away_score?: number;
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
-  shot_x?: number; shot_y?: number; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
+  shot_x?: number; shot_y?: number; shot_coordinate_system?: string; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
 };
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };

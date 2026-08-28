@@ -8,9 +8,10 @@ evidence produced by those tools; the model cannot invent measurements or execut
 
 ## What the application does
 
-- Runs NFL team analysis for passing, rushing, and overall offense across full seasons, week ranges, and before/after-week windows.
+- Runs NFL team analysis for passing, rushing, and overall offense, plus player analysis for quarterbacks, receivers, and ball carriers.
 - Runs NBA team or player analysis across full seasons and validated season segments, with an optional team-stint filter for traded players.
-- Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability context.
+- Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability
+  context.
 - Provides NBA v1 box-score comparisons, multi-season trend charts, lineup-rate comparisons when lineup releases are synced, and representative play/possession evidence.
 - Surfaces NFL evidence in an interactive field schematic and NBA evidence in a basketball tablet with recorded shot, score, and lineup context.
 - Produces evidence-bound findings, charts, methodological caveats, team-themed HTML reports, and Markdown exports.
@@ -25,7 +26,7 @@ metrics, datasets, and evidence renderer.
 The Svelte workbench provides:
 
 1. **Local Data Library** — select seasons and sport-specific packages, inspect local coverage, and sync data without using the CLI.
-2. **Scope** — choose an NFL team or an NBA team/player, analysis domain, season period, and comparison design using data-driven controls.
+2. **Scope** — choose an NFL or NBA team/player, analysis domain, season period, and comparison design using data-driven controls.
 3. **Metrics and diagnostic cuts** — use the recommended defaults, select all available metrics, or constrain the analysis to specific measurements and situations.
 4. **Investigation question** — ask a free-text analytical question or cycle through valid examples.
 5. **Live analysis** — follow backend stage progress while evidence is produced and reviewed.
@@ -73,8 +74,8 @@ npm run dev
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` requests to the FastAPI server at `http://127.0.0.1:8767`.
 
 You do **not** need to run a data-sync command before launching the application. Open the data manager for the selected sport, choose seasons and packages, and select **Sync
-Selected Data**. NBA defaults to play-by-play, schedules, team box scores, and player box scores. The application reports whether the optional live transport is installed,
-but current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
+Selected Data**. NBA defaults to play-by-play, schedules, team box scores, and player box scores. The application reports whether the optional live transport is installed, but
+current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
 
 ## Model providers
 
@@ -138,12 +139,15 @@ continues with available evidence and records a capability caveat.
 ### NBA packages and availability
 
 NBA seasons are stored by ending year: `2026` is displayed as `2025–26`. Core ESPN-backed releases begin in 2002. The default NBA sync contains `play_by_play`, `schedules`,
-`team_boxscores`, and `player_boxscores`. Optional packages add shots, game and season rosters, standings, season benchmarks, identity crosswalks, NBA Stats play-by-play,
-five-player lineups, and published possession/lineup V3 data. Named segments are offered only when schedule rows and reviewed boundaries resolve qualifying games. Lineup
-metrics are offered only for seasons with a synced `lineups` release; V3 lineup and possession releases enrich representative evidence when matching records are available.
+`team_boxscores`, and `player_boxscores`. The sync catalog covers every published high-level NBA loader in SportsDataverse 0.0.75, including ESPN and NBA Stats schedules, box
+scores, shots, standings, officials, coaches, game logs, season statistics, rosters, game rosters, draft results, identities, impact, play-by-play, and five-player lineups.
+NBA Stats season and game rosters are available from 1997, while the separate ESPN season-roster release begins in 2025. Named segments are offered only when schedule rows and
+reviewed boundaries resolve qualifying games. V3 play-by-play, lineup, and possession loaders remain local/live-only compatibility sources because no corresponding bulk
+release tags are currently published; they are not shown as downloadable packages.
 
-SportsDataverse is constrained to the pre-1.0 `>=0.0.75,<0.1` compatibility line (the current lockfile resolves 0.0.75). Loader calls are isolated inside `SportsDataverseNBAConnector`, where schemas, identifiers, season
-conventions, checksums, caching, and package availability are normalized before the analysis plugin sees them.
+SportsDataverse is constrained to the pre-1.0 `>=0.0.75,<0.1` compatibility line (the current lockfile resolves 0.0.75). Loader calls are isolated inside
+`SportsDataverseNBAConnector`, where schemas, identifiers, season conventions, checksums, caching, and package availability are normalized before the analysis plugin sees
+them.
 
 ### Local storage and provenance
 
@@ -186,6 +190,9 @@ lineup cards when recorded on-court identities are available. Missing coordinate
 |     Passing     | EPA/dropback, success rate, CPOE, explosive-pass rate       |
 |     Rushing     | EPA/rush, rush success rate, yards/rush, explosive-run rate |
 | Overall offense | EPA/play, success rate, yards/play, turnover rate           |
+| Quarterback player | EPA/dropback, success rate, CPOE, yards/dropback         |
+| Receiving player | targets/game, EPA/target, catch rate, yards/target          |
+| Rushing player | carries/game, EPA/carry, rush success rate, yards/carry       |
 
 Additional passing metrics include yards/play, sack rate, interception rate, air yards/attempt, and YAC/completion. Additional rushing metrics include stuff rate and rushing
 first-down rate.
@@ -201,8 +208,10 @@ incomplete fields are disabled or omitted.
 - **Custom week ranges** compares two explicit inclusive week windows, which may be in the same or different seasons.
 - **Before vs. after** compares two week ranges within one season around a selected boundary.
 
-Each comparison window requires at least 30 qualifying plays. Situational subgroups require at least 10 qualifying plays in both windows. Results are observational and do not
-establish causality.
+Team comparison windows require at least 30 qualifying plays. Player comparisons use every attributed play available in each window, flag samples below 10 as highly uncertain,
+and omit only metrics whose required values are unavailable. Quarterback reports can add compatible synced weekly player stats, Next Gen passing, and PFR passing evidence without
+silently substituting those published statistics for differently defined play-derived metrics. Situational subgroups still require at least 10 qualifying plays in both windows.
+Results are observational and do not establish causality.
 
 ### NBA metrics
 
@@ -226,11 +235,13 @@ The current NFL tool set includes:
 - Leave-one-game-out opponent adjustment and descriptive change-point detection.
 - Representative supporting plays and counterexamples.
 - Player identity resolution and a normalized player-week layer.
+- First-class quarterback, receiving, and rushing player-window comparisons, trends, charts, and representative plays.
 - Player usage change, position-group availability, lineup continuity, and continuity decomposition.
 - Quarterback-receiver pair analysis.
 - Roster, injury, depth-chart, participation, FTN, Next Gen Stats, PFR, and schedule context joins.
 
-See the [Sports Tool Guide](docs/tool-guide.md) for formulas, inputs, data requirements, execution status, evidence behavior, limitations, and plugin extension guidance for both sports.
+See the [Sports Tool Guide](docs/tool-guide.md) for formulas, inputs, data requirements, execution status, evidence behavior, limitations, and plugin extension guidance for
+both sports.
 
 ### Play schematics
 
@@ -310,15 +321,15 @@ Run `uv run sports-analyst --help` or append `--help` to a subcommand for its cu
 
 FastAPI exposes:
 
-| Area | Endpoints |
-|---|---|
-| Runtime | `GET /api/capabilities`, `GET /api/sports` |
-| Data | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync`, `GET /api/dataset-jobs/{id}/events` |
-| Sport catalog | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players` |
+|      Area      | Endpoints                                                                                                                                                                                |
+|:--------------:|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|    Runtime     | `GET /api/capabilities`, `GET /api/sports`                                                                                                                                               |
+|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync`, `GET /api/dataset-jobs/{id}/events`                                                                                |
+| Sport catalog  | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players`                                        |
 | Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status` |
-| Conversation | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups` |
-| Evidence | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch` |
-| Reports | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown` |
+|  Conversation  | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups`                                                                                                        |
+|    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
+|    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |
 
 Dataset sync and investigation progress use server-sent events. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
 
