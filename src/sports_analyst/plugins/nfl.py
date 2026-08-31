@@ -406,13 +406,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 selected_columns.extend(activity_columns)
                 for row in frame.select(selected_columns).drop_nulls([id_column, name_column]).unique().iter_rows(named=True):
                     player_id, name = str(row[id_column]), str(row[name_column])
-                    if token and token not in player_id.lower() and token not in name.lower():
-                        continue
                     record = players.setdefault(
                         player_id,
                         {
                             "player_id": player_id,
                             "name": name,
+                            "aliases": set(),
                             "teams": set(),
                             "positions": set(),
                             "activity_seasons": set(),
@@ -420,6 +419,9 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                             "domain_seasons": {"quarterback": set(), "receiving": set(), "running": set()},
                         },
                     )
+                    record["aliases"].add(name)
+                    if " " in name and " " not in record["name"]:
+                        record["name"] = name
                     if team_column and row.get(team_column):
                         record["teams"].add(str(row[team_column]))
                     if position_column and row.get(position_column):
@@ -447,19 +449,22 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                             record["domain_seasons"]["receiving"].add(season)
                         if float(row.get("carries") or 0) > 0:
                             record["domain_seasons"]["running"].add(season)
-        return [
+        # noinspection bad-argument-type
+        matches = [
             PlayerOption(
                 player_id=record["player_id"],
                 name=record["name"],
                 teams=sorted(record["teams"]),
                 positions=sorted(record["positions"]),
                 seasons=sorted(record["activity_seasons"] or record["listed_seasons"]),
-                seasons_by_domain={
-                    domain: sorted(seasons) for domain, seasons in record["domain_seasons"].items()
-                },
+                seasons_by_domain={domain: sorted(seasons) for domain, seasons in record["domain_seasons"].items()},
             )
-            for record in sorted(players.values(), key=lambda item: (item["name"], item["player_id"]))[:10000]
+            for record in players.values()
+            if not token
+            or token in record["player_id"].lower()
+            or any(token in alias.lower() for alias in record["aliases"])
         ]
+        return sorted(matches, key=lambda item: (item.name, item.player_id))[:10000]
 
     def resolve_team(self, team: str) -> str:
         token = team.strip().upper()

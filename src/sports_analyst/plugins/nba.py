@@ -719,7 +719,7 @@ class NBAPlugin:
             for _identity, item in sorted(found.items(), key=lambda pair: pair[1]["name"])
             if item["teams"]
         ]
-        return players[:200]
+        return players
 
     def default_plan(self, request: AnalysisRequest) -> AnalysisPlan:
         calls = [

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     log_level: str = "INFO"
+    langsmith_tracing: bool = False
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_api_key: SecretStr | None = Field(default=None, repr=False)
+    langsmith_project: str = "open-sports-analyst-local"
+    langsmith_workspace_id: str = ""
 
     @field_validator("model_provider", "log_level", mode="before")
     @classmethod

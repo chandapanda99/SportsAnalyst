@@ -34,38 +34,170 @@
     let evidenceLoading = false;
     let evidenceError = '';
     let evidenceRequestVersion = 0;
-    const domainExampleQuestions: Record<string, string> = {
-        passing: "Why did this team's passing efficiency change?",
-        rushing: "How did this team's rushing performance change?",
-        offense: "How did this team's overall offensive efficiency change?",
-        quarterback: "How did this quarterback's efficiency and passing outcomes change?",
-        receiving: "How did this receiver's volume and efficiency change?",
-        running: "How did this ball carrier's rushing volume and efficiency change?",
-        defense: "How did this team's defensive efficiency change?",
-        scoring: "How did this player's scoring change?",
-        shooting: "How did the shot profile and shooting efficiency change?",
-        playmaking: "How did playmaking and ball distribution change?",
-        rebounding: "How did rebounding performance change?",
-        turnovers: "What changed in ball security and turnover outcomes?",
-        usage: "How did this player's role and usage change?",
-        impact: "How did this player's impact change?",
-        lineups: "Which lineup changes best explain the difference?"
+    type QuestionBank = Record<string, Record<'team' | 'player', Record<string, string[]>>>;
+    const questionBanks: QuestionBank = {
+        nfl: {
+            team: {
+                passing: [
+                    "What drove the change in this offense's EPA per dropback: down-to-down success, completion performance, or explosive passes?",
+                    "Did the passing game become consistently more efficient, or did a handful of explosive plays and outlier games drive the difference?",
+                    "How did the offense's passing profile change in accuracy, success rate, and explosive-pass frequency?",
+                    "When did the passing-efficiency trend meaningfully shift, and was that change sustained across the comparison window?",
+                    "Which representative dropbacks best explain—and challenge—the overall passing-efficiency trend?"
+                ],
+                rushing: [
+                    "What drove the change in this rushing attack's EPA per carry: success rate, yards per carry, or explosive-run frequency?",
+                    "Did the run game improve by staying on schedule more often, or by generating more explosive gains?",
+                    "Was the rushing change sustained across the full window, or concentrated in a few games?",
+                    "How did the rushing attack's efficiency and consistency change from the baseline to the comparison period?",
+                    "Which carries best illustrate the run game's positive and negative outcomes?"
+                ],
+                offense: [
+                    "What drove the change in overall offensive EPA per play: efficiency, yards per play, or turnover rate?",
+                    "Did the offense become better at sustaining successful plays, or was the difference mostly created by high-leverage gains?",
+                    "How much of the offensive change came from play mix versus performance within the passing and rushing games?",
+                    "Was the offense's improvement or decline broad-based across the window, or concentrated in a few games?",
+                    "Which plays provide the clearest evidence for—and against—the overall offensive trend?"
+                ]
+            },
+            player: {
+                quarterback: [
+                    "What drove the change in this quarterback's EPA per dropback: success rate, CPOE, or yards per dropback?",
+                    "Did this quarterback become more consistently efficient, or did a few high-variance games drive the result?",
+                    "How did this quarterback's accuracy relative to expectation translate into changes in overall passing efficiency?",
+                    "When did this quarterback's performance trend shift, and was the change sustained?",
+                    "Which dropbacks best represent—and contradict—this quarterback's overall performance trend?"
+                ],
+                receiving: [
+                    "Did this receiver's production change because of target volume, catch rate, yards per target, or EPA per target?",
+                    "How did this receiver's role and per-target efficiency change between the two windows?",
+                    "Was this receiver's change sustained across the sample, or driven by a few high-volume or explosive games?",
+                    "Did the receiver convert opportunities more efficiently even if target volume changed?",
+                    "Which targets best illustrate the receiver's positive production and missed opportunities?"
+                ],
+                running: [
+                    "Did this ball carrier's production change because of workload, EPA per carry, success rate, or yards per carry?",
+                    "How did this runner's down-to-down efficiency change relative to the volume of carries received?",
+                    "Was the rushing change consistent across games, or driven by a few large performances?",
+                    "Did increased workload come with better efficiency, diminishing returns, or no meaningful change?",
+                    "Which carries best represent the runner's efficiency trend and its counterexamples?"
+                ]
+            }
+        },
+        nba: {
+            team: {
+                offense: [
+                    "What drove the change in this team's offensive rating: scoring volume, effective field-goal percentage, or turnover control?",
+                    "Did the offense improve through better shot-making, cleaner possessions, or both?",
+                    "Was the offensive change sustained across the season, or concentrated in a small number of games?",
+                    "How did the team's scoring efficiency translate into changes in win percentage?",
+                    "Which games best represent—and challenge—the overall offensive trend?"
+                ],
+                defense: [
+                    "How did this team's defensive rating change, and how closely did that track with its win percentage?",
+                    "Was the defensive improvement or decline sustained across the season, or driven by a few outlier games?",
+                    "When did the team's defensive-efficiency trend meaningfully change?",
+                    "Did the defense become more consistent from game to game, even if its average rating changed only modestly?",
+                    "Which games provide the strongest evidence for—and against—the defensive trend?"
+                ],
+                shooting: [
+                    "Was the change in team shooting efficiency driven by shot-making, three-point attempt rate, or both?",
+                    "How did effective field-goal percentage and true shooting percentage move relative to the team's three-point mix?",
+                    "Did the team generate a more efficient shot profile, or simply convert similar shots at a better rate?",
+                    "Was the shooting change stable across the window or concentrated in hot and cold stretches?",
+                    "Which games best illustrate the team's changing shooting profile?"
+                ],
+                playmaking: [
+                    "Did the team's ball movement improve, based on assists per game and assist-to-turnover ratio?",
+                    "Was the change in playmaking driven by creating more assisted baskets or by protecting possessions more effectively?",
+                    "How consistently did the team generate assists without increasing turnovers?",
+                    "When did the team's assist-to-turnover profile begin to change?",
+                    "Which games best represent the team's strongest and weakest playmaking performances?"
+                ],
+                rebounding: [
+                    "Did this team improve on the glass through total rebounding, offensive rebounding, or both?",
+                    "How much did second-chance opportunity creation change between the two windows?",
+                    "Was the rebounding change consistent across games or driven by a few dominant performances?",
+                    "When did the team's rebounding trend shift during the season?",
+                    "Which games best illustrate the team's rebounding strengths and weaknesses?"
+                ],
+                turnovers: [
+                    "Did this team protect the ball more effectively, based on turnovers per game and turnover rate?",
+                    "Was the change in turnovers proportional to the team's possession volume, or did its underlying ball security change?",
+                    "How consistent was the team's turnover control across the comparison window?",
+                    "When did the team's turnover profile begin to improve or deteriorate?",
+                    "Which games had the greatest influence on the team's turnover trend?"
+                ],
+                lineups: [
+                    "Which five-player units drove the change in net rating between these windows?",
+                    "Did the team's best lineups improve through offense, defense, or both?",
+                    "How concentrated was the team's performance among its most-used lineup combinations?",
+                    "Which lineup changes produced the clearest gains or losses in efficiency?",
+                    "Did the strongest lineup results persist across the full window or come from limited samples?"
+                ]
+            },
+            player: {
+                scoring: [
+                    "Did this player's scoring change because of volume, true shooting efficiency, or both?",
+                    "How efficiently did this player convert a changing scoring workload?",
+                    "Was the scoring change sustained across games or driven by a few high-output performances?",
+                    "When did this player's scoring trend meaningfully shift?",
+                    "Which games best represent—and challenge—the player's overall scoring trend?"
+                ],
+                shooting: [
+                    "Did this player's shooting efficiency change because of shot-making, three-point attempt rate, or both?",
+                    "How did effective field-goal percentage and true shooting percentage move as the player's shot mix changed?",
+                    "Did the player become a more efficient shooter, or simply take a different distribution of shots?",
+                    "Was the shooting change sustained, or concentrated in hot and cold stretches?",
+                    "Which games best illustrate the player's changing shooting profile?"
+                ],
+                playmaking: [
+                    "Did this player's creation improve through more assists, better assist-to-turnover efficiency, or both?",
+                    "How did this player's role as a primary or secondary creator change between the two windows?",
+                    "Was the playmaking change consistent across games or driven by a few high-assist performances?",
+                    "Did additional ball-handling responsibility produce better distribution without a comparable rise in turnovers?",
+                    "Which games best represent the player's strongest and weakest playmaking performances?"
+                ],
+                rebounding: [
+                    "Did this player's rebounding change through total activity, offensive-board production, or both?",
+                    "How did this player's impact on second-chance opportunities change between the two windows?",
+                    "Was the rebounding change sustained or driven by a few matchup-specific performances?",
+                    "When did this player's rebounding trend begin to shift?",
+                    "Which games best illustrate the player's work on the glass?"
+                ],
+                turnovers: [
+                    "How did this player's turnover volume change between the two windows?",
+                    "Was the change in ball security sustained across games or driven by a few high-turnover performances?",
+                    "When did this player's turnover trend begin to improve or deteriorate?",
+                    "Did the player's turnover burden change alongside a larger offensive role?",
+                    "Which games had the greatest influence on the player's turnover trend?"
+                ],
+                usage: [
+                    "How did this player's offensive role change in minutes and usage proxy between the two windows?",
+                    "Did a larger role come from more playing time, more involvement per minute, or both?",
+                    "Was the player's increased usage sustained across the sample or concentrated in specific stretches?",
+                    "When did this player's rotation role and offensive involvement begin to change?",
+                    "Did the player's workload expand without a comparable change in minutes?"
+                ],
+                impact: [
+                    "How did this player's plus/minus impact change, and what does the lineup context suggest about that shift?",
+                    "Was the player's impact trend sustained across the window or driven by a few extreme games?",
+                    "Did the lineups featuring this player improve even when individual box-score production was stable?",
+                    "When did this player's impact trend meaningfully change?",
+                    "Which games and lineup contexts best explain the player's change in impact?"
+                ],
+                lineups: [
+                    "Which five-player units best complemented this player between the two windows?",
+                    "Did this player's most-used lineups improve through offense, defense, or both?",
+                    "How dependent was the player's lineup impact on a small number of teammates or units?",
+                    "Which lineup combinations produced the clearest gains or losses with this player on the floor?",
+                    "Were the player's strongest lineup results supported by meaningful samples or limited minutes?"
+                ]
+            }
+        }
     };
-    const exampleQuestions = [
-        domainExampleQuestions.passing,
-        "Did this team become more consistent, or was the change concentrated in a few periods?",
-        "Which games had the greatest influence on the difference between these periods?",
-        "How did this team move relative to the rest of the league?",
-        "Was the change driven more by completion quality or explosive passes?",
-        "Does opponent-adjusted EPA tell the same story as the raw results?",
-        "Where does the clearest sustained change in performance begin?",
-        "Which receivers gained or lost the most target share between these periods?",
-        "Which quarterback-receiver connections changed the most?",
-        "Which representative plays best support—and challenge—the overall finding?",
-        domainExampleQuestions.rushing,
-        domainExampleQuestions.offense
-    ];
-    let question = exampleQuestions[0];
+    const initialQuestion = questionBanks.nfl.team.passing[0];
+    let question = initialQuestion;
     let team = '';
     let teamInput = '';
     let teamFilter = '';
@@ -84,12 +216,13 @@
     let analysisDomain = 'passing';
     let subjectType: 'team' | 'player' = 'team';
     let players: PlayerOption[] = [];
+    let playersLoading = false;
+    let playerLoadError = '';
     let selectedPlayerId = '';
     let playerInput = '';
     let playerFilter = '';
     let playerComboboxOpen = false;
     let activePlayerIndex = 0;
-    let playerSearchTimer: ReturnType<typeof setTimeout> | undefined;
     let playerSearchVersion = 0;
     let playerTeamId = '';
     let scopeSeasons: number[] = [];
@@ -106,12 +239,20 @@
     let busy = false;
     let followup = '';
     let followupBusy = false;
+    let investigationLoading = false;
+    let deletingInvestigationId = '';
     let pendingFollowup = '';
+    let workspaceRequestVersion = 0;
+    let workspaceLoading = true;
+    let workspaceLoadError = '';
+    let backendReady = false;
     type DraftState = {
         question: string; team: string; teamInput: string; baseline: number; comparison: number;
+        baselineStartWeek: number; baselineEndWeek: number; comparisonStartWeek: number; comparisonEndWeek: number;
+        splitWeek: number; seasonType: 'REG' | 'POST' | 'ALL';
         comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string; playerInput: string;
         playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
-        selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[];
+        selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[]; dataManagerOpen: boolean;
     };
     const sportDrafts: Record<string, DraftState> = {};
 
@@ -138,6 +279,7 @@
         return !query || player.name.toLowerCase().includes(query) || player.player_id.toLowerCase().includes(query)
             || player.teams.some((value) => value.toLowerCase().includes(query));
     });
+    $: playerNamesById = new Map(players.map((player) => [player.player_id, player.name]));
     $: visibleDomains = (analysisOptions?.analysis_domains ?? []).filter((domain) => domainAvailableForSubject(domain, subjectType));
     $: windowsDiffer = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
         || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
@@ -171,78 +313,148 @@
     $: selectedClaim = active?.claims.find((claim) => claim.claim_id === selectedClaimId) ?? null;
     $: rootHistory = history.filter((item) => !item.run.parent_investigation_id && (item.run.sport ?? 'nfl') === activeSport);
 
-    onMount(refresh);
+    onMount(() => {
+        void refresh();
+    });
 
-    async function refresh() {
+    async function refresh(attempt = 0) {
+        const sport = activeSport;
+        const requestVersion = ++workspaceRequestVersion;
+        workspaceLoading = true;
+        workspaceLoadError = '';
         try {
-            const [nextCapabilities, nextSports, nextOptions, nextDatasets, nextHistory, nextPlayers] = await Promise.all([
-                api.capabilities(), api.sports(), api.analysisOptions(activeSport), api.datasets(), api.investigations(), api.players(activeSport)
-            ]);
-            capabilities = nextCapabilities;
-            sports = nextSports.length ? nextSports : [
-                {value: 'nfl', label: 'NFL', available: true, live_available: false},
-                {
-                    value: 'nba',
-                    label: 'NBA',
-                    available: true,
-                    live_available: false,
-                    live_message: 'Live NBA enrichments are unavailable; bulk-data analysis remains enabled.'
-                }
-            ];
-            analysisOptions = nextOptions;
-            datasets = nextDatasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport);
-            history = nextHistory;
-            players = nextOptions.subject_types?.some((item) => item.value === 'player') ? nextPlayers : [];
-            initializeSelections();
-            const roots = history.filter((item) => !item.run.parent_investigation_id);
-            const identifier = active?.run.investigation_id ?? roots[0]?.run.investigation_id;
-            if (identifier) {
-                active = await api.investigation(identifier);
-                conversationThread = await api.investigationThread(identifier);
+            if (!backendReady) {
+                if (!await api.ready()) throw new Error('The local analysis service is still starting.');
+                backendReady = true;
             }
+            const bootstrap = capabilities && sports.length
+                ? Promise.resolve(null)
+                : Promise.all([api.capabilities(), api.sports()]);
+            const [[nextOptions, nextDatasets, nextHistory], nextBootstrap] = await Promise.all([
+                Promise.all([
+                    api.analysisOptions(sport),
+                    api.datasets(sport),
+                    api.investigations(undefined, 0, sport)
+                ]),
+                bootstrap
+            ]);
+            if (requestVersion !== workspaceRequestVersion || sport !== activeSport) return;
+            if (nextBootstrap) {
+                const [nextCapabilities, nextSports] = nextBootstrap;
+                capabilities = nextCapabilities;
+                sports = nextSports.length ? nextSports : [
+                    {value: 'nfl', label: 'NFL', available: true, live_available: false},
+                    {
+                        value: 'nba',
+                        label: 'NBA',
+                        available: true,
+                        live_available: false,
+                        live_message: 'Live NBA enrichments are unavailable; bulk-data analysis remains enabled.'
+                    }
+                ];
+            }
+            analysisOptions = nextOptions;
+            datasets = nextDatasets;
+            history = nextHistory;
+            initializeSelections();
+            const unresolvedPlayerHistory = nextHistory.some((item) => item.run.subject?.type === 'player' && !item.run.subject.display_name);
+            if (subjectType === 'player' || unresolvedPlayerHistory) void loadPlayers();
         } catch (problem) {
-            error = String(problem);
+            if (requestVersion !== workspaceRequestVersion || sport !== activeSport) return;
+            const startupAttempt = !backendReady;
+            const retryLimit = startupAttempt ? 120 : 4;
+            if (attempt < retryLimit) {
+                workspaceLoadError = 'Waiting for the local analysis service…';
+                const retryDelay = startupAttempt ? 500 : 500 * (attempt + 1);
+                await new Promise((resolve) => setTimeout(resolve, retryDelay));
+                if (requestVersion === workspaceRequestVersion && sport === activeSport) await refresh(attempt + 1);
+                return;
+            }
+            workspaceLoadError = String(problem);
+            error = workspaceLoadError;
+        } finally {
+            if (requestVersion === workspaceRequestVersion && sport === activeSport) workspaceLoading = false;
         }
     }
 
     async function switchSport(sport: string) {
         if (sport === activeSport || busy) return;
-        sportDrafts[activeSport] = {
-            question, team, teamInput, baseline, comparison, comparisonMode, analysisDomain, subjectType,
-            selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
-            selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
-            syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets]
-        };
+        sportDrafts[activeSport] = captureDraft();
+        workspaceRequestVersion += 1;
+        playerSearchVersion += 1;
         activeSport = sport;
         active = null;
         conversationThread = [];
         clearEvidenceSelection();
+        analysisOptions = null;
+        datasets = [];
+        history = [];
+        players = [];
+        playersLoading = false;
+        playerLoadError = '';
+        error = '';
+        resetDraft(sport);
+        const draft = sportDrafts[sport];
+        if (draft) {
+            applyDraft(draft);
+            initializedSelections = true;
+        }
+        await refresh();
+    }
+
+    function captureDraft(): DraftState {
+        return {
+            question, team, teamInput, baseline, comparison, baselineStartWeek, baselineEndWeek,
+            comparisonStartWeek, comparisonEndWeek, splitWeek, seasonType, comparisonMode, analysisDomain, subjectType,
+            selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
+            selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
+            syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets], dataManagerOpen
+        };
+    }
+
+    function resetDraft(sport: string) {
         initializedSelections = false;
         team = '';
         teamInput = '';
+        teamFilter = '';
+        teamComboboxOpen = false;
+        activeTeamIndex = 0;
         selectedPlayerId = '';
         playerInput = '';
+        playerFilter = '';
+        playerComboboxOpen = false;
+        activePlayerIndex = 0;
         playerTeamId = '';
+        baselineStartWeek = 1;
+        baselineEndWeek = 18;
+        comparisonStartWeek = 1;
+        comparisonEndWeek = 18;
+        splitWeek = 10;
+        seasonType = 'REG';
         subjectType = 'team';
         analysisDomain = sport === 'nba' ? 'offense' : 'passing';
         comparisonMode = sport === 'nba' ? 'season_segments' : 'full_seasons';
         baselineSegment = 'regular_season';
         comparisonSegment = 'post_all_star';
-        question = domainExampleQuestions[analysisDomain];
-        await refresh();
-        const draft = sportDrafts[sport];
-        if (draft) {
-            ({
-                question, team, teamInput, baseline, comparison, comparisonMode, analysisDomain, subjectType,
-                selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment
-            } = draft);
-            selectedMetrics = [...draft.selectedMetrics];
-            selectedSplits = [...draft.selectedSplits];
-            syncSeasons = [...draft.syncSeasons];
-            syncDatasets = [...draft.syncDatasets];
-        }
-        active = null;
-        conversationThread = [];
+        question = examplesFor(sport, subjectType, analysisDomain)[0];
+        selectedMetrics = [];
+        selectedSplits = [];
+        syncSeasons = [];
+        syncDatasets = ['play_by_play'];
+        dataManagerOpen = true;
+    }
+
+    function applyDraft(draft: DraftState) {
+        ({
+            question, team, teamInput, baseline, comparison, baselineStartWeek, baselineEndWeek,
+            comparisonStartWeek, comparisonEndWeek, splitWeek, seasonType, comparisonMode, analysisDomain, subjectType,
+            selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment
+        } = draft);
+        selectedMetrics = [...draft.selectedMetrics];
+        selectedSplits = [...draft.selectedSplits];
+        syncSeasons = [...draft.syncSeasons];
+        syncDatasets = [...draft.syncDatasets];
+        dataManagerOpen = draft.dataManagerOpen;
     }
 
     function initializeSelections() {
@@ -288,6 +500,9 @@
     function selectSubjectType(type: 'team' | 'player') {
         subjectType = type;
         if (type === 'team') {
+            playerSearchVersion += 1;
+            playersLoading = false;
+            playerLoadError = '';
             selectedPlayerId = '';
             playerInput = '';
             playerTeamId = '';
@@ -296,6 +511,22 @@
         const nextDomain = (analysisOptions?.analysis_domains ?? []).find((domain) => domainAvailableForSubject(domain, type))?.value;
         if (nextDomain) selectAnalysisDomain(nextDomain, true);
         else selectedMetrics = [];
+        if (type === 'player' && !players.length) void loadPlayers();
+    }
+
+    async function loadPlayers() {
+        const sport = activeSport;
+        const version = ++playerSearchVersion;
+        playersLoading = true;
+        playerLoadError = '';
+        try {
+            const matches = await api.players(sport);
+            if (version === playerSearchVersion && sport === activeSport) players = matches;
+        } catch (problem) {
+            if (version === playerSearchVersion && sport === activeSport) playerLoadError = String(problem);
+        } finally {
+            if (version === playerSearchVersion && sport === activeSport) playersLoading = false;
+        }
     }
 
     function playerDisplay(player: PlayerOption) {
@@ -315,22 +546,12 @@
         playerTeamId = '';
         playerComboboxOpen = true;
         activePlayerIndex = 0;
-        const version = ++playerSearchVersion;
-        const query = playerFilter;
-        if (playerSearchTimer) clearTimeout(playerSearchTimer);
-        playerSearchTimer = setTimeout(async () => {
-            try {
-                const matches = await api.players(activeSport, query);
-                if (version === playerSearchVersion) players = matches;
-            } catch (problem) {
-                if (version === playerSearchVersion) error = String(problem);
-            }
-        }, 150);
     }
 
     function selectPlayer(player: PlayerOption) {
         playerSearchVersion += 1;
-        if (playerSearchTimer) clearTimeout(playerSearchTimer);
+        playersLoading = false;
+        playerLoadError = '';
         selectedPlayerId = player.player_id;
         playerInput = playerDisplay(player);
         playerFilter = '';
@@ -464,6 +685,16 @@
         selectedMetrics = availableMetrics.filter((metric) => recommended.has(metric.value)).map((metric) => metric.value);
     }
 
+    function examplesFor(sport = activeSport, type = subjectType, domain = analysisDomain) {
+        return questionBanks[sport]?.[type]?.[domain] ?? [initialQuestion];
+    }
+
+    function isCuratedExample(value: string) {
+        return Object.values(questionBanks).some((sport) =>
+            Object.values(sport).some((subject) => Object.values(subject).some((examples) => examples.includes(value)))
+        );
+    }
+
     function selectAnalysisDomain(domain: string, force = false) {
         if (analysisDomain === domain && !force) return;
         analysisDomain = domain;
@@ -473,8 +704,8 @@
                 && (!metric.subject_types?.length || metric.subject_types.includes(subjectType))
                 && metricAvailable(metric) && recommended.has(metric.value))
             .map((metric) => metric.value);
-        if (Object.values(domainExampleQuestions).includes(question)) {
-            question = domainExampleQuestions[domain] ?? question;
+        if (isCuratedExample(question)) {
+            question = examplesFor(activeSport, subjectType, domain)[0];
         }
         if (selectedPlayer) normalizePlayerSeasonSelection(selectedPlayer);
     }
@@ -484,8 +715,9 @@
     }
 
     function showAnotherExample() {
-        const alternatives = exampleQuestions.filter((example) => example !== question);
-        question = alternatives[Math.floor(Math.random() * alternatives.length)] ?? exampleQuestions[0];
+        const examples = examplesFor();
+        const alternatives = examples.filter((example) => example !== question);
+        question = alternatives[Math.floor(Math.random() * alternatives.length)] ?? examples[0] ?? initialQuestion;
     }
 
     function toggleSyncDataset(dataset: string) {
@@ -662,8 +894,19 @@
         return segments.filter((segment) => ['full_season', 'regular_season', 'playoffs'].includes(segment.value));
     }
 
-    function investigationSubject(item: Investigation | InvestigationSummary) {
-        return item.run.subject?.id ?? item.run.scope.team;
+    function investigationSubject(item: Investigation | InvestigationSummary, playerNames = playerNamesById) {
+        const subject = item.run.subject;
+        if (subject?.type === 'player') {
+            return subject.display_name || playerNames.get(subject.id) || subject.id;
+        }
+        return subject?.display_name || subject?.id || item.run.scope.team;
+    }
+
+    function investigationSubjectInitials(item: Investigation | InvestigationSummary, playerNames = playerNamesById) {
+        const label = investigationSubject(item, playerNames).trim();
+        const words = label.split(/\s+/).filter(Boolean);
+        if (words.length > 1) return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
+        return label.slice(0, 3).toUpperCase();
     }
 
     function investigationWindow(item: Investigation | InvestigationSummary) {
@@ -817,6 +1060,7 @@
                 subject: {
                     type: subjectType,
                     id: resolvedSubject,
+                    ...(subjectType === 'player' && selectedPlayer ? {display_name: selectedPlayer.name} : {}),
                     ...(subjectType === 'player' && playerTeamId ? {team_id: playerTeamId} : {})
                 },
                 question: question.trim(),
@@ -901,10 +1145,12 @@
     async function openInvestigation(investigation: Investigation | InvestigationSummary | null) {
         clearEvidenceSelection();
         if (!investigation) {
+            investigationLoading = false;
             active = null;
             conversationThread = [];
             return;
         }
+        investigationLoading = true;
         try {
             active = 'claims' in investigation
                 ? investigation
@@ -912,6 +1158,8 @@
             conversationThread = await api.investigationThread(active.run.investigation_id);
         } catch (problem) {
             error = String(problem);
+        } finally {
+            investigationLoading = false;
         }
     }
 
@@ -991,17 +1239,19 @@
 
     async function deleteInvestigation(item: Investigation | InvestigationSummary) {
         const identifier = item.run.investigation_id;
-        if (!window.confirm(`Delete the saved ${investigationSubject(item)} analysis? This cannot be undone.`)) return;
+        if (!window.confirm(`Delete the saved ${investigationSubject(item, playerNamesById)} analysis? This cannot be undone.`)) return;
+        deletingInvestigationId = identifier;
         try {
             const deletedRoot = rootIdFor(item);
             await api.deleteInvestigation(identifier);
             history = history.filter((saved) => rootIdFor(saved) !== deletedRoot);
             if (active && rootIdFor(active) === deletedRoot) {
-                const remainingRoots = history.filter((saved) => !saved.run.parent_investigation_id);
-                await openInvestigation(remainingRoots[0] ?? null);
+                await openInvestigation(null);
             }
         } catch (problem) {
             error = String(problem);
+        } finally {
+            deletingInvestigationId = '';
         }
     }
 </script>
@@ -1025,16 +1275,18 @@
                 <div class="recent-report">
                     <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
                             on:click={() => openInvestigation(item)}>
-                        <span>{investigationSubject(item)}</span>
-                        <div>{item.run.question}
+                        <span class="recent-subject-badge" title={investigationSubject(item, playerNamesById)}>{investigationSubjectInitials(item, playerNamesById)}</span>
+                        <div><strong class="recent-subject-name">{investigationSubject(item, playerNamesById)}</strong>
+                            <span class="recent-question">{item.run.question}</span>
                             <small>{investigationWindow(item)}</small>
                             {#if threadFor(item).length > 1}<small class="thread-count">{threadFor(item).length - 1}
                                 follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
                         </div>
                     </button>
                     <button class="delete-report" type="button" aria-label={`Delete investigation thread: ${item.run.question}`} title="Delete investigation thread"
+                            disabled={deletingInvestigationId === item.run.investigation_id}
                             on:click={() => deleteInvestigation(item)}>
-                        <Icon name="trash" size={16}/>
+                        {#if deletingInvestigationId === item.run.investigation_id}<span class="button-spinner" aria-label="Deleting investigation"></span>{:else}<Icon name="trash" size={16}/>{/if}
                     </button>
                 </div>
             {/each}
@@ -1059,7 +1311,7 @@
         </nav>
         <header class="topbar">
             <div><span class="eyebrow">{activeSport.toUpperCase()} · EVIDENCE WORKBENCH</span>
-                <h1>{active ? `${investigationSubject(active)} investigation` : `Analyze and Discuss ${activeSport === 'nba' ? 'Basketball' : 'Football'} Play-by-Play Data!`}</h1>
+                <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `Analyze and Discuss ${activeSport === 'nba' ? 'Basketball' : 'Football'} Play-by-Play Data!`}</h1>
             </div>
             <div class="status-chip">
                 <Icon name="database" size={16}/>{indexedSeasonCount} seasons · {datasets.length} data packages
@@ -1070,7 +1322,12 @@
             <div class="error" role="alert">{error}</div>
         {/if}
 
-        {#if !active && !busy}
+        {#if investigationLoading}
+            <section class="page-operation-loading" role="status" aria-live="polite" aria-busy="true">
+                <span class="library-spinner" aria-hidden="true"></span>
+                <div><strong>Loading saved investigation</strong><small>Retrieving its conversation, report, and evidence references…</small></div>
+            </section>
+        {:else if !active && !busy}
             <section class="ask-panel">
                 <div class="intro-grid">
                     <div class="ask-copy"><span class="eyebrow">START WITH THE EVIDENCE</span>
@@ -1081,14 +1338,28 @@
                     </div>
                     <details class="data-manager" class:nba-data-manager={activeSport === 'nba'} bind:open={dataManagerOpen}>
                         <summary>
-                            <span><strong>Manage Local {activeSport === 'nba' ? 'SportsDataverse NBA' : 'nflverse'} Data</strong><small>Choose the seasons and packages to load for your investigations.</small></span><b>{datasets.length}
-                            local files <i>
+                            <span><strong>Manage Local {activeSport === 'nba' ? 'SportsDataverse NBA' : 'nflverse'} Data</strong><small>Choose the seasons and packages to load for your investigations.</small></span><b>{workspaceLoading ? 'Loading data…' : `${datasets.length} local files`} <i>
                                 <Icon name="chevron-down" size={16}/>
                             </i></b></summary>
                         <div class="onboarding">
                             <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-play is required. Package checkboxes choose what to sync next; coverage is calculated for the selected seasons, and “not offered” means those seasons predate that package.</span>
                             </div>
-                            <div class="sync-fields">
+                            {#if workspaceLoading}
+                                <div class="library-loading" role="status" aria-live="polite">
+                                    <span class="library-spinner" aria-hidden="true"></span>
+                                    <span><strong>Loading data catalog</strong><small>{workspaceLoadError || 'Checking available seasons, packages, and local file coverage…'}</small></span>
+                                </div>
+                                <div class="library-skeleton" aria-hidden="true">
+                                    <div><span class="skeleton-label"></span><span class="skeleton-block"></span></div>
+                                    <div><span class="skeleton-label wide"></span><span class="skeleton-row"></span><span class="skeleton-row short"></span></div>
+                                </div>
+                            {:else if !analysisOptions}
+                                <div class="library-load-error" role="alert">
+                                    <span><strong>Data catalog unavailable</strong><small>The local analysis service did not respond. Start the API or try loading the catalog again.</small></span>
+                                    <button type="button" on:click={() => refresh()}>Retry</button>
+                                </div>
+                            {:else}
+                                <div class="sync-fields">
                                 <fieldset class="season-picker">
                                     <legend>Seasons</legend>
                                     <div class="season-options" role="group" aria-label="Seasons to sync">
@@ -1117,10 +1388,11 @@
                                             <small>{packageCoverage(dataset, syncSeasons)}</small></span></label>{/each}
                                     </div>
                                 </fieldset>
-                            </div>
-                            <button disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>Sync Selected Data
-                                <Icon name="database-import" size={18}/>
-                            </button>
+                                </div>
+                                <button disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>Sync Selected Data
+                                    <Icon name="database-import" size={18}/>
+                                </button>
+                            {/if}
                         </div>
                     </details>
                 </div>
@@ -1143,6 +1415,7 @@
                                 <div class="team-combobox">
                                     <input id="sport-player" role="combobox" bind:value={playerInput} aria-label="Player"
                                            aria-expanded={playerComboboxOpen}
+                                           aria-busy={playersLoading}
                                            aria-controls="sport-player-options"
                                            aria-autocomplete="list"
                                            aria-activedescendant={playerComboboxOpen && filteredPlayers[activePlayerIndex] ? `player-option-${filteredPlayers[activePlayerIndex].player_id}` : undefined}
@@ -1151,24 +1424,31 @@
                                            on:input={updatePlayerFilter} on:keydown={handlePlayerKeydown} on:blur={() => playerComboboxOpen = false}/>
                                     <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} players`} tabindex="-1"
                                             on:mousedown|preventDefault={() => playerComboboxOpen = !playerComboboxOpen}>
-                                        <Icon name="chevron-down" size={17}/>
+                                        {#if playersLoading}<span class="button-spinner" aria-hidden="true"></span>{:else}<Icon name="chevron-down" size={17}/>{/if}
                                     </button>
                                     {#if playerComboboxOpen}
                                         <div class="team-options" id="sport-player-options" role="listbox" aria-label={`${activeSport.toUpperCase()} players`}>
-                                            {#each filteredPlayers as player, index}
-                                                <button id={`player-option-${player.player_id}`} type="button" role="option" aria-selected={selectedPlayerId === player.player_id}
-                                                        class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
-                                                        on:mouseenter={() => activePlayerIndex = index}>
-                                                    <span>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
-                                                    <b>{player.teams.join('/')}</b>
-                                                </button>
+                                            {#if playersLoading}
+                                                <div class="combobox-loading" role="status"><span class="button-spinner" aria-hidden="true"></span>
+                                                    <span>Loading {activeSport.toUpperCase()} players…</span></div>
+                                            {:else if playerLoadError}
+                                                <div class="combobox-error"><span>Player list is unavailable.</span><button type="button" on:mousedown|preventDefault={() => loadPlayers()}>Retry</button></div>
                                             {:else}
-                                                <div class="no-team-results">No players match “{playerFilter}”</div>
-                                            {/each}
+                                                {#each filteredPlayers as player, index}
+                                                    <button id={`player-option-${player.player_id}`} type="button" role="option" aria-selected={selectedPlayerId === player.player_id}
+                                                            class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
+                                                            on:mouseenter={() => activePlayerIndex = index}>
+                                                        <span>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
+                                                        <b>{player.teams.join('/')}</b>
+                                                    </button>
+                                                {:else}
+                                                    <div class="no-team-results">No players match “{playerFilter}”</div>
+                                                {/each}
+                                            {/if}
                                         </div>
                                     {/if}
                                 </div>
-                                {#if playerInput && !selectedPlayerId}<small class="validation">Choose a player from the list.</small>{/if}
+                                {#if playerInput && !selectedPlayerId && !playersLoading}<small class="validation">Choose a player from the list.</small>{/if}
                             </div>
                             {#if selectedPlayer?.teams.length}
                                 <label>Team stint <select bind:value={playerTeamId}>
@@ -1475,7 +1755,7 @@
             <section class="conversation" aria-label="Investigation conversation">
                 <div class="conversation-header">
                     <div><span class="eyebrow">INVESTIGATION THREAD</span>
-                        <h2>{investigationSubject(active)} Film Room</h2>
+                        <h2>{investigationSubject(active, playerNamesById)} Film Room</h2>
                         <p>The initial analysis and every follow-up are saved together. Select any analyst response to inspect its report and evidence.</p>
                     </div>
                     <span class="conversation-count">{Math.max(0, conversationThread.length - 1)} follow-up{conversationThread.length === 2 ? '' : 's'}</span>
@@ -1535,7 +1815,7 @@
                     <h2>Investigation Summary</h2>
                     <p>{active.summary}</p>
                     <div class="report-meta" aria-label="Investigation scope">
-                        <span>{investigationSubject(active)}</span>
+                        <span>{investigationSubject(active, playerNamesById)}</span>
                         <span>{displayDomain(active.run.analysis_domain)}</span>
                         <span>{investigationWindow(active)}</span>
                         <span>{active.claims.length} evidence-bound findings</span>

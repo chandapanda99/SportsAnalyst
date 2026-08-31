@@ -114,6 +114,22 @@ uv run sports-analyst providers check
 
 If provider construction or model synthesis fails, the completed deterministic evidence remains available and the saved report is marked as a fallback.
 
+### LangSmith tracing
+
+LangSmith tracing is opt-in. Add the following to `.env` to trace the deterministic pipeline and Deep Agent activity:
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=open-sports-analyst-local
+# LANGSMITH_WORKSPACE_ID=
+```
+
+Each investigation is a root trace with child spans for planning, data loading, deterministic analysis, synthesis, and persistence. Follow-ups use the original
+investigation ID as their `thread_id`, while retaining their own `investigation_id`. Trace metadata contains scope identifiers and counts, not raw datasets or
+credentials. Tracing is fail-open: configuration or delivery failures are logged but do not fail an investigation.
+
 ## Data
 
 Data is downloaded through `nflreadpy` (NFL) or SportsDataverse (NBA), normalized to local Polars/Parquet data, and registered in a DuckDB catalog. The repository does not
@@ -393,6 +409,11 @@ All settings use the following environment variables and may be placed in `.env`
 | `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |           `false`            | Recalculate SHA-256 whenever a manifest is loaded     |
 |   `INVESTIGATION_HISTORY_LIMIT`    |             `50`             | Default compact history page size                     |
 |            `LOG_LEVEL`             |            `INFO`            | Backend logging level                                 |
+|        `LANGSMITH_TRACING`         |           `false`            | Enable LangSmith tracing                              |
+|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                            |
+|        `LANGSMITH_API_KEY`         |            Empty             | LangSmith API key                                     |
+|         `LANGSMITH_PROJECT`        | `open-sports-analyst-local`  | Destination LangSmith project                         |
+|      `LANGSMITH_WORKSPACE_ID`      |            Empty             | Optional workspace for scoped API keys                |
 
 Set `LOG_LEVEL=DEBUG` for lightweight diagnostics. Logs include IDs, lifecycle stages, timings, result counts, model/fallback outcomes, citation repair, and event timeouts.
 They intentionally exclude prompts, questions, evidence contents, SQL text, managed paths, credentials, and raw model responses.

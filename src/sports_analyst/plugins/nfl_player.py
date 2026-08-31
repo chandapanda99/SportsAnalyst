@@ -681,9 +681,32 @@ class NFLPlayerAnalysisMixin:
             evidence.extend(published_evidence)
             executions.extend(published_executions)
         if not evidence:
+            frames_for_availability = season_frames or {
+                windows[0].season: baseline,
+                windows[1].season: comparison,
+            }
+            available_seasons = sorted(
+                season for season, frame in frames_for_availability.items() if not frame.is_empty()
+            )
+            display_name = next(
+                (
+                    str(frame[name_column][0])
+                    for frame in frames_for_availability.values()
+                    if not frame.is_empty()
+                    for name_column in (
+                        "passer_player_name",
+                        "receiver_player_name",
+                        "rusher_player_name",
+                    )
+                    if name_column in frame.columns and frame[name_column][0] is not None
+                ),
+                subject.id,
+            )
+            requested = f"{windows[0].season} and {windows[1].season}"
+            available = ", ".join(str(season) for season in available_seasons) or "none"
             raise ValueError(
-                "no comparable player metrics are available: neither window has the required attributed play values, "
-                "and no compatible synced published player statistics cover both windows"
+                f"{display_name} does not have comparable {domain} data in both requested seasons ({requested}). "
+                f"Available {domain} seasons in this range: {available}. Choose two seasons with recorded activity."
             )
 
         primary = next((metric for metric in selected_metrics if any(item.metric == metric for item in evidence)), selected_metrics[0])

@@ -654,3 +654,36 @@ def test_metric_explanation_and_player_resolution(pbp_pair) -> None:
     assert players[0].name == "Travis Kelce"
     assert players[0].seasons_by_domain["receiving"] == [2025]
     assert players[0].seasons_by_domain["quarterback"] == []
+
+    resolved = plugin.resolve_players(
+        "Caleb Williams",
+        [
+            (
+                2023,
+                pl.DataFrame(
+                    {
+                        "gsis_id": ["00-0039918"],
+                        "full_name": ["Caleb Williams"],
+                        "team": ["CHI"],
+                        "position": ["QB"],
+                    }
+                ),
+            ),
+            (
+                2024,
+                pl.DataFrame(
+                    {
+                        "player_id": ["00-0039918"],
+                        "player_name": ["C.Williams"],
+                        "position": ["QB"],
+                        "attempts": [562],
+                        "targets": [0],
+                        "carries": [81],
+                    }
+                ),
+            ),
+        ],
+    )
+    assert resolved[0].name == "Caleb Williams"
+    assert resolved[0].seasons == [2024]
+    assert resolved[0].seasons_by_domain["quarterback"] == [2024]

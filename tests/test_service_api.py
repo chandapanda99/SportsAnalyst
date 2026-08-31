@@ -1,5 +1,7 @@
 import asyncio
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 from fastapi.testclient import TestClient
@@ -10,9 +12,33 @@ from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.service import AnalystApplication
 
 
+class RecordingTelemetry:
+    def __init__(self) -> None:
+        self.spans: list[tuple[str, dict[str, Any]]] = []
+
+    @contextmanager
+    def span(self, name: str, **kwargs: Any):
+        self.spans.append((name, kwargs.get("metadata") or {}))
+        yield object()
+
+    @staticmethod
+    def add_outputs(_run: object, _outputs: dict[str, Any]) -> None:
+        return
+
+
 def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch) -> None:
     settings = Settings(data_dir=tmp_path, foundry_endpoint="")
     application = AnalystApplication(settings)
+    telemetry = RecordingTelemetry()
+    application.telemetry = telemetry
+    synthesis_metadata: list[dict[str, Any]] = []
+    original_synthesize = application.agent.synthesize
+
+    def capture_synthesis(*args: Any, **kwargs: Any):
+        synthesis_metadata.append(kwargs["trace_metadata"])
+        return original_synthesize(*args, **kwargs)
+
+    monkeypatch.setattr(application.agent, "synthesize", capture_synthesis)
     for season, frame in pbp_pair.items():
         source = tmp_path / f"source-{season}.parquet"
         frame.write_parquet(source)
@@ -36,8 +62,19 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert [event["progress"] for event in synthesis_events] == [0.75, 0.76, 0.94]
     assert (tmp_path / "investigations" / bundle.run.investigation_id / "report.html").exists()
     assert all(claim.evidence_ids for claim in bundle.claims)
+    assert {name for name, _metadata in telemetry.spans} >= {
+        "sports-analyst.investigation",
+        "sports-analyst.plan-analysis",
+        "sports-analyst.load-datasets",
+        "sports-analyst.execute-deterministic-analysis",
+        "sports-analyst.synthesize-report",
+        "sports-analyst.validate-and-persist",
+    }
+    assert synthesis_metadata[0]["investigation_id"] == bundle.run.investigation_id
+    assert synthesis_metadata[0]["thread_id"] == bundle.run.investigation_id
 
     client = TestClient(create_app(application))
+    assert client.get("/api/health").json() == {"status": "ready"}
     assert client.get("/api/capabilities").json()["custom_analysis"] is False
     options = client.get("/api/sports/nfl/options").json()
     assert options["available_seasons"] == [2024, 2025]
@@ -121,6 +158,14 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert child.run.metrics == bundle.run.metrics
     assert child.summary.startswith("Follow-up:")
     assert child.plan.calls[0].tool == "reuse_parent_evidence"
+    assert synthesis_metadata[1]["investigation_id"] == child.run.investigation_id
+    assert synthesis_metadata[1]["thread_id"] == bundle.run.investigation_id
+    assert {name for name, _metadata in telemetry.spans} >= {
+        "sports-analyst.follow-up",
+        "sports-analyst.reuse-parent-evidence",
+        "sports-analyst.synthesize-follow-up",
+        "sports-analyst.persist-follow-up",
+    }
     assert [item.execution_id for item in child.executions] == [item.execution_id for item in bundle.executions]
     thread = client.get(f"/api/investigations/{child.run.investigation_id}/thread")
     assert thread.status_code == 200

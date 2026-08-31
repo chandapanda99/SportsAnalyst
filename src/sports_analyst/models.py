@@ -84,8 +84,9 @@ class AnalysisSubject(BaseModel):
     type: Literal["team", "player"] = "team"
     id: str = Field(min_length=1, max_length=128)
     team_id: str | None = Field(default=None, max_length=128)
+    display_name: str | None = Field(default=None, max_length=256)
 
-    @field_validator("id", "team_id", mode="before")
+    @field_validator("id", "team_id", "display_name", mode="before")
     @classmethod
     def normalize_identifier(cls, value: object) -> str | None:
         if value is None:

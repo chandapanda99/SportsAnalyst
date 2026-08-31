@@ -53,7 +53,7 @@
 
     /* Semantic colors: components consume these, not palette values. */
     --color-canvas: #000a14;
-    --color-canvas-glow: #05233CFF;
+    --color-canvas-glow: #000f1e;
     --color-sidebar: var(--navy-975);
     --color-surface-low: var(--navy-950);
     --color-surface: var(--navy-925);

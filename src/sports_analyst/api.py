@@ -53,6 +53,11 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
     service = application or AnalystApplication()
     api = FastAPI(title="Open Sports Analyst", version="1.0.0")
 
+    @api.get("/api/health")
+    def health() -> dict[str, str]:
+        """Report readiness after application construction has completed."""
+        return {"status": "ready"}
+
     @api.get("/api/capabilities", response_model=RuntimeCapabilities)
     def capabilities() -> RuntimeCapabilities:
         return service.capabilities()

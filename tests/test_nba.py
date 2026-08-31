@@ -243,13 +243,14 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     player = application.investigate(
         AnalysisRequest(
             sport="nba",
-            subject=AnalysisSubject(type="player", id="4065648", team_id="BOS"),
+            subject=AnalysisSubject(type="player", id="4065648", team_id="BOS", display_name="Jayson Tatum"),
             question="How did Tatum's scoring change?",
             scope=scope,
             analysis_domain="scoring",
             metrics=["points_per_game", "true_shooting_pct"],
         )
     )
+    assert player.run.subject and player.run.subject.display_name == "Jayson Tatum"
     lineup = application.investigate(
         AnalysisRequest(
             sport="nba",

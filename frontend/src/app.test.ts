@@ -105,7 +105,7 @@ describe('Open Sports Analyst workbench', () => {
                 { value: 'points_per_game', label: 'Points per game', category: 'Scoring', analysis_domain: 'scoring', description: 'Points.', available_seasons: [2024, 2025], subject_types: ['player'] }
               ]
             }
-        : url.endsWith('/datasets')
+        : url.endsWith('/datasets') || url.includes('/datasets?sport=')
           ? [
               { dataset: 'play_by_play', season: 2024 },
               { dataset: 'rosters', season: 2024 },
@@ -152,7 +152,7 @@ describe('Open Sports Analyst workbench', () => {
                 { value: 'rusher_epa_per_carry', label: 'EPA/carry', category: 'Efficiency', analysis_domain: 'running', description: 'Player EPA per carry.', available_seasons: [2024, 2025], subject_types: ['player'] }
               ]
             }
-          : url.endsWith('/investigations')
+          : url.endsWith('/investigations') || url.includes('/investigations?sport=')
             ? mockInvestigations
             : [];
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -174,6 +174,54 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
     expect(screen.getByText('Manage Local nflverse Data')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Start investigation/i })).toBeTruthy();
+  });
+
+  it('shows data-library progress while the active sport catalog is loading', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const defaultImplementation = fetchMock.getMockImplementation()!;
+    let releaseOptions!: () => void;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).endsWith('/sports/nfl/options')) {
+        return new Promise<Response>((resolve) => {
+          releaseOptions = () => void Promise.resolve(defaultImplementation(input, init)).then(resolve);
+        });
+      }
+      return defaultImplementation(input, init);
+    });
+
+    render(App);
+    expect(await screen.findByText('Loading data catalog')).toBeTruthy();
+    expect(screen.getByRole('status')).toBeTruthy();
+    expect(screen.getByText('Loading data…')).toBeTruthy();
+
+    await waitFor(() => expect(typeof releaseOptions).toBe('function'));
+    releaseOptions();
+    await waitFor(() => expect(screen.queryByText('Loading data catalog')).toBeNull());
+    expect(screen.getByText('4 local files')).toBeTruthy();
+  });
+
+  it('waits for backend readiness before requesting the workspace catalog', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const defaultImplementation = fetchMock.getMockImplementation()!;
+    let releaseHealth!: () => void;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).endsWith('/api/health')) {
+        return new Promise<Response>((resolve) => {
+          releaseHealth = () => resolve(new Response(JSON.stringify({ status: 'ready' }), {
+            status: 200, headers: { 'content-type': 'application/json' }
+          }));
+        });
+      }
+      return defaultImplementation(input, init);
+    });
+
+    render(App);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/health'));
+    expect(fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => !url.endsWith('/api/health'))).toHaveLength(0);
+
+    releaseHealth();
+    expect(await screen.findByText('Analyze and Discuss Football Play-by-Play Data!')).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/sports/nfl/options'))).toBe(true));
   });
 
   it('combines the animated catch loader with live investigation status', async () => {
@@ -239,10 +287,25 @@ describe('Open Sports Analyst workbench', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     render(App);
     const question = screen.getByLabelText(/Your Question/i) as HTMLTextAreaElement;
-    expect(question.value).toBe("Why did this team's passing efficiency change?");
+    expect(question.value).toBe("What drove the change in this offense's EPA per dropback: down-to-down success, completion performance, or explosive passes?");
 
     await fireEvent.click(screen.getByRole('button', { name: 'Show another example question' }));
-    expect(question.value).toBe('Did this team become more consistent, or was the change concentrated in a few periods?');
+    expect(question.value).toBe('Did the passing game become consistently more efficient, or did a handful of explosive plays and outlier games drive the difference?');
+  });
+
+  it('keeps example questions aligned to sport, subject, and analysis domain', async () => {
+    render(App);
+    const question = await screen.findByLabelText(/Your Question/i) as HTMLTextAreaElement;
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
+    expect(question.value).toContain("quarterback's EPA per dropback");
+    await fireEvent.click(await screen.findByRole('button', { name: /^Receiving/ }));
+    expect(question.value).toContain("receiver's production");
+
+    await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
+    expect(question.value).toContain("team's offensive rating");
+    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
+    expect(question.value).toContain("player's scoring");
   });
 
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {
@@ -253,13 +316,21 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
     expect(await screen.findByText('Analyze and Discuss Basketball Play-by-Play Data!')).toBeTruthy();
+    expect(screen.queryByLabelText('NFL team')).toBeNull();
+    expect(screen.queryByText('EPA/dropback')).toBeNull();
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
     expect(screen.getByText('not offered for selected seasons')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
     const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLInputElement;
     await fireEvent.focus(player);
+    expect(await screen.findByRole('option', { name: /Jaylen Brown/i })).toBeTruthy();
+    const playerRequestsBeforeTyping = vi.mocked(fetch).mock.calls
+      .filter(([input]) => String(input).includes('/sports/nba/players')).length;
     await fireEvent.input(player, { target: { value: 'tatum' } });
+    const playerRequestsAfterTyping = vi.mocked(fetch).mock.calls
+      .filter(([input]) => String(input).includes('/sports/nba/players')).length;
+    expect(playerRequestsAfterTyping).toBe(playerRequestsBeforeTyping);
     expect(screen.queryByRole('option', { name: /Jaylen Brown/i })).toBeNull();
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Jayson Tatum/ }));
     expect(player.value).toBe('Jayson Tatum · BOS');
@@ -319,6 +390,33 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: /QB EPA\/dropback/ })).toBeNull();
     expect(screen.getByRole('checkbox', { name: 'Down' })).toBeTruthy();
+  });
+
+  it('distinguishes player loading from an empty player search', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const defaultImplementation = fetchMock.getMockImplementation()!;
+    let releasePlayers!: () => void;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).includes('/sports/nfl/players?query=')) {
+        return new Promise<Response>((resolve) => {
+          releasePlayers = () => void Promise.resolve(defaultImplementation(input, init)).then(resolve);
+        });
+      }
+      return defaultImplementation(input, init);
+    });
+
+    render(App);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
+    const player = screen.getByRole('combobox', { name: 'Player' });
+    await fireEvent.focus(player);
+
+    expect(await screen.findByText('Loading NFL players…')).toBeTruthy();
+    expect(screen.queryByText(/No players match/)).toBeNull();
+    expect(player.getAttribute('aria-busy')).toBe('true');
+
+    releasePlayers();
+    expect(await screen.findByRole('option', { name: /Patrick Mahomes/ })).toBeTruthy();
+    expect(player.getAttribute('aria-busy')).toBe('false');
   });
 
   it('treats full seasons as an inclusive season range', async () => {
@@ -406,6 +504,9 @@ describe('Open Sports Analyst workbench', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
 
     render(App);
+    expect(await screen.findByText('Define Comparison')).toBeTruthy();
+    expect(screen.queryByText('The follow-up found a consistent shift.')).toBeNull();
+    await fireEvent.click(await screen.findByText('Which games changed the most?'));
     expect(await screen.findByText('Was it consistent across the sample?')).toBeTruthy();
     expect(screen.getByText('The follow-up found a consistent shift.')).toBeTruthy();
     expect(screen.getAllByText('1 follow-up').length).toBeGreaterThan(0);
@@ -418,6 +519,31 @@ describe('Open Sports Analyst workbench', () => {
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', { method: 'DELETE' });
     expect(screen.queryByText('Which games changed the most?')).toBeNull();
     expect(screen.queryByText('Was it consistent across the sample?')).toBeNull();
+  });
+
+  it('uses player names and initials instead of identifiers in saved investigation navigation', async () => {
+    mockInvestigations = [{
+      run: {
+        investigation_id: 'investigation-player', sport: 'nfl',
+        subject: { type: 'player', id: '00-0033873', team_id: 'KC' },
+        question: 'Which dropbacks best represented the change?', created_at: '2026-08-21T12:00:00Z',
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 18] }, comparison: { season: 2025, weeks: [1, 18] }
+        }
+      },
+      summary: 'Summary', claims: [], aggregate_evidence: [], play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true
+    }];
+
+    render(App);
+    expect(await screen.findByText('Patrick Mahomes')).toBeTruthy();
+    const badge = screen.getByText('PM');
+    expect(badge.classList.contains('recent-subject-badge')).toBe(true);
+    expect(screen.queryByText('00-0033873')).toBeNull();
+
+    await fireEvent.click(screen.getByText('Which dropbacks best represented the change?'));
+    expect(await screen.findByRole('heading', { name: 'Patrick Mahomes investigation' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Patrick Mahomes Film Room' })).toBeTruthy();
   });
 
   it('selects only the clicked finding and lists all of its cited evidence', async () => {
@@ -437,6 +563,7 @@ describe('Open Sports Analyst workbench', () => {
     }];
 
     render(App);
+    await fireEvent.click(await screen.findByText('What changed?'));
     const first = await screen.findByRole('button', { name: 'Inspect evidence for finding 1' });
     const second = screen.getByRole('button', { name: 'Inspect evidence for finding 2' });
 

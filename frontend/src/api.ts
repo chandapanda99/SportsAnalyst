@@ -12,6 +12,13 @@ async function empty(url: string, init?: RequestInit): Promise<void> {
 }
 
 export const api = {
+  ready: async () => {
+    try {
+      return (await fetch('/api/health')).ok;
+    } catch {
+      return false;
+    }
+  },
   capabilities: () => json<Capabilities>('/api/capabilities'),
   sports: () => json<SportOption[]>('/api/sports'),
   analysisOptions: (sport = 'nfl') => json<AnalysisOptions>(`/api/sports/${sport}/options`),

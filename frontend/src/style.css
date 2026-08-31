@@ -132,7 +132,46 @@ button, input, textarea, select {
 
 .rail .recent-report-link {
     width: 100%;
+    align-items: flex-start;
     padding-right: 43px
+}
+
+.rail .recent-subject-badge {
+    display: grid;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--mint) 45%, var(--line));
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--mint) 10%, var(--color-surface-raised));
+    color: var(--mint);
+    font: 600 11px var(--font-mono)
+}
+
+.rail .recent-report-link > div {
+    min-width: 0
+}
+
+.rail .recent-subject-name,
+.rail .recent-question {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.rail .recent-subject-name {
+    margin-bottom: 3px;
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 600
+}
+
+.rail .recent-question {
+    color: var(--color-text-soft);
+    font-size: 12px
 }
 
 .rail .delete-report {
@@ -553,6 +592,68 @@ main {
     color: var(--muted);
     font-size: 14px;
     text-align: center
+}
+
+.combobox-loading,
+.combobox-error {
+    display: flex;
+    min-height: 58px;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 14px 12px;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    text-align: center
+}
+
+.combobox-error {
+    justify-content: space-between
+}
+
+.combobox-error button {
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid var(--color-border-interactive);
+    border-radius: 5px;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    cursor: pointer
+}
+
+.button-spinner {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: library-spin .75s linear infinite
+}
+
+.page-operation-loading {
+    display: flex;
+    width: min(720px, calc(100% - 40px));
+    min-height: 110px;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin: clamp(42px, 9vh, 110px) auto;
+    padding: 24px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 10px;
+    background: var(--color-surface-low)
+}
+
+.page-operation-loading strong,
+.page-operation-loading small {
+    display: block
+}
+
+.page-operation-loading small {
+    margin-top: 5px;
+    color: var(--color-text-tertiary)
 }
 
 .window-grid {
@@ -985,6 +1086,156 @@ main {
     display: grid;
     grid-template-columns: minmax(170px, .42fr) minmax(0, 1.58fr);
     gap: 20px
+}
+
+.library-loading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--mint) 22%, var(--color-border-control));
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--mint) 5%, var(--color-surface-input));
+    color: var(--color-text-primary)
+}
+
+.library-load-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 62px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--color-status-warning) 42%, var(--color-border-control));
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--color-status-warning) 7%, var(--color-surface-input))
+}
+
+.library-load-error strong,
+.library-load-error small {
+    display: block
+}
+
+.library-load-error strong {
+    color: var(--color-text-primary);
+    font-size: 13px
+}
+
+.library-load-error small {
+    max-width: 440px;
+    margin-top: 4px;
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    line-height: 1.4
+}
+
+.library-load-error button {
+    min-height: 34px;
+    padding: 7px 12px;
+    flex: 0 0 auto
+}
+
+.library-loading > span:last-child,
+.library-loading strong,
+.library-loading small {
+    display: block
+}
+
+.library-loading strong {
+    font-size: 13px;
+    font-weight: 600
+}
+
+.library-loading small {
+    margin-top: 3px;
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    line-height: 1.35
+}
+
+.library-spinner {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    border: 2px solid color-mix(in srgb, var(--mint) 24%, transparent);
+    border-top-color: var(--mint);
+    border-radius: 50%;
+    animation: library-spin .8s linear infinite
+}
+
+.library-skeleton {
+    display: grid;
+    grid-template-columns: minmax(170px, .42fr) minmax(0, 1.58fr);
+    gap: 20px
+}
+
+.library-skeleton > div {
+    display: grid;
+    align-content: start;
+    gap: 8px
+}
+
+.skeleton-label,
+.skeleton-block,
+.skeleton-row {
+    display: block;
+    overflow: hidden;
+    border-radius: 5px;
+    background: var(--color-surface-control);
+    position: relative
+}
+
+.skeleton-label {
+    width: 54px;
+    height: 10px
+}
+
+.skeleton-label.wide {
+    width: 72px
+}
+
+.skeleton-block {
+    height: 72px;
+    border: 1px solid var(--color-border-control)
+}
+
+.skeleton-row {
+    width: 100%;
+    height: 18px
+}
+
+.skeleton-row.short {
+    width: 72%
+}
+
+.skeleton-label::after,
+.skeleton-block::after,
+.skeleton-row::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--mint) 12%, transparent), transparent);
+    transform: translateX(-100%);
+    animation: library-shimmer 1.4s ease-in-out infinite
+}
+
+@keyframes library-spin {
+    to { transform: rotate(360deg) }
+}
+
+@keyframes library-shimmer {
+    to { transform: translateX(100%) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .library-spinner,
+    .button-spinner,
+    .skeleton-label::after,
+    .skeleton-block::after,
+    .skeleton-row::after {
+        animation: none
+    }
 }
 
 @media (min-width: 601px) {
@@ -2304,12 +2555,17 @@ button.analyst-bubble:focus-visible,
         padding-top: 8px
     }
 
-    .sync-fields, .dataset-options {
+    .sync-fields, .dataset-options, .library-skeleton {
         grid-template-columns: 1fr
     }
 
     .data-manager summary {
         display: grid
+    }
+
+    .library-load-error {
+        align-items: stretch;
+        flex-direction: column
     }
 
     .working {

@@ -297,6 +297,7 @@ class EvidenceBoundAgent:
         analysis_domain: str = "passing",
         sport: str = "nfl",
         progress_callback: Callable[[str, float], None] | None = None,
+        trace_metadata: dict[str, Any] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -484,11 +485,30 @@ class EvidenceBoundAgent:
             if subagents:
                 agent_arguments["subagents"] = subagents
             agent = create_deep_agent(**agent_arguments)
+            invocation_metadata: dict[str, Any] = {
+                **(trace_metadata or {}),
+                "sport": sport,
+                "analysis_domain": analysis_domain,
+                "provider": self.settings.model_provider,
+                "model_id": resolved.model_id,
+                "synthesis_mode": synthesis_mode,
+            }
+            invocation_tags = [
+                "open-sports-analyst",
+                f"sport:{sport}",
+                f"domain:{analysis_domain}",
+                f"provider:{self.settings.model_provider}",
+            ]
 
             def invoke(prompt: str) -> BaseModel:
                 response = agent.invoke(
                     {"messages": [{"role": "user", "content": prompt}]},
-                    config={"callbacks": [progress_handler]},
+                    config={
+                        "callbacks": [progress_handler],
+                        "run_name": "open-sports-analyst.synthesis",
+                        "metadata": invocation_metadata,
+                        "tags": invocation_tags,
+                    },
                 )
                 structured = response.get("structured_response")
                 return structured if isinstance(structured, response_model) else response_model.model_validate(structured)

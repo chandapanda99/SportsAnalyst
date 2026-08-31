@@ -11,7 +11,7 @@ export type PlayerOption = {
   seasons: number[];
   seasons_by_domain?: Record<string, number[]>;
 };
-export type AnalysisSubject = { type: 'team' | 'player'; id: string; team_id?: string };
+export type AnalysisSubject = { type: 'team' | 'player'; id: string; team_id?: string; display_name?: string };
 export type MetricOption = {
   value: string; label: string; category: string; description: string; analysis_domain: string; available_seasons: number[]; subject_types?: string[];
 };
