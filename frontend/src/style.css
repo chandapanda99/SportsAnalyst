@@ -2311,17 +2311,43 @@ button.analyst-bubble:focus-visible,
     display: grid
 }
 
+.evidence-window-group + .evidence-window-group {
+    border-top: 1px solid var(--line)
+}
+
+.evidence-window-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 20px;
+    background: color-mix(in srgb, var(--color-surface-raised) 55%, transparent)
+}
+
+.evidence-window-heading strong {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    letter-spacing: .055em;
+    text-transform: uppercase
+}
+
+.evidence-window-heading small {
+    color: var(--muted);
+    font-size: 12px
+}
+
 .play-list button {
     position: relative;
     display: grid;
-    grid-template-columns:84px 150px 1fr 88px;
-    gap: 15px;
+    grid-template-columns:minmax(8.5rem, .8fr) minmax(10rem, 1fr) minmax(0, 5fr) max-content;
+    column-gap: clamp(12px, 1.25vw, 22px);
+    row-gap: 5px;
     align-items: center;
     background: transparent;
     color: var(--ink);
     border: 0;
     border-bottom: 1px solid var(--line);
-    padding: 14px 20px;
+    padding: 15px clamp(16px, 1.35vw, 24px);
     text-align: left;
     cursor: pointer
 }
@@ -2337,6 +2363,7 @@ button.analyst-bubble:focus-visible,
 
 .play-list .play-tag {
     justify-self: start;
+    max-width: 100%;
     padding: 4px 7px;
     border: 1px solid color-mix(in srgb, var(--color-status-counter) 35%, transparent);
     border-radius: var(--radius-xs);
@@ -2351,22 +2378,50 @@ button.analyst-bubble:focus-visible,
     white-space: nowrap
 }
 
+.play-list .play-reference {
+    display: grid;
+    gap: 2px;
+    min-width: 0
+}
+
 .play-list .play-tag.supporting {
     color: var(--mint);
     border-color: color-mix(in srgb, var(--mint) 35%, transparent);
     background: color-mix(in srgb, var(--mint) 9%, transparent)
 }
 
-.play-list strong {
+.play-list .play-reference strong {
     color: var(--color-text-primary);
     font-size: 14px;
     font-weight: var(--font-weight-strong);
-    line-height: 1.35
+    line-height: 1.25;
+    overflow-wrap: anywhere
 }
 
-.play-list p {
+.play-list .play-reference small {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.2
+}
+
+.play-list .play-description {
+    display: grid;
+    gap: 3px;
+    min-width: 0
+}
+
+.play-list .play-description > span {
     font-size: 14px;
     color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis
+}
+
+.play-list .play-description small {
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis
@@ -2382,6 +2437,12 @@ button.analyst-bubble:focus-visible,
     line-height: 1.2;
     text-align: right;
     white-space: nowrap
+}
+
+@container (max-width: 1050px) {
+    .play-list button {
+        grid-template-columns:minmax(8.25rem, max-content) minmax(9rem, 1.2fr) minmax(0, 3fr) max-content
+    }
 }
 
 .export {
@@ -2510,11 +2571,28 @@ button.analyst-bubble:focus-visible,
     }
 
     .play-list button {
-        grid-template-columns:70px 1fr 60px
+        grid-template-columns:max-content minmax(0, 1fr) max-content;
+        grid-template-areas:
+            "tag reference value"
+            "description description description";
+        align-items: start
     }
 
-    .play-list p {
-        grid-column: 1/-1
+    .play-list .play-tag {
+        grid-area: tag
+    }
+
+    .play-list .play-reference {
+        grid-area: reference
+    }
+
+    .play-list .play-description {
+        grid-area: description;
+        padding-top: 4px
+    }
+
+    .play-list .play-epa {
+        grid-area: value
     }
 
     .topbar {
@@ -2528,6 +2606,19 @@ button.analyst-bubble:focus-visible,
 }
 
 @media (max-width: 600px) {
+    .evidence-window-heading {
+        display: grid;
+        gap: 4px
+    }
+
+    .play-list button {
+        grid-template-columns:minmax(0, 1fr) max-content;
+        grid-template-areas:
+            "tag value"
+            "reference reference"
+            "description description"
+    }
+
     .conversation-header {
         display: grid
     }

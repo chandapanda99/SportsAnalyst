@@ -447,6 +447,12 @@ class PlayEvidence(BaseModel):
     epa: float | None = None
     metric_value: float | None = None
     supporting: bool = True
+    window: Literal["baseline", "comparison"] | None = None
+    evidence_role: Literal["typical", "metric_example", "supports_change", "counterexample"] | None = None
+    selection_reason: str | None = None
+    selection_metric: str | None = None
+    candidate_pool_size: int | None = None
+    selector_version: str | None = None
     dataset_manifest_id: str
     tool_execution_id: str | None = None
     visualization: PlayVisualization | None = None

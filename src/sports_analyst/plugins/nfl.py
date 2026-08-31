@@ -1156,9 +1156,10 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
 
         play_parameters = {
             "team": team,
-            "window": windows[1].model_dump(),
-            "supporting": 3,
-            "counterexamples": 2,
+            "windows": [window.model_dump() for window in windows],
+            "per_window": 4,
+            "selector_version": "diverse-v1",
+            "selection_metric": primary_metric,
             "minimum_absolute_epa": 0.0,
         }
         play_id = stable_id("execution", {"tool": "find_representative_plays", **play_parameters})
@@ -1168,15 +1169,23 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             team,
             manifests[endpoint_seasons[1]],
             play_id,
-            supporting_count=int(play_parameters["supporting"]),
-            counterexample_count=int(play_parameters["counterexamples"]),
             minimum_absolute_epa=float(play_parameters["minimum_absolute_epa"]),
+            baseline_frame=baseline,
+            baseline_manifest=manifests[endpoint_seasons[0]],
+            primary_source=METRICS[primary_metric][0],
+            metric_label=METRICS[primary_metric][1],
+            per_window=int(play_parameters["per_window"]),
         )
-        plays = self._enrich_representative_plays(
-            plays,
-            supplemental.get("participation", {}).get(windows[1].season),
-            supplemental.get("ftn_charting", {}).get(windows[1].season),
-        )
+        enriched_plays = {}
+        for window in windows:
+            window_plays = [play for play in plays if play.season == window.season]
+            for play in self._enrich_representative_plays(
+                window_plays,
+                supplemental.get("participation", {}).get(window.season),
+                supplemental.get("ftn_charting", {}).get(window.season),
+            ):
+                enriched_plays[play.evidence_id] = play
+        plays = [enriched_plays.get(play.evidence_id, play) for play in plays]
         executions.append(
             _execution_record(
                 "find_representative_plays",

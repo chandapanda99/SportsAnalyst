@@ -33,7 +33,16 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert epa.value == -0.1
     assert epa.sample_size == 160
     assert [item.evidence_id for item in first.aggregate_evidence] == [item.evidence_id for item in second.aggregate_evidence]
-    assert len(first.play_evidence) == 5
+    assert len(first.play_evidence) == 8
+    assert {item.window for item in first.play_evidence} == {"baseline", "comparison"}
+    assert {item.evidence_role for item in first.play_evidence} == {
+        "typical",
+        "metric_example",
+        "supports_change",
+        "counterexample",
+    }
+    assert len({item.game_id for item in first.play_evidence[:4]}) == 4
+    assert [item.evidence_id for item in first.play_evidence] == [item.evidence_id for item in second.play_evidence]
     assert first.play_evidence[0].visualization is not None
     assert first.play_evidence[0].visualization.down is not None
     assert first.play_evidence[0].visualization.yards_gained is not None

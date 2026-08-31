@@ -270,6 +270,14 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
 
     assert team.run.sport == player.run.sport == "nba"
     assert team.aggregate_evidence and player.aggregate_evidence
+    assert {item.window for item in team.play_evidence} == {"baseline", "comparison"}
+    assert all(item.selection_reason and item.selector_version == "diverse-v1" for item in team.play_evidence)
+    assert {item.evidence_role for item in team.play_evidence} <= {
+        "typical", "metric_example", "supports_change", "counterexample"
+    }
+    representative_tool = next(item for item in team.executions if item.tool == "find_representative_possessions")
+    assert [window["season"] for window in representative_tool.parameters["windows"]] == [2024, 2025]
+    assert representative_tool.parameters["selector_version"] == "diverse-v1"
     assert [chart.title for chart in lineup.charts] == ["NBA range endpoints", "Season-by-season Lineup net rating"]
     assert all(chart.specification["data"]["values"] for chart in lineup.charts)
     assert {row["season"] for row in lineup.charts[1].specification["data"]["values"]} == {2024, 2025}

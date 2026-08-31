@@ -546,6 +546,41 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByRole('heading', { name: 'Patrick Mahomes Film Room' })).toBeTruthy();
   });
 
+  it('shows diversified representative evidence by comparison window and selection role', async () => {
+    mockInvestigations = [{
+      run: {
+        investigation_id: 'investigation-diverse-evidence', sport: 'nfl',
+        question: 'Which plays explain the change?', created_at: '2026-08-21T12:00:00Z',
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 18] }, comparison: { season: 2025, weeks: [1, 18] }
+        }
+      },
+      summary: 'Summary', claims: [], aggregate_evidence: [], charts: [], methodological_caveats: [], fallback_used: true,
+      play_evidence: [{
+        evidence_id: 'baseline-typical', game_id: '2024_01_KC_BAL', play_id: 11,
+        description: 'A representative baseline completion.', epa: 0.08, supporting: true,
+        window: 'baseline', evidence_role: 'typical', selection_reason: 'Closest to the baseline window median EPA.',
+        selection_metric: 'EPA', candidate_pool_size: 160, selector_version: 'diverse-v1'
+      }, {
+        evidence_id: 'comparison-counter', game_id: '2025_02_BUF_KC', play_id: 24,
+        description: 'A comparison-window counterexample.', epa: -1.12, supporting: false,
+        window: 'comparison', evidence_role: 'counterexample', selection_reason: 'Runs against the observed improvement in EPA.',
+        selection_metric: 'EPA', candidate_pool_size: 148, selector_version: 'diverse-v1'
+      }]
+    }];
+
+    render(App);
+    await fireEvent.click(await screen.findByText('Which plays explain the change?'));
+
+    expect(await screen.findByText('Baseline window')).toBeTruthy();
+    expect(screen.getByText('Comparison window')).toBeTruthy();
+    expect(screen.getByText('1 of 160 qualifying plays selected')).toBeTruthy();
+    expect(screen.getByText('Typical')).toBeTruthy();
+    expect(screen.getByText('Counterexample')).toBeTruthy();
+    expect(screen.getByText('Runs against the observed improvement in EPA.')).toBeTruthy();
+  });
+
   it('selects only the clicked finding and lists all of its cited evidence', async () => {
     mockInvestigations = [{
       run: {

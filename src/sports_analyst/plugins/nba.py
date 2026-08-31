@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -869,8 +870,33 @@ class NBAPlugin:
             result_sha256=_sha([item.model_dump(mode="json") for item in aggregate]),
             dataset_manifest_ids=[item.manifest_id for item in all_manifests],
         )
+        play_parameters = {
+            "subject": subject.model_dump(),
+            "windows": [request.scope.baseline.model_dump(), request.scope.comparison.model_dump()],
+            "selection_metric": selected_metrics[0],
+            "per_window": 4,
+            "selector_version": "diverse-v1",
+        }
+        play_execution_id = stable_id("execution", {"tool": "find_representative_possessions", **play_parameters})
+        play_started_at, play_started = datetime.now(UTC), perf_counter()
         plays = self._representative_plays(
-            request, datasets[request.scope.comparison.season], supplemental, manifests[request.scope.comparison.season]
+            request,
+            datasets[request.scope.comparison.season],
+            supplemental,
+            manifests[request.scope.comparison.season],
+            baseline_frame=datasets[request.scope.baseline.season],
+            baseline_manifest=manifests[request.scope.baseline.season],
+            metric_label=METRICS[selected_metrics[0]][0],
+            execution_id=play_execution_id,
+        )
+        play_execution = ToolExecutionRecord(
+            execution_id=play_execution_id,
+            tool="find_representative_possessions",
+            parameters=play_parameters,
+            started_at=play_started_at,
+            duration_ms=int((perf_counter() - play_started) * 1000),
+            result_sha256=_sha([item.model_dump(mode="json") for item in plays]),
+            dataset_manifest_ids=[item.manifest_id for item in all_manifests],
         )
         endpoint_labels = (
             (str(request.scope.baseline.season), str(request.scope.comparison.season))
@@ -940,7 +966,7 @@ class NBAPlugin:
         ]
         if request.analysis_domain in {"lineups", "impact"} and "lineups" not in supplemental:
             caveats.append("Lineup analysis was unavailable because the NBA Stats lineup package was not synced.")
-        return NBAAnalysisResult(aggregate, plays, charts, [execution], caveats)
+        return NBAAnalysisResult(aggregate, plays, charts, [execution, play_execution], caveats)
 
     @staticmethod
     def _scope_lineups(frame: pl.DataFrame, subject: Any) -> pl.DataFrame:
@@ -964,40 +990,78 @@ class NBAPlugin:
         frame: pl.DataFrame,
         supplemental: dict[str, dict[int, pl.DataFrame]],
         manifest: DatasetManifest,
+        baseline_frame: pl.DataFrame | None = None,
+        baseline_manifest: DatasetManifest | None = None,
+        metric_label: str | None = None,
+        execution_id: str | None = None,
     ) -> list[PlayEvidence]:
         subject = request.subject
         if subject is None or frame.is_empty():
             return []
-        schedule = supplemental.get("schedules", {}).get(request.scope.comparison.season, pl.DataFrame())
-        game_ids = segment_game_ids(schedule, request.scope.comparison.season, request.scope.comparison.segment or "full_season")
-        scoped = frame.filter(pl.col("game_id").cast(pl.String).is_in(game_ids)) if game_ids and "game_id" in frame.columns else frame
-        if subject.type == "team":
-            team = str(subject.id).upper()
-            if "team_abbreviation" in scoped.columns:
-                scoped = scoped.filter(pl.col("team_abbreviation").fill_null("").str.to_uppercase() == team)
-            elif {"home_team_abbrev", "away_team_abbrev"} <= set(scoped.columns):
-                scoped = scoped.filter((pl.col("home_team_abbrev") == team) | (pl.col("away_team_abbrev") == team))
-        else:
-            columns = [column for column in ("athlete_id_1", "athlete_id_2", "athlete_id_3", "player_id") if column in scoped.columns]
-            if columns:
-                predicate = pl.col(columns[0]).cast(pl.String) == str(subject.id)
-                for column in columns[1:]:
-                    predicate |= pl.col(column).cast(pl.String) == str(subject.id)
-                scoped = scoped.filter(predicate)
-        if scoped.is_empty():
-            return []
-        if "score_value" in scoped.columns:
-            scoped = scoped.with_columns(_numeric(scoped, "score_value").fill_null(0).alias("_rank"))
-        else:
-            scoped = scoped.with_columns(pl.lit(0.0).alias("_rank"))
-        supporting = scoped.sort("_rank", descending=True).head(3).with_columns(pl.lit(True).alias("_supporting"))
-        counter = scoped.filter(pl.col("_rank") == 0).head(2).with_columns(pl.lit(False).alias("_supporting"))
-        selected = pl.concat([supporting, counter], how="diagonal_relaxed").unique(subset=["game_id", "play_id"], keep="first")
+        sources = [("comparison", request.scope.comparison, frame, manifest)]
+        if baseline_frame is not None and baseline_manifest is not None:
+            sources.insert(0, ("baseline", request.scope.baseline, baseline_frame, baseline_manifest))
+        candidates: list[EvidenceCandidate] = []
+        for window_name, window, source_frame, source_manifest in sources:
+            schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
+            game_ids = segment_game_ids(schedule, window.season, window.segment or "full_season")
+            scoped = source_frame.filter(pl.col("game_id").cast(pl.String).is_in(game_ids)) if game_ids and "game_id" in source_frame.columns else source_frame
+            if subject.type == "team":
+                team = str(subject.id).upper()
+                if "team_abbreviation" in scoped.columns:
+                    scoped = scoped.filter(pl.col("team_abbreviation").fill_null("").str.to_uppercase() == team)
+                elif {"home_team_abbrev", "away_team_abbrev"} <= set(scoped.columns):
+                    scoped = scoped.filter((pl.col("home_team_abbrev") == team) | (pl.col("away_team_abbrev") == team))
+            else:
+                columns = [column for column in ("athlete_id_1", "athlete_id_2", "athlete_id_3", "player_id") if column in scoped.columns]
+                if columns:
+                    predicate = pl.col(columns[0]).cast(pl.String) == str(subject.id)
+                    for column in columns[1:]:
+                        predicate |= pl.col(column).cast(pl.String) == str(subject.id)
+                    scoped = scoped.filter(predicate)
+            for row in scoped.iter_rows(named=True):
+                description = str(row.get("description") or row.get("text") or "").lower()
+                score_value = float(row.get("score_value") or 0)
+                shot_value = float(_shot_value(description, row) or score_value or 2)
+                if request.analysis_domain in {"scoring", "shooting"}:
+                    outcome = shot_value if ("make" in description or score_value > 0) else -shot_value if "miss" in description else 0.0
+                elif request.analysis_domain == "playmaking":
+                    outcome = 2.0 if "assist" in description else -2.0 if "turnover" in description else score_value * 0.25
+                elif request.analysis_domain == "rebounding":
+                    outcome = 1.0 if "rebound" in description else 0.0
+                elif request.analysis_domain == "turnovers":
+                    outcome = -2.0 if "turnover" in description else score_value * 0.25
+                else:
+                    outcome = score_value if score_value else -1.0 if any(token in description for token in ("miss", "turnover")) else 0.0
+                event_type = str(row.get("type_text") or row.get("type_abbreviation") or "").strip().lower()
+                if not event_type:
+                    event_type = next((token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description), "event")
+                event_team = str(row.get("team_abbreviation") or subject.team_id or subject.id).upper()
+                home, away = str(row.get("home_team_abbrev") or "").upper(), str(row.get("away_team_abbrev") or "").upper()
+                opponent = away if event_team == home else home
+                context_fields = ("period", "clock", "home_score", "away_score", "description")
+                context_quality = sum(row.get(name) is not None for name in context_fields) / len(context_fields)
+                candidates.append(
+                    EvidenceCandidate(
+                        key=f"{source_manifest.season}:{row.get('game_id')}:{row.get('play_id')}",
+                        window=window_name,
+                        game_id=str(row.get("game_id")),
+                        event_type=event_type,
+                        payload=(row, source_manifest),
+                        outcome_value=outcome,
+                        relevance=abs(outcome) + (1.0 if request.analysis_domain.replace("ing", "") in description else 0.0),
+                        context_quality=context_quality,
+                        opponent=opponent,
+                        period=str(row.get("period") or ""),
+                    )
+                )
+        selected = select_diverse_evidence(candidates, metric_label=metric_label, per_window=4)
         evidence = []
-        season = request.scope.comparison.season
-        lineup_frame = supplemental.get("lineups_v3", {}).get(season, pl.DataFrame())
-        possession_frame = supplemental.get("possessions_v3", {}).get(season, pl.DataFrame())
-        for row in selected.iter_rows(named=True):
+        for selection in selected:
+            row, source_manifest = selection.candidate.payload
+            season = source_manifest.season
+            lineup_frame = supplemental.get("lineups_v3", {}).get(season, pl.DataFrame())
+            possession_frame = supplemental.get("possessions_v3", {}).get(season, pl.DataFrame())
             play_id = int(float(row.get("play_id") or 0))
             description = str(row.get("description") or row.get("text") or "NBA play")
             game_id = str(row.get("game_id"))
@@ -1071,9 +1135,16 @@ class NBAPlugin:
                     play_id=play_id,
                     team=str(row.get("team_abbreviation") or subject.team_id or subject.id),
                     description=description,
-                    metric_value=float(row.get("_rank") or 0),
-                    supporting=bool(row.get("_supporting")),
-                    dataset_manifest_id=manifest.manifest_id,
+                    metric_value=selection.candidate.outcome_value,
+                    supporting=selection.role != "counterexample",
+                    window=selection.candidate.window,
+                    evidence_role=selection.role,
+                    selection_reason=selection.reason,
+                    selection_metric=selection.selection_metric,
+                    candidate_pool_size=selection.candidate_pool_size,
+                    selector_version=selection.selector_version,
+                    dataset_manifest_id=source_manifest.manifest_id,
+                    tool_execution_id=execution_id,
                     visualization=PlayVisualization(
                         sport="nba",
                         source_packages=source_packages,

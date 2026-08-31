@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisWindow,
@@ -32,20 +33,62 @@ class NFLPresentationMixin:
         team: str,
         manifest: DatasetManifest,
         execution_id: str,
-        supporting_count: int = 3,
-        counterexample_count: int = 2,
         minimum_absolute_epa: float = 0,
+        baseline_frame: pl.DataFrame | None = None,
+        baseline_manifest: DatasetManifest | None = None,
+        primary_source: str = "epa",
+        metric_label: str = "EPA",
+        per_window: int = 4,
     ) -> list[PlayEvidence]:
         required = {"game_id", "play_id", "_epa"}
         if not required <= set(frame.columns):
             return []
-        candidates = frame.filter(pl.col("_epa").is_not_null() & (pl.col("_epa").abs() >= minimum_absolute_epa))
-        supporting = candidates.sort(["_epa", "game_id", "play_id"], descending=[True, False, False]).head(supporting_count)
-        counterexamples = candidates.sort(["_epa", "game_id", "play_id"], descending=[False, False, False]).head(counterexample_count)
-        selected = pl.concat([supporting, counterexamples]).unique(["game_id", "play_id"], keep="first", maintain_order=True)
+        sources = [("comparison", frame, manifest)]
+        if baseline_frame is not None and baseline_manifest is not None and required <= set(baseline_frame.columns):
+            sources.insert(0, ("baseline", baseline_frame, baseline_manifest))
+        metric_column = f"_{primary_source}"
+        candidates: list[EvidenceCandidate] = []
+        for window, source_frame, source_manifest in sources:
+            scoped = source_frame.filter(pl.col("_epa").is_not_null() & (pl.col("_epa").abs() >= minimum_absolute_epa))
+            for row in scoped.iter_rows(named=True):
+                metric_value = row.get(metric_column)
+                if primary_source == "plays_per_game" or metric_value is None:
+                    metric_value = row.get("_epa")
+                numeric_metric = float(metric_value) if metric_value is not None else None
+                relevance = abs(numeric_metric or 0.0)
+                if primary_source in {"yards_gained", "air_yards", "yards_after_catch"}:
+                    relevance /= 10
+                elif primary_source == "cpoe":
+                    relevance /= 20
+                flags = {
+                    "interception": row.get("interception"),
+                    "sack": row.get("sack"),
+                    "fumble": row.get("fumble_lost"),
+                    "touchdown": row.get("touchdown"),
+                    "explosive": row.get("_explosive"),
+                }
+                event_type = next((name for name, value in flags.items() if value), str(row.get("play_type") or "play"))
+                context_fields = ("week", "qtr", "down", "ydstogo", "yardline_100", "score_differential", "desc")
+                context_quality = sum(row.get(name) is not None for name in context_fields) / len(context_fields)
+                candidates.append(
+                    EvidenceCandidate(
+                        key=f"{source_manifest.season}:{row['game_id']}:{row['play_id']}",
+                        window=window,
+                        game_id=str(row["game_id"]),
+                        event_type=event_type,
+                        payload=(row, source_manifest),
+                        outcome_value=numeric_metric,
+                        relevance=relevance,
+                        context_quality=context_quality,
+                        opponent=str(row.get("defteam") or ""),
+                        period=str(row.get("qtr") or ""),
+                    )
+                )
+        selected = select_diverse_evidence(candidates, metric_label=metric_label, per_window=per_window)
         records = []
-        for index, row in enumerate(selected.iter_rows(named=True)):
-            payload = {"season": manifest.season, "game_id": row["game_id"], "play_id": row["play_id"]}
+        for selection in selected:
+            row, source_manifest = selection.candidate.payload
+            payload = {"season": source_manifest.season, "game_id": row["game_id"], "play_id": row["play_id"]}
             turnover_values = [row.get(name) for name in ("interception", "fumble_lost")]
             turnover = any(bool(value) for value in turnover_values) if any(value is not None for value in turnover_values) else None
             visualization = PlayVisualization(
@@ -101,14 +144,20 @@ class NFLPresentationMixin:
             records.append(
                 PlayEvidence(
                     evidence_id=stable_id("play", payload),
-                    season=manifest.season,
+                    season=source_manifest.season,
                     game_id=str(row["game_id"]),
                     play_id=int(row["play_id"]),
                     team=team,
                     description=str(row.get("desc") or "Play description unavailable"),
                     epa=round(float(row["_epa"]), 4) if row["_epa"] is not None else None,
-                    supporting=index < supporting.height,
-                    dataset_manifest_id=manifest.manifest_id,
+                    supporting=selection.role != "counterexample",
+                    window=selection.candidate.window,
+                    evidence_role=selection.role,
+                    selection_reason=selection.reason,
+                    selection_metric=selection.selection_metric,
+                    candidate_pool_size=selection.candidate_pool_size,
+                    selector_version=selection.selector_version,
+                    dataset_manifest_id=source_manifest.manifest_id,
                     tool_execution_id=execution_id,
                     visualization=visualization,
                 )

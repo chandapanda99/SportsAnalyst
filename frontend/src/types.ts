@@ -52,6 +52,8 @@ export type Evidence = {
   evidence_id: string; metric?: string; label?: string; value?: number; baseline_value?: number;
   comparison_value?: number; sample_size?: number; caveats?: string[]; game_id?: string;
   play_id?: number; season?: number; team?: string; description?: string; epa?: number; metric_value?: number; supporting?: boolean;
+  window?: 'baseline' | 'comparison'; evidence_role?: 'typical' | 'metric_example' | 'supports_change' | 'counterexample';
+  selection_reason?: string; selection_metric?: string; candidate_pool_size?: number; selector_version?: string;
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {

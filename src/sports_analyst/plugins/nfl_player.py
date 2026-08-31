@@ -833,16 +833,38 @@ class NFLPlayerAnalysisMixin:
         team = subject.team_id or (
             str(comparison["posteam"][0]) if "posteam" in comparison.columns and comparison.height else request.scope.team
         )
-        play_parameters = {"subject": subject.id, "domain": domain, "window": windows[1].model_dump()}
+        play_parameters = {
+            "subject": subject.id,
+            "domain": domain,
+            "windows": [window.model_dump() for window in windows],
+            "per_window": 4,
+            "selector_version": "diverse-v1",
+            "selection_metric": primary,
+        }
         play_id = stable_id("execution", {"tool": "find_player_representative_plays", **play_parameters})
         play_started_at, play_started = datetime.now(UTC), perf_counter()
-        plays = self._representative_plays(comparison, team, manifests[windows[1].season], play_id)
+        plays = self._representative_plays(
+            comparison,
+            team,
+            manifests[windows[1].season],
+            play_id,
+            baseline_frame=baseline,
+            baseline_manifest=manifests[windows[0].season],
+            primary_source=PLAYER_METRICS[primary][0],
+            metric_label=PLAYER_METRICS[primary][1],
+            per_window=int(play_parameters["per_window"]),
+        )
         if hasattr(self, "_enrich_representative_plays"):
-            plays = self._enrich_representative_plays(
-                plays,
-                supplemental.get("participation", {}).get(windows[1].season),
-                supplemental.get("ftn_charting", {}).get(windows[1].season),
-            )
+            enriched_plays = {}
+            for window in windows:
+                window_plays = [play for play in plays if play.season == window.season]
+                for play in self._enrich_representative_plays(
+                    window_plays,
+                    supplemental.get("participation", {}).get(window.season),
+                    supplemental.get("ftn_charting", {}).get(window.season),
+                ):
+                    enriched_plays[play.evidence_id] = play
+            plays = [enriched_plays.get(play.evidence_id, play) for play in plays]
         executions.append(
             _execution_record(
                 "find_player_representative_plays", play_id, play_parameters, plays, selected_manifests, play_started_at, play_started
