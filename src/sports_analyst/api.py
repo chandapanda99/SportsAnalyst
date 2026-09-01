@@ -52,6 +52,7 @@ def _sse(payload: dict[str, Any]) -> str:
 def create_app(application: AnalystApplication | None = None) -> FastAPI:
     service = application or AnalystApplication()
     api = FastAPI(title="Open Sports Analyst", version="1.0.0")
+    api.frontend("/", directory="frontend/dist")
 
     @api.get("/api/health")
     def health() -> dict[str, str]:
