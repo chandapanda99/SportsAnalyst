@@ -49,7 +49,7 @@ POSITIVE_IS_BETTER.update(
 LOWER_IS_BETTER.update({"defensive_rating", "turnovers_per_game", "lineup_def_rating"})
 
 
-def _sample_confidence(sample_size: int) -> str:
+def _sample_confidence(sample_size: int) -> Literal["low", "medium", "high"]:
     if sample_size < 10:
         return "low"
     return "high" if sample_size >= 100 else "medium"
@@ -82,11 +82,8 @@ class SynthesisDraft(BaseModel):
     claims: list[Claim] = Field(min_length=1, max_length=12)
 
 
-def _synthesis_mode(
-        question: str,
-        aggregate_count: int,
-        conversation_context: list[dict[str, str]] | None = None,
-) -> Literal["direct", "reviewed", "full"]:
+def _synthesis_mode(question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None) \
+        -> Literal["direct", "reviewed", "full"]:
     if conversation_context:
         return "direct"
     normalized = question.lower()
@@ -96,9 +93,8 @@ def _synthesis_mode(
     return "reviewed"
 
 
-def _citation_ledger(
-        aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
-) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
+def _citation_ledger(aggregate: list[AggregateEvidence], plays: list[PlayEvidence]) \
+        -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     ledger: dict[str, str] = {}
     aggregate_payload: list[dict[str, Any]] = []
     play_payload: list[dict[str, Any]] = []
@@ -247,11 +243,10 @@ def _fallback_synthesis(
                 confidence=_sample_confidence(min(item.sample_size for item in seasonal)),
             )
         )
-    supporting = sorted(
-        [item for item in metrics if item.evidence_id != primary.evidence_id],
-        key=lambda item: abs(float(item.value or 0)),
-        reverse=True,
-    )[:3]
+    supporting = sorted([item for item in metrics if item.evidence_id != primary.evidence_id],
+                        key=lambda item: abs(float(item.value or 0)),
+                        reverse=True)[:3]
+
     for item in supporting:
         claims.append(
             Claim(
