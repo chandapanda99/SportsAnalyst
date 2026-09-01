@@ -52,7 +52,6 @@ def _sse(payload: dict[str, Any]) -> str:
 def create_app(application: AnalystApplication | None = None) -> FastAPI:
     service = application or AnalystApplication()
     api = FastAPI(title="Open Sports Analyst", version="1.0.0")
-    api.frontend("/", directory="frontend/dist")
 
     @api.get("/api/health")
     def health() -> dict[str, str]:
@@ -150,9 +149,9 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
 
     @api.get("/api/investigations", response_model=list[InvestigationSummary])
     def investigations(
-        limit: int | None = Query(default=None, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-        sport: str | None = Query(default=None),
+            limit: int | None = Query(default=None, ge=1, le=500),
+            offset: int = Query(default=0, ge=0),
+            sport: str | None = Query(default=None),
     ) -> list[InvestigationSummary]:
         page_size = limit or service.settings.investigation_history_limit
         return service.store.list_investigation_summaries(page_size, offset, sport)
@@ -235,30 +234,31 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.get("/api/investigations/{investigation_id}/export")
-    def export(investigation_id: str, format: str = "html") -> FileResponse:
-        if format not in {"html", "markdown"}:
+    def export(investigation_id: str, export_format: str = "html") -> FileResponse:
+        if export_format not in {"html", "markdown"}:
             raise HTTPException(status_code=400, detail="format must be html or markdown")
         try:
-            path = service.store.export_path(investigation_id, format)
+            path = service.store.export_path(investigation_id, export_format)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        is_html = format == "html"
-        filename = "report.html" if is_html else "report.md"
+        is_html = export_format == "html"
+        filename = f"{investigation_id}_analysis_report.html" if is_html else f"{investigation_id}_analysis_report.md"
         media_type = "text/html; charset=utf-8" if is_html else "text/markdown; charset=utf-8"
         return FileResponse(path, media_type=media_type, filename=filename)
 
     frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend.exists():
-        api.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")
+        # api.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")
+        api.frontend("/", directory="frontend/dist")
     return api
 
 
 async def _event_stream(
-    service: AnalystApplication,
-    key: str,
-    timeout_seconds: float | None = None,
-    poll_interval: float = 0.1,
-    heartbeat_interval: float = 15.0,
+        service: AnalystApplication,
+        key: str,
+        timeout_seconds: float | None = None,
+        poll_interval: float = 0.1,
+        heartbeat_interval: float = 15.0,
 ):
     offset = 0
     loop = asyncio.get_running_loop()
