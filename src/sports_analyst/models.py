@@ -409,8 +409,8 @@ class PlayVisualization(BaseModel):
     offense_positions: list[str] = Field(default_factory=list)
     defense_names: list[str] = Field(default_factory=list)
     defense_positions: list[str] = Field(default_factory=list)
-    # Basketball-specific evidence. These remain optional so legacy NFL bundles
-    # continue to validate without a data migration.
+    # Shared venue fields and basketball-specific evidence remain optional so
+    # legacy investigation bundles continue to validate without a migration.
     period: int | None = None
     event_type: str | None = None
     action_type: str | None = None

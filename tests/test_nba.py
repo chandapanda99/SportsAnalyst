@@ -270,6 +270,7 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
 
     assert team.run.sport == player.run.sport == "nba"
     assert team.aggregate_evidence and player.aggregate_evidence
+    assert team.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
     assert {item.window for item in team.play_evidence} == {"baseline", "comparison"}
     assert all(item.selection_reason and item.selector_version == "diverse-v1" for item in team.play_evidence)
     assert {item.evidence_role for item in team.play_evidence} <= {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from sports_analyst.chart_specs import metric_row_comparison_spec
 from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
@@ -101,6 +102,8 @@ class NFLPresentationMixin:
                 yardline_100=_row_number(row, "yardline_100"),
                 possession_team=_row_text(row, "posteam"),
                 defensive_team=_row_text(row, "defteam"),
+                home_team_abbreviation=_row_text(row, "home_team"),
+                away_team_abbreviation=_row_text(row, "away_team"),
                 possession_score=_row_integer(row, "posteam_score"),
                 defensive_score=_row_integer(row, "defteam_score"),
                 possession_timeouts=_row_integer(row, "posteam_timeouts_remaining"),
@@ -179,7 +182,12 @@ class NFLPresentationMixin:
         metric_items = [item for item in evidence if item.metric in METRICS]
         if season_frames:
             values = [
-                {"metric": item.label, "season": season, "value": _metric_value(frame, METRICS[item.metric][0])}
+                {
+                    "metric": item.label,
+                    "season": str(season),
+                    "value": _metric_value(frame, METRICS[item.metric][0]),
+                    "unit": item.unit,
+                }
                 for item in metric_items
                 for season, frame in sorted(season_frames.items())
             ]
@@ -191,8 +199,8 @@ class NFLPresentationMixin:
                 record
                 for item in metric_items
                 for record in (
-                    {"metric": item.label, "window": window_labels[0], "value": item.baseline_value},
-                    {"metric": item.label, "window": window_labels[1], "value": item.comparison_value},
+                    {"metric": item.label, "window": window_labels[0], "value": item.baseline_value, "unit": item.unit},
+                    {"metric": item.label, "window": window_labels[1], "value": item.comparison_value, "unit": item.unit},
                 )
             ]
             series_field = "window"
@@ -207,18 +215,11 @@ class NFLPresentationMixin:
                 },
             ),
             title=chart_title,
-            specification={
-                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                "data": {"values": values},
-                "mark": {"type": "bar", "cornerRadiusEnd": 3},
-                "encoding": {
-                    "x": {"field": "metric", "type": "nominal", "sort": None, "axis": {"labelAngle": -25}},
-                    "y": {"field": "value", "type": "quantitative"},
-                    "color": {"field": series_field, "type": "nominal", "sort": "ascending"},
-                    "xOffset": {"field": series_field, "sort": "ascending"},
-                    "tooltip": [{"field": "metric"}, {"field": series_field}, {"field": "value", "format": ".3f"}],
-                },
-            },
+            specification=metric_row_comparison_spec(
+                values,
+                series_field=series_field,
+                series_order=[str(season) for season in sorted(season_frames)] if season_frames else window_labels,
+            ),
             evidence_ids=chart_evidence_ids,
         )
         if season_frames:

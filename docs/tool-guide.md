@@ -28,10 +28,27 @@ Every investigation identifies:
 - a plugin-defined domain and selected metrics;
 - optional diagnostic cuts and a natural-language question.
 
-Legacy NFL payloads remain valid: a missing sport defaults to `nfl`, and legacy `weeks` values are migrated to an NFL `week_range`.
+Legacy NFL payloads remain valid: a missing sport defaults to `nfl`, a missing explicit subject is inferred from `scope.team`, and legacy `baseline_season` /
+`comparison_season` values become complete-season windows. Current NFL windows use the inclusive `weeks` pair directly; NBA windows add a normalized `segment` value.
 
 Datasets, manifests, cached files, and SQL views are partitioned by sport, dataset, and season. Internal play-by-play queries always include the sport boundary, so an NBA
 investigation cannot read NFL data and vice versa.
+
+### Shared representative-evidence selector
+
+Both plugins use the deterministic, versioned `diverse-v1` selector. Candidates from the baseline and comparison windows are considered together, then up to four distinct
+items are selected per window in this stable role order:
+
+1. `typical` — closest to the ordinary recorded outcome for that window;
+2. `metric_example` — especially relevant to the selected metric;
+3. `supports_change` — aligned with the measured direction between windows;
+4. `counterexample` — runs against that direction.
+
+The selector prefers different games and reduces the score of repeated event types, opponents, and periods. Stable candidate keys provide deterministic tie-breaking. A sparse
+candidate pool produces fewer items rather than duplicate or invented evidence.
+
+Each `PlayEvidence` record carries `window`, `evidence_role`, `selection_reason`, `selection_metric`, `candidate_pool_size`, and `selector_version`. Reports group this
+evidence by window and expose the selection reason alongside the sport-specific visualization.
 
 ## NFL plugin
 
@@ -40,35 +57,36 @@ rushing investigations over full seasons, week ranges, and before/after week win
 
 ### NFL minimum samples
 
-- Every comparison window and every season in a full-season range requires at least 30 qualifying plays.
-- Player investigations use every attributed play available. Windows below 10 plays are reported as highly uncertain, and metrics are omitted only when their required values are unavailable. Quarterback reports can supplement sparse play-by-play with compatible synced weekly player, Next Gen passing, and PFR passing statistics.
+- Team investigations require at least 30 qualifying plays in every comparison window and every season in a full-season range.
+- Player investigations use every attributed play available. Windows below 10 plays are reported as highly uncertain, and metrics are omitted only when their required values
+  are unavailable. Quarterback reports can supplement sparse play-by-play with compatible synced weekly player, Next Gen passing, and PFR passing statistics.
 - A subgroup or diagnostic split requires at least 10 plays.
 
 Small groups can still appear as descriptive context, but they are not promoted as reliable findings.
 
 ### NFL metrics
 
-| Domain  | Metric                | Definition                                                  |
-|:-------:|-----------------------|-------------------------------------------------------------|
-| Passing | EPA per dropback      | Total passing EPA divided by qualifying dropbacks           |
-| Passing | Success rate          | Share of dropbacks with positive EPA                        |
-| Passing | CPOE                  | Mean completion percentage over expected                    |
-| Passing | Explosive pass rate   | Share of dropbacks gaining at least 20 yards                |
-| Passing | Yards per play        | Yards gained divided by qualifying dropbacks                |
-| Passing | Sack rate             | Sacks divided by dropbacks                                  |
-| Passing | Interception rate     | Interceptions divided by dropbacks                          |
+| Domain  |        Metric         | Definition                                                  |
+|:-------:|:---------------------:|-------------------------------------------------------------|
+| Passing |   EPA per dropback    | Total passing EPA divided by qualifying dropbacks           |
+| Passing |     Success rate      | Share of dropbacks with positive EPA                        |
+| Passing |         CPOE          | Mean completion percentage over expected                    |
+| Passing |  Explosive pass rate  | Share of dropbacks gaining at least 20 yards                |
+| Passing |    Yards per play     | Yards gained divided by qualifying dropbacks                |
+| Passing |       Sack rate       | Sacks divided by dropbacks                                  |
+| Passing |   Interception rate   | Interceptions divided by dropbacks                          |
 | Passing | Air yards per attempt | Air yards divided by attempts                               |
-| Passing | YAC per completion    | Yards after catch divided by completions                    |
-| Rushing | EPA per rush          | Total rushing EPA divided by qualifying rushes              |
-| Rushing | Rush success rate     | Share of rushes with positive EPA                           |
-| Rushing | Yards per carry       | Rushing yards divided by attempts                           |
-| Rushing | Explosive rush rate   | Share of rushes gaining at least 10 yards                   |
-| Rushing | Stuff rate            | Share of rushes stopped at or behind the line               |
-| Rushing | First-down rate       | Share of rushes gaining the yards required for a first down |
-| Offense | EPA per play          | Total EPA divided by qualifying offensive plays             |
-| Offense | Success rate          | Share of plays with positive EPA                            |
-| Offense | Yards per play        | Total yards divided by qualifying plays                     |
-| Offense | Turnover rate         | Turnovers divided by qualifying plays                       |
+| Passing |  YAC per completion   | Yards after catch divided by completions                    |
+| Rushing |     EPA per rush      | Total rushing EPA divided by qualifying rushes              |
+| Rushing |   Rush success rate   | Share of rushes with positive EPA                           |
+| Rushing |    Yards per carry    | Rushing yards divided by attempts                           |
+| Rushing |  Explosive rush rate  | Share of rushes gaining at least 10 yards                   |
+| Rushing |      Stuff rate       | Share of rushes stopped at or behind the line               |
+| Rushing |    First-down rate    | Share of rushes gaining the yards required for a first down |
+| Offense |     EPA per play      | Total EPA divided by qualifying offensive plays             |
+| Offense |     Success rate      | Share of plays with positive EPA                            |
+| Offense |    Yards per play     | Total yards divided by qualifying plays                     |
+| Offense |     Turnover rate     | Turnovers divided by qualifying plays                       |
 
 Metric metadata returned by the API is authoritative for exact labels, polarity, units, and availability.
 
@@ -84,12 +102,12 @@ Metric metadata returned by the API is authoritative for exact labels, polarity,
 |            `analyze_situational_split`, `analyze_game_state`            | Supports down, distance, field position, score state, personnel, formation, and related cuts when fields exist                                          |
 | `decompose_metric_change`, `compare_play_mix`, `identify_change_points` | Describes mix, within-group performance, usage, and timing changes                                                                                      |
 |                         `adjust_for_opponents`                          | Adds leave-one-game-out opponent-strength context                                                                                                       |
-|                       `find_representative_plays`                       | Selects supporting and counterexample plays tied to computed findings                                                                                   |
+|                       `find_representative_plays`                       | Selects diversified, role-labeled plays from both windows using the shared evidence policy                                                              |
 |                            `explain_metric`                             | Returns definitions, formulas, and interpretation guidance                                                                                              |
 |                          `query_play_by_play`                           | Registered catalog capability backed by a constrained internal SQL helper; it is not a public execution endpoint or persisted investigation tool record |
-| `compare_player_windows`, `analyze_player_trends` | Compares one quarterback, receiver, or rusher and records season-level trajectory evidence |
-| `compare_player_published_stats` | Adds player-specific weekly, Next Gen passing, and PFR passing evidence when compatible synced rows cover both windows |
-| `find_player_representative_plays` | Selects plays carrying the requested player identifier |
+|            `compare_player_windows`, `analyze_player_trends`            | Compares one quarterback, receiver, or rusher and records season-level trajectory evidence                                                              |
+|                    `compare_player_published_stats`                     | Adds player-specific weekly, Next Gen passing, and PFR passing evidence when compatible synced rows cover both windows                                  |
+|                   `find_player_representative_plays`                    | Applies the same two-window evidence policy to plays carrying the requested player identifier                                                           |
 
 Supplemental NFL datasets enable extra context:
 
@@ -122,8 +140,9 @@ The default NBA sync uses published SportsDataverse bulk releases:
 NBA seasons are stored by ending year and displayed as spans. For example, season `2026` is displayed as `2025–26`. The connector translates that canonical value to each
 loader’s expected argument.
 
-Both teams and players are primary subjects. A player investigation normally includes all team stints in the selected period. Supplying `subject.team_id` limits a traded
-player to one stint.
+Both teams and players are primary subjects. The plugin exposes only the 30 current NBA franchises as team subjects and excludes All-Star, Rising Stars, and other event-team
+records. Player options are resolved from synced data for those franchises. The frontend loads each sport's player list once and filters it locally by name, identifier, or
+team as the user types. A player investigation normally includes all team stints in the selected period. Supplying `subject.team_id` limits a traded player to one stint.
 
 ### NBA periods
 
@@ -164,7 +183,7 @@ Use `GET /api/sports/nba/options` and the metric-definition endpoint for the exa
 |                 `compare_time_windows`                  | Implemented for team and player box-score metrics                                         |
 |                 `analyze_season_trends`                 | Implemented as a multi-season chart plus the two selected-window aggregates               |
 |               Traded-player stint filter                | Implemented                                                                               |
-|       `find_representative_possessions` behavior        | Implemented from synced play-by-play as part of the investigation                         |
+|       `find_representative_possessions` behavior        | Implemented from both windows of synced play-by-play as part of the investigation         |
 |                    Lineup comparison                    | Implemented when compatible lineup seasons are synced for both windows                    |
 |   Local/live-derived V3 possession/lineup enrichment    | Implemented when matching rows are registered; no V3 bulk release is currently advertised |
 |       `analyze_game_trends`, `rank_game_outliers`       | Catalog surface; not a separate NBA v1 execution path                                     |
@@ -178,8 +197,9 @@ The catalog-only entries preserve the intended interface without overstating cur
 
 ### NBA evidence and enrichment
 
-NBA reports choose representative events from the comparison window. Scoring events can support a finding, while zero-score events can serve as counterexamples. Evidence
-includes period, clock, score, event type, team/player context, and shot details when the source supplies them.
+NBA reports apply the shared two-window selector to basketball events. Candidate scoring and relevance are domain-aware, allowing the selector to distinguish typical events,
+metric-relevant examples, support for the observed change, and counterexamples without treating every made basket as support or every empty scoring field as a contradiction.
+Evidence includes period, clock, score, event type, team/player context, shot result/value/distance/coordinates, and possession number when the source supplies them.
 
 The basketball evidence view draws a half-court marker only when coordinates exist. It shows lineup cards only when on-court players are available; otherwise it falls back to
 a textual event or possession timeline without inventing missing data.
@@ -197,10 +217,13 @@ dependency group. Current investigations use synced bulk data and do not make li
 
 ## Evidence, provenance, and exports
 
-Both plugins return sport-correct findings, charts, representative evidence, tool records, and source manifests. Reports and export bundles retain dataset hashes and
-provenance. Football evidence keeps the existing field visualization; basketball evidence uses the basketball renderer described above.
+Both plugins return sport-correct findings, charts, representative evidence, tool records, and source manifests. Reports and export bundles retain dataset hashes, evidence
+selection metadata, and source provenance. Football evidence keeps the field visualization; basketball evidence uses the basketball renderer described above.
 
 Follow-up questions reuse the saved investigation context. History can be filtered by NFL, NBA, or all sports.
+
+Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
+both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
 ## Adding a sport or analytical tool
 

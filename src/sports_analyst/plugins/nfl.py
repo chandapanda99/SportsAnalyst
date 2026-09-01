@@ -256,10 +256,17 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         return [tool.model_copy(update={"input_schema": TOOL_INPUT_SCHEMAS.get(tool.name, tool.input_schema)}) for tool in tools]
 
     def analysis_options(self, manifests: list[DatasetManifest], teams: pl.DataFrame | None = None) -> AnalysisOptions:
-        available_seasons = sorted({manifest.season for manifest in manifests})
+        play_by_play_manifests = [
+            manifest for manifest in manifests if manifest.dataset == "play_by_play" and manifest.season > 0
+        ]
+        available_seasons = sorted({manifest.season for manifest in play_by_play_manifests})
 
         def seasons_with(required: set[str]) -> list[int]:
-            return sorted(manifest.season for manifest in manifests if required <= set(manifest.columns))
+            return sorted(
+                manifest.season
+                for manifest in play_by_play_manifests
+                if required <= set(manifest.columns)
+            )
 
         metrics = [
             MetricOption(

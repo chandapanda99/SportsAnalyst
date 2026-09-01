@@ -808,6 +808,10 @@
   }
 
   function chartGuidance(specification: Record<string, unknown>) {
+    const usermeta = specification.usermeta as {chartKind?: string} | undefined;
+    if (usermeta?.chartKind === 'metric-rows') {
+      return 'Each metric uses its own vertical scale; labels show exact values while seasons run left to right.';
+    }
     const encoding = specification.encoding as Record<string, unknown> | undefined;
     const x = encoding?.x as Record<string, unknown> | undefined;
     const color = encoding?.color as Record<string, unknown> | undefined;
@@ -817,6 +821,12 @@
     return x?.field === 'season'
         ? 'One continuous trend across seasons; labeled endpoints mark the baseline and comparison seasons.'
         : '';
+  }
+
+  function orderedCharts(charts: Investigation['charts']) {
+    const isMetricComparison = (chart: Investigation['charts'][number]) =>
+      (chart.specification.usermeta as {chartKind?: string} | undefined)?.chartKind === 'metric-rows';
+    return [...charts].sort((left, right) => Number(isMetricComparison(left)) - Number(isMetricComparison(right)));
   }
 
   function evidenceRoleLabel(play: Evidence) {
@@ -846,6 +856,16 @@
     return poolSize
         ? `${plays.length} of ${poolSize} qualifying ${noun} selected`
         : `${plays.length} ${noun} selected`;
+  }
+
+  function chatTimestamp(createdAt: string) {
+    const timestamp = new Date(createdAt);
+    if (Number.isNaN(timestamp.getTime())) return '--:--';
+    return new Intl.DateTimeFormat(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).format(timestamp);
   }
 
   function syncedPackages(season: number) {
@@ -975,6 +995,43 @@
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
+  function isCompleteInvestigation(result: Investigation | null | undefined, investigationId: string) {
+    return result?.run?.investigation_id === investigationId
+        && result.summary != null
+        && Array.isArray(result.claims)
+        && Array.isArray(result.aggregate_evidence)
+        && Array.isArray(result.play_evidence)
+        && Array.isArray(result.charts);
+  }
+
+  async function loadCompletedInvestigation(investigationId: string) {
+    stage = 'Loading completed analysis';
+    progress = 1;
+    let lastError: unknown = new Error('The completed investigation is not available yet.');
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        const [result, thread] = await Promise.all([
+          api.investigation(investigationId),
+          api.investigationThread(investigationId)
+        ]);
+        if (!isCompleteInvestigation(result, investigationId)) {
+          throw new Error('The completed investigation response was incomplete.');
+        }
+        if (!thread.some((turn) => turn.run.investigation_id === investigationId)) {
+          throw new Error('The completed investigation thread was incomplete.');
+        }
+        active = result;
+        conversationThread = thread;
+        await refresh();
+        return true;
+      } catch (problem) {
+        lastError = problem;
+        if (attempt < 7) await wait(Math.min(250 * 2 ** attempt, 2_000));
+      }
+    }
+    throw lastError;
+  }
+
   async function pollInvestigation(investigationId: string) {
     stage = 'Live progress interrupted · checking the saved investigation';
     progress = Math.max(progress, 0.95);
@@ -984,9 +1041,7 @@
       progress = Math.max(progress, status.progress);
       if (status.stage === 'failed') throw new Error(status.message);
       if (status.stage === 'complete') {
-        active = await api.investigation(investigationId);
-        await refresh();
-        return true;
+        return loadCompletedInvestigation(investigationId);
       }
       if (attempt < 29) await wait(2_000);
     }
@@ -1106,10 +1161,7 @@
       });
       stream(
           `/api/investigations/${investigation_id}/events`,
-          async () => {
-            active = await api.investigation(investigation_id);
-            await refresh();
-          },
+          () => loadCompletedInvestigation(investigation_id).then(() => undefined),
           () => pollInvestigation(investigation_id)
       );
     } catch (problem) {
@@ -1245,15 +1297,8 @@
       const {investigation_id} = await api.followUp(root.run.investigation_id, question);
       stream(
           `/api/investigations/${investigation_id}/events`,
-          async () => {
-            active = await api.investigation(investigation_id);
-            await refresh();
-          },
-          async () => {
-            const recovered = await pollInvestigation(investigation_id);
-            if (recovered && active) conversationThread = await api.investigationThread(active.run.investigation_id);
-            return recovered;
-          },
+          () => loadCompletedInvestigation(investigation_id).then(() => undefined),
+          () => pollInvestigation(investigation_id),
           () => {
             followupBusy = false;
             pendingFollowup = '';
@@ -1317,7 +1362,7 @@
                   disabled={deletingInvestigationId === item.run.investigation_id}
                   on:click={() => deleteInvestigation(item)}>
             {#if deletingInvestigationId === item.run.investigation_id}<span class="button-spinner" aria-label="Deleting investigation"></span>{:else}
-              <Icon name="trash" size={16}/>
+              <Icon name="trash" size={15}/>
             {/if}
           </button>
         </div>
@@ -1375,7 +1420,7 @@
                 <Icon name="chevron-down" size={16}/>
               </i></b></summary>
             <div class="onboarding">
-              <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-play is required. Package checkboxes choose what to sync next; coverage is calculated for the selected seasons, and “not offered” means those seasons predate that package.</span>
+              <div class="sync-guidance"><strong>Local Data Library</strong><span>Play-by-Play is required. Package checkboxes choose what to sync next; coverage is calculated for the selected seasons, and “not offered” means those seasons predate that package.</span>
               </div>
               {#if workspaceLoading}
                 <div class="library-loading" role="status" aria-live="polite">
@@ -1806,14 +1851,17 @@
           {#each conversationThread as turn, index}
             <article class="chat-row user-row">
               <span class="chat-avatar user-avatar">You</span>
-              <div class="chat-bubble user-bubble"><small>{index === 0 ? 'Initial question' : `Follow-up ${index}`}</small>
+              <div class="chat-bubble user-bubble">
+                <div class="chat-message-meta"><small>{index === 0 ? 'Initial question' : `Follow-up ${index}`}</small>
+                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time></div>
                 <p>{turn.run.question}</p></div>
             </article>
             <div class="chat-row analyst-row">
               <span class="chat-avatar analyst-avatar"><Icon name="sports-analyst" size={24}/></span>
               <button class="chat-bubble analyst-bubble" class:selected={active.run.investigation_id === turn.run.investigation_id}
                       type="button" on:click={() => openInvestigation(turn)}>
-                <small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
+                <div class="chat-message-meta"><small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
+                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time></div>
                 <p>{turn.summary}</p>
                 <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'}
                   <Icon name="arrow-right" size={15}/></span>
@@ -1943,7 +1991,7 @@
       <section class="charts">
         <div class="section-title"><span>THE SHAPE OF THE CHANGE</span></div>
         <div class="chart-grid">
-          {#each active.charts as chart}
+          {#each orderedCharts(active.charts) as chart}
             <article><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}

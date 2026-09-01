@@ -30,7 +30,13 @@ describe('basketball evidence tablet', () => {
     expect(container.querySelector('.shot.made .made-dot')).toBeTruthy();
     expect(container.querySelector('.shot path')).toBeNull();
     expect(screen.getByText('26 ft')).toBeTruthy();
-    expect(screen.getByText(/4065648/)).toBeTruthy();
-    expect(container.querySelector('.basketball')?.getAttribute('style')).toContain('--nba-primary:');
+    expect(screen.getAllByText(/4065648/)).toHaveLength(2);
+    expect((container.querySelector('.basketball') as HTMLElement).style.getPropertyValue('--home-primary')).toBe('#007A33');
+    expect(container.querySelector('.court-brand image')?.getAttribute('href')).toContain('/nba/500/bos.png');
+    expect(container.querySelectorAll('.court-player.offense')).toHaveLength(2);
+    expect(container.querySelectorAll('.court-player.defense')).toHaveLength(2);
+    expect(container.querySelector('.court-player.offense circle')?.getAttribute('style')).not.toBe(
+      container.querySelector('.court-player.defense circle')?.getAttribute('style')
+    );
   });
 });

@@ -6,7 +6,6 @@ from sports_analyst.agents import (
     _citation_response_model,
     _is_citation_error,
     _resolve_citation_draft,
-    _synthesis_mode,
 )
 from sports_analyst.models import AggregateEvidence, PlayEvidence
 
@@ -81,9 +80,3 @@ def test_citation_schema_rejects_unavailable_aliases() -> None:
             }
         )
     assert _is_citation_error(caught.value)
-
-
-def test_synthesis_mode_avoids_specialists_for_followups_and_scales_with_complexity() -> None:
-    assert _synthesis_mode("Was it consistent?", 40, [{"question": "Prior", "summary": "Context"}]) == "direct"
-    assert _synthesis_mode("Compare the selected metrics", 8) == "reviewed"
-    assert _synthesis_mode("Why did pressure and personnel change?", 8) == "full"

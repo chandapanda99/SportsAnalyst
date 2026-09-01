@@ -5,9 +5,7 @@ import logging
 from collections.abc import Callable
 from threading import Lock
 from typing import Any, Literal
-
 from pydantic import BaseModel, Field, ValidationError, field_validator
-
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
@@ -56,15 +54,16 @@ def _sample_confidence(sample_size: int) -> str:
         return "low"
     return "high" if sample_size >= 100 else "medium"
 
+
 ANALYST_VOICE_GUIDE = """
-Write like an experienced NFL analyst briefing an informed reader, not like a model summarizing a table.
+Write like an experienced, knowledgeable, expert NFL analyst briefing an informed reader, not like a model summarizing a table.
 
 - Lead with the answer and the central football story. Do not open with methodology, generic scene-setting, or a list of metrics.
 - Prioritize the two or three findings that best answer the question. Treat the remaining measurements as support, context, or
   counterevidence instead of reciting every available result.
 - Connect related measurements in natural prose and explain their football meaning. For example, distinguish changes in play mix from
   changes in execution, and separate sustained movement from a result driven by a few games.
-- Use precise football language where the evidence supports it, but translate specialized metrics into practical implications. Avoid
+- Use precise football language where the evidence supports it, but translate specialized metrics into practical implicat   ions. Avoid
   buzzwords, empty intensifiers, canned phrases, and repetitive sentence templates.
 - Vary sentence length and transitions so the writing reads naturally. Prefer direct sentences and active voice. Do not refer to
   yourself, the model, tools, prompts, evidence keys, or the process of generating the report.
@@ -84,9 +83,9 @@ class SynthesisDraft(BaseModel):
 
 
 def _synthesis_mode(
-    question: str,
-    aggregate_count: int,
-    conversation_context: list[dict[str, str]] | None = None,
+        question: str,
+        aggregate_count: int,
+        conversation_context: list[dict[str, str]] | None = None,
 ) -> Literal["direct", "reviewed", "full"]:
     if conversation_context:
         return "direct"
@@ -98,7 +97,7 @@ def _synthesis_mode(
 
 
 def _citation_ledger(
-    aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
+        aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     ledger: dict[str, str] = {}
     aggregate_payload: list[dict[str, Any]] = []
@@ -169,15 +168,15 @@ def _is_citation_error(error: Exception) -> bool:
 
 
 def _fallback_synthesis(
-    question: str,
-    team: str,
-    baseline: AnalysisWindow,
-    comparison: AnalysisWindow,
-    aggregate: list[AggregateEvidence],
-    analysis_seasons: list[int] | None = None,
-    conversation_context: list[dict[str, str]] | None = None,
-    analysis_domain: str = "passing",
-    sport: str = "nfl",
+        question: str,
+        team: str,
+        baseline: AnalysisWindow,
+        comparison: AnalysisWindow,
+        aggregate: list[AggregateEvidence],
+        analysis_seasons: list[int] | None = None,
+        conversation_context: list[dict[str, str]] | None = None,
+        analysis_domain: str = "passing",
+        sport: str = "nfl",
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     preferred_metric = {
@@ -285,19 +284,19 @@ class EvidenceBoundAgent:
         self.settings = settings or get_settings()
 
     def synthesize(
-        self,
-        question: str,
-        team: str,
-        baseline: AnalysisWindow,
-        comparison: AnalysisWindow,
-        aggregate: list[AggregateEvidence],
-        plays: list[PlayEvidence],
-        analysis_seasons: list[int] | None = None,
-        conversation_context: list[dict[str, str]] | None = None,
-        analysis_domain: str = "passing",
-        sport: str = "nfl",
-        progress_callback: Callable[[str, float], None] | None = None,
-        trace_metadata: dict[str, Any] | None = None,
+            self,
+            question: str,
+            team: str,
+            baseline: AnalysisWindow,
+            comparison: AnalysisWindow,
+            aggregate: list[AggregateEvidence],
+            plays: list[PlayEvidence],
+            analysis_seasons: list[int] | None = None,
+            conversation_context: list[dict[str, str]] | None = None,
+            analysis_domain: str = "passing",
+            sport: str = "nfl",
+            progress_callback: Callable[[str, float], None] | None = None,
+            trace_metadata: dict[str, Any] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -370,27 +369,19 @@ class EvidenceBoundAgent:
             progress_handler = SynthesisProgressHandler()
 
             @tool
-            def inspect_aggregate_evidence(
-                metric: str | None = None,
-                citation_keys: list[str] | None = None,
-                limit: int = 60,
-            ) -> str:
+            def inspect_aggregate_evidence(metric: str | None = None, citation_keys: list[str] | None = None, limit: int = 60) -> str:
                 """Return validated aggregate findings, optionally filtered by metric or exact citation keys."""
                 requested = set(citation_keys or [])
                 filtered = [
                     item
                     for item in aggregate_payload
                     if (not metric or metric.lower() in str(item.get("metric", "")).lower())
-                    and (not requested or item["citation_key"] in requested)
+                       and (not requested or item["citation_key"] in requested)
                 ]
                 return json.dumps(filtered[: max(1, min(limit, 100))], indent=2, default=str)
 
             @tool
-            def inspect_representative_plays(
-                supporting: bool | None = None,
-                citation_keys: list[str] | None = None,
-                limit: int = 12,
-            ) -> str:
+            def inspect_representative_plays(supporting: bool | None = None, citation_keys: list[str] | None = None, limit: int = 12) -> str:
                 """Return representative plays, optionally filtered by support/counterexample status or citation keys."""
                 requested = set(citation_keys or [])
                 filtered = [
@@ -405,10 +396,11 @@ class EvidenceBoundAgent:
             sport_noun = "basketball" if sport == "nba" else "football"
             voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else ANALYST_VOICE_GUIDE
             common = (
-                "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
-                f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
-                f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
-                "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" + voice_guide
+                    "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
+                    f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
+                    f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
+                    "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" +
+                    voice_guide
             )
             if analysis_seasons:
                 common += (
@@ -426,9 +418,9 @@ class EvidenceBoundAgent:
                     "name": "efficiency-analyst",
                     "description": f"Diagnoses {analysis_domain} efficiency and production changes.",
                     "system_prompt": (
-                        "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
-                        "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
-                        "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
+                            "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
+                            "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
+                            "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -437,9 +429,10 @@ class EvidenceBoundAgent:
                     "name": "situational-analyst",
                     "description": "Examines contextual split contributions.",
                     "system_prompt": (
-                        f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage mix or "
-                        "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
-                        "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
+                            f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage "
+                            f"mix or "
+                            "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
+                            "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -448,9 +441,10 @@ class EvidenceBoundAgent:
                     "name": "evidence-reviewer",
                     "description": "Challenges claims and verifies citations.",
                     "system_prompt": (
-                        f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited evidence "
-                        "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
-                        "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
+                            f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
+                            f"evidence "
+                            "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
+                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -472,11 +466,12 @@ class EvidenceBoundAgent:
                 model=resolved.chat_model,
                 tools=tools,
                 system_prompt=(
-                    f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with {comparison.model_dump()}. "
-                    f"{coordinator_instruction} Write the result as a polished analyst's read—not a transcript of the "
-                    "specialists and not a metric dump. Build a clear hierarchy: answer, strongest explanation, qualification, then "
-                    f"supporting detail. The reader should understand both what changed and why the available {sport_noun} evidence makes "
-                    "that interpretation reasonable.\n\n" + common
+                        f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
+                        f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
+                        f"knowleadgable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
+                        f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
+                        f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
+                        + common
                 ),
                 response_format=response_model,
                 backend=StateBackend(),
@@ -501,6 +496,7 @@ class EvidenceBoundAgent:
             ]
 
             def invoke(prompt: str) -> BaseModel:
+                # noinspection bad-argument-type
                 response = agent.invoke(
                     {"messages": [{"role": "user", "content": prompt}]},
                     config={

@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.chart_specs import metric_row_comparison_spec
 from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
@@ -377,10 +378,10 @@ def _possessions(frame: pl.DataFrame) -> float | None:
         return None
     value = frame.select(
         (
-            _numeric(frame, "field_goals_attempted")
-            - _numeric(frame, "offensive_rebounds")
-            + _numeric(frame, "turnovers")
-            + 0.44 * _numeric(frame, "free_throws_attempted")
+                _numeric(frame, "field_goals_attempted")
+                - _numeric(frame, "offensive_rebounds")
+                + _numeric(frame, "turnovers")
+                + 0.44 * _numeric(frame, "free_throws_attempted")
         ).sum()
     ).item()
     return float(value) if value is not None else None
@@ -449,7 +450,8 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
             return None
         minutes = _sum(frame, "minutes") or 0
         events = (
-            (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (_sum(frame, turnover_col) or 0)
+                (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (
+                _sum(frame, turnover_col) or 0)
         )
         return float(events / minutes) if minutes else None
     if name == "plus_minus_per_game":
@@ -575,7 +577,8 @@ class NBAPlugin:
             sport=self.sport_id,
             teams=teams,
             available_seasons=available,
-            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons}, reverse=True),
+            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons},
+                                    reverse=True),
             metrics=metric_options,
             default_metrics=DEFAULTS["offense"],
             analysis_domains=DOMAINS,
@@ -661,15 +664,15 @@ class NBAPlugin:
                 (
                     name
                     for name in (
-                        "display_name",
-                        "athlete_display_name",
-                        "espn_full_name",
-                        "player_name",
-                        "player",
-                        "full_name",
-                        "nba_player_name",
-                        "name",
-                    )
+                    "display_name",
+                    "athlete_display_name",
+                    "espn_full_name",
+                    "player_name",
+                    "player",
+                    "full_name",
+                    "nba_player_name",
+                    "name",
+                )
                     if name in frame.columns
                 ),
                 None,
@@ -745,10 +748,10 @@ class NBAPlugin:
 
     @staticmethod
     def _window_frame(
-        request: AnalysisRequest,
-        season: int,
-        segment: str,
-        supplemental: dict[str, dict[int, pl.DataFrame]],
+            request: AnalysisRequest,
+            season: int,
+            segment: str,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
     ) -> pl.DataFrame:
         subject = request.subject
         dataset = "team_boxscores" if subject is None or subject.type == "team" else "player_boxscores"
@@ -791,12 +794,12 @@ class NBAPlugin:
         return frame
 
     def analyze(
-        self,
-        request: AnalysisRequest,
-        datasets: dict[int, pl.DataFrame],
-        manifests: dict[int, DatasetManifest],
-        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+            self,
+            request: AnalysisRequest,
+            datasets: dict[int, pl.DataFrame],
+            manifests: dict[int, DatasetManifest],
+            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NBAAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
@@ -904,7 +907,7 @@ class NBAPlugin:
             else ("Baseline", "Comparison")
         )
         comparison_values = [
-            {"metric": item.label, "window": window, "value": value}
+            {"metric": item.label, "window": window, "value": value, "unit": item.unit}
             for item in aggregate
             for window, value in zip(endpoint_labels, (item.baseline_value, item.comparison_value), strict=True)
         ]
@@ -915,18 +918,11 @@ class NBAPlugin:
                 if request.scope.comparison_design == "full_seasons"
                 else f"{baseline_segment.replace('_', ' ').title()} vs {comparison_segment.replace('_', ' ').title()}"
             ),
-            specification={
-                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                "data": {"values": comparison_values},
-                "mark": {"type": "bar", "cornerRadiusEnd": 3},
-                "encoding": {
-                    "x": {"field": "metric", "type": "nominal", "axis": {"labelAngle": -25}},
-                    "y": {"field": "value", "type": "quantitative"},
-                    "color": {"field": "window", "type": "nominal"},
-                    "xOffset": {"field": "window"},
-                    "tooltip": ["window", "metric", "value"],
-                },
-            },
+            specification=metric_row_comparison_spec(
+                comparison_values,
+                series_field="window",
+                series_order=endpoint_labels,
+            ),
             evidence_ids=[item.evidence_id for item in aggregate],
         )
         charts = [comparison_chart]
@@ -986,14 +982,14 @@ class NBAPlugin:
 
     @staticmethod
     def _representative_plays(
-        request: AnalysisRequest,
-        frame: pl.DataFrame,
-        supplemental: dict[str, dict[int, pl.DataFrame]],
-        manifest: DatasetManifest,
-        baseline_frame: pl.DataFrame | None = None,
-        baseline_manifest: DatasetManifest | None = None,
-        metric_label: str | None = None,
-        execution_id: str | None = None,
+            request: AnalysisRequest,
+            frame: pl.DataFrame,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifest: DatasetManifest,
+            baseline_frame: pl.DataFrame | None = None,
+            baseline_manifest: DatasetManifest | None = None,
+            metric_label: str | None = None,
+            execution_id: str | None = None,
     ) -> list[PlayEvidence]:
         subject = request.subject
         if subject is None or frame.is_empty():
@@ -1005,7 +1001,8 @@ class NBAPlugin:
         for window_name, window, source_frame, source_manifest in sources:
             schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
             game_ids = segment_game_ids(schedule, window.season, window.segment or "full_season")
-            scoped = source_frame.filter(pl.col("game_id").cast(pl.String).is_in(game_ids)) if game_ids and "game_id" in source_frame.columns else source_frame
+            scoped = source_frame.filter(
+                pl.col("game_id").cast(pl.String).is_in(game_ids)) if game_ids and "game_id" in source_frame.columns else source_frame
             if subject.type == "team":
                 team = str(subject.id).upper()
                 if "team_abbreviation" in scoped.columns:
@@ -1035,7 +1032,8 @@ class NBAPlugin:
                     outcome = score_value if score_value else -1.0 if any(token in description for token in ("miss", "turnover")) else 0.0
                 event_type = str(row.get("type_text") or row.get("type_abbreviation") or "").strip().lower()
                 if not event_type:
-                    event_type = next((token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description), "event")
+                    event_type = next((token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description),
+                                      "event")
                 event_team = str(row.get("team_abbreviation") or subject.team_id or subject.id).upper()
                 home, away = str(row.get("home_team_abbrev") or "").upper(), str(row.get("away_team_abbrev") or "").upper()
                 opponent = away if event_team == home else home

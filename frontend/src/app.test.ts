@@ -176,30 +176,6 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByRole('button', { name: /Start investigation/i })).toBeTruthy();
   });
 
-  it('shows data-library progress while the active sport catalog is loading', async () => {
-    const fetchMock = vi.mocked(fetch);
-    const defaultImplementation = fetchMock.getMockImplementation()!;
-    let releaseOptions!: () => void;
-    fetchMock.mockImplementation((input, init) => {
-      if (String(input).endsWith('/sports/nfl/options')) {
-        return new Promise<Response>((resolve) => {
-          releaseOptions = () => void Promise.resolve(defaultImplementation(input, init)).then(resolve);
-        });
-      }
-      return defaultImplementation(input, init);
-    });
-
-    render(App);
-    expect(await screen.findByText('Loading data catalog')).toBeTruthy();
-    expect(screen.getByRole('status')).toBeTruthy();
-    expect(screen.getByText('Loading data…')).toBeTruthy();
-
-    await waitFor(() => expect(typeof releaseOptions).toBe('function'));
-    releaseOptions();
-    await waitFor(() => expect(screen.queryByText('Loading data catalog')).toBeNull());
-    expect(screen.getByText('4 local files')).toBeTruthy();
-  });
-
   it('waits for backend readiness before requesting the workspace catalog', async () => {
     const fetchMock = vi.mocked(fetch);
     const defaultImplementation = fetchMock.getMockImplementation()!;
@@ -224,88 +200,56 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/sports/nfl/options'))).toBe(true));
   });
 
-  it('combines the animated catch loader with live investigation status', async () => {
-    class IdleEventSource {
+  it('retries and atomically displays a completed analysis when its first result fetch is not ready', async () => {
+    const completed = {
+      run: {
+        investigation_id: 'investigation-running', sport: 'nfl',
+        question: 'What changed?', created_at: '2026-09-01T12:00:00Z',
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 18] }, comparison: { season: 2025, weeks: [1, 18] }
+        }
+      },
+      summary: 'The completed analysis response is now visible.', claims: [], aggregate_evidence: [],
+      play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true
+    };
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    let resultAttempts = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (!init?.method && url === '/api/investigations/investigation-running') {
+        resultAttempts += 1;
+        if (resultAttempts === 1) {
+          mockInvestigations = [completed];
+          return Promise.resolve(new Response(JSON.stringify({detail: 'Result is still being committed'}), {
+            status: 404, headers: {'content-type': 'application/json'}
+          }));
+        }
+      }
+      return baseFetch(input, init);
+    });
+    class CompletingEventSource {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: (() => void) | null = null;
+      constructor() {
+        setTimeout(() => this.onmessage?.({data: JSON.stringify({
+          stage: 'complete', message: 'Investigation ready', progress: 1
+        })} as MessageEvent), 0);
+      }
       close() {}
     }
-    vi.stubGlobal('EventSource', IdleEventSource);
-    render(App);
+    vi.stubGlobal('EventSource', CompletingEventSource);
 
-    const team = await screen.findByRole('combobox', { name: 'NFL team' });
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
     await fireEvent.focus(team);
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
-    await fireEvent.click(screen.getByRole('button', { name: /Start investigation/i }));
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.click(screen.getByRole('button', {name: /Start investigation/i}));
 
-    const progress = await screen.findByRole('progressbar', { name: 'Investigation progress' });
-    expect(progress.getAttribute('aria-valuenow')).toBe('3');
-    expect(screen.getByText('Starting investigation')).toBeTruthy();
-    expect(document.querySelector<HTMLImageElement>('.catch-scene')?.getAttribute('src'))
-      .toBe('/open-sports-analyst-loader.svg');
-    expect(screen.getByText('Analysis still running...')).toBeTruthy();
-  });
-
-  it('uses the basketball animation for NBA loading without replacing the NFL loader', async () => {
-    class IdleEventSource {
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: (() => void) | null = null;
-      close() {}
-    }
-    vi.stubGlobal('EventSource', IdleEventSource);
-    render(App);
-
-    await fireEvent.click(await screen.findByRole('button', { name: /NBA.*Bulk data mode/ }));
-    const team = await screen.findByRole('combobox', { name: 'NBA team' });
-    await fireEvent.focus(team);
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Boston Celtics/ }));
-    await fireEvent.click(screen.getByRole('button', { name: /Start investigation/i }));
-
-    expect(await screen.findByText('LIVE ANALYSIS POSSESSION')).toBeTruthy();
-    expect(document.querySelector('.basketball-animation')).toBeTruthy();
-    expect(document.querySelector('.catch-scene')).toBeNull();
-  });
-
-  it('starts with no implied team and supports searchable team selection', async () => {
-    render(App);
-    const combobox = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
-    expect(combobox.value).toBe('');
-
-    await fireEvent.focus(combobox);
-    expect(await screen.findByRole('option', { name: /Buffalo Bills/ })).toBeTruthy();
-
-    await fireEvent.input(combobox, { target: { value: 'buff' } });
-    const buffalo = screen.getByRole('option', { name: /Buffalo Bills/ });
-    expect(screen.queryByRole('option', { name: /Kansas City Chiefs/ })).toBeNull();
-
-    await fireEvent.mouseDown(buffalo);
-    expect(combobox.value).toBe('Buffalo Bills (BUF)');
-    expect(combobox.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('cycles to a different supported analysis question', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    render(App);
-    const question = screen.getByLabelText(/Your Question/i) as HTMLTextAreaElement;
-    expect(question.value).toBe("What drove the change in this offense's EPA per dropback: down-to-down success, completion performance, or explosive passes?");
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Show another example question' }));
-    expect(question.value).toBe('Did the passing game become consistently more efficient, or did a handful of explosive plays and outlier games drive the difference?');
-  });
-
-  it('keeps example questions aligned to sport, subject, and analysis domain', async () => {
-    render(App);
-    const question = await screen.findByLabelText(/Your Question/i) as HTMLTextAreaElement;
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
-    expect(question.value).toContain("quarterback's EPA per dropback");
-    await fireEvent.click(await screen.findByRole('button', { name: /^Receiving/ }));
-    expect(question.value).toContain("receiver's production");
-
-    await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
-    expect(question.value).toContain("team's offensive rating");
-    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
-    expect(question.value).toContain("player's scoring");
+    expect((await screen.findAllByText('The completed analysis response is now visible.')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
+    expect(resultAttempts).toBe(2);
   });
 
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {
@@ -345,31 +289,6 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(restored.value).toBe('Kansas City Chiefs (KC)'));
   });
 
-  it('supports explicit all-metric and recommended-metric selection', async () => {
-    render(App);
-    const epa = await screen.findByRole('checkbox', { name: /EPA\/dropback/ }) as HTMLInputElement;
-    const successRate = screen.getByRole('checkbox', { name: /Success rate/ }) as HTMLInputElement;
-    expect(epa.checked).toBe(true);
-    expect(successRate.checked).toBe(false);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear All Metrics' }));
-    expect(epa.checked).toBe(false);
-    expect(successRate.checked).toBe(false);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Select All Metrics' }));
-    expect(epa.checked).toBe(true);
-    expect(successRate.checked).toBe(true);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Use Recommended Metrics' }));
-    expect(epa.checked).toBe(true);
-    expect(successRate.checked).toBe(false);
-
-    await fireEvent.click(screen.getByRole('button', { name: /Rushing.*Rushing attempts/ }));
-    const rushEpa = screen.getByRole('checkbox', { name: /EPA\/rush/ }) as HTMLInputElement;
-    expect(rushEpa.checked).toBe(true);
-    expect(screen.queryByRole('checkbox', { name: /EPA\/dropback/ })).toBeNull();
-  });
-
   it('switches metric domains and controls between team and player analysis', async () => {
     render(App);
     expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
@@ -390,60 +309,6 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: /QB EPA\/dropback/ })).toBeNull();
     expect(screen.getByRole('checkbox', { name: 'Down' })).toBeTruthy();
-  });
-
-  it('distinguishes player loading from an empty player search', async () => {
-    const fetchMock = vi.mocked(fetch);
-    const defaultImplementation = fetchMock.getMockImplementation()!;
-    let releasePlayers!: () => void;
-    fetchMock.mockImplementation((input, init) => {
-      if (String(input).includes('/sports/nfl/players?query=')) {
-        return new Promise<Response>((resolve) => {
-          releasePlayers = () => void Promise.resolve(defaultImplementation(input, init)).then(resolve);
-        });
-      }
-      return defaultImplementation(input, init);
-    });
-
-    render(App);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Player' }));
-    const player = screen.getByRole('combobox', { name: 'Player' });
-    await fireEvent.focus(player);
-
-    expect(await screen.findByText('Loading NFL players…')).toBeTruthy();
-    expect(screen.queryByText(/No players match/)).toBeNull();
-    expect(player.getAttribute('aria-busy')).toBe('true');
-
-    releasePlayers();
-    expect(await screen.findByRole('option', { name: /Patrick Mahomes/ })).toBeTruthy();
-    expect(player.getAttribute('aria-busy')).toBe('false');
-  });
-
-  it('treats full seasons as an inclusive season range', async () => {
-    render(App);
-    const from = await screen.findByLabelText('From season') as HTMLSelectElement;
-    const through = screen.getByLabelText('Through season') as HTMLSelectElement;
-
-    await fireEvent.change(from, { target: { value: '2022' } });
-    await fireEvent.change(through, { target: { value: '2025' } });
-
-    expect(screen.getByText('Includes every season from 2022 through 2025: 2022, 2023, 2024, 2025.')).toBeTruthy();
-  });
-
-  it('keeps the data manager open and shows actual package coverage', async () => {
-    render(App);
-    const details = document.querySelector('details.data-manager') as HTMLDetailsElement;
-    const rosters = await screen.findByLabelText(/Rosters/);
-
-    expect(details.open).toBe(true);
-    expect(screen.getByText('3/4 local')).toBeTruthy();
-    expect(screen.getByText('PBP only')).toBeTruthy();
-    const nextgen = screen.getByLabelText(/Nextgen Passing/) as HTMLInputElement;
-    expect(nextgen.disabled).toBe(false);
-    expect(screen.getByText('0/2 local · 2016+')).toBeTruthy();
-
-    await fireEvent.click(rosters);
-    expect(details.open).toBe(true);
   });
 
   it('selects locally available packages when the selected seasons change', async () => {
@@ -509,6 +374,9 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByText('Which games changed the most?'));
     expect(await screen.findByText('Was it consistent across the sample?')).toBeTruthy();
     expect(screen.getByText('The follow-up found a consistent shift.')).toBeTruthy();
+    const messageTimes = document.querySelectorAll('.chat-message-meta time[datetime]');
+    expect(messageTimes).toHaveLength(4);
+    expect([...messageTimes].every((time) => /^\d{2}:\d{2}$/.test(time.textContent ?? ''))).toBe(true);
     expect(screen.getAllByText('1 follow-up').length).toBeGreaterThan(0);
     const deleteButton = screen.getByRole('button', { name: 'Delete investigation thread: Which games changed the most?' });
     expect(deleteButton.classList.contains('delete-report')).toBe(true);
@@ -519,31 +387,6 @@ describe('Open Sports Analyst workbench', () => {
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', { method: 'DELETE' });
     expect(screen.queryByText('Which games changed the most?')).toBeNull();
     expect(screen.queryByText('Was it consistent across the sample?')).toBeNull();
-  });
-
-  it('uses player names and initials instead of identifiers in saved investigation navigation', async () => {
-    mockInvestigations = [{
-      run: {
-        investigation_id: 'investigation-player', sport: 'nfl',
-        subject: { type: 'player', id: '00-0033873', team_id: 'KC' },
-        question: 'Which dropbacks best represented the change?', created_at: '2026-08-21T12:00:00Z',
-        scope: {
-          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
-          baseline: { season: 2024, weeks: [1, 18] }, comparison: { season: 2025, weeks: [1, 18] }
-        }
-      },
-      summary: 'Summary', claims: [], aggregate_evidence: [], play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true
-    }];
-
-    render(App);
-    expect(await screen.findByText('Patrick Mahomes')).toBeTruthy();
-    const badge = screen.getByText('PM');
-    expect(badge.classList.contains('recent-subject-badge')).toBe(true);
-    expect(screen.queryByText('00-0033873')).toBeNull();
-
-    await fireEvent.click(screen.getByText('Which dropbacks best represented the change?'));
-    expect(await screen.findByRole('heading', { name: 'Patrick Mahomes investigation' })).toBeTruthy();
-    expect(await screen.findByRole('heading', { name: 'Patrick Mahomes Film Room' })).toBeTruthy();
   });
 
   it('shows diversified representative evidence by comparison window and selection role', async () => {

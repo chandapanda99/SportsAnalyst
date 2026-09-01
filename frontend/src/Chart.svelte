@@ -10,6 +10,12 @@
     let {specification, team, sport = 'nfl'}: Props = $props();
     let target: HTMLDivElement;
     let renderError = $state('');
+    let metricMetadata = $derived(
+        (specification.usermeta as {chartKind?: string; metricRowCount?: number} | undefined)?.chartKind === 'metric-rows'
+            ? specification.usermeta as {metricRowCount?: number; seriesCount?: number}
+            : null
+    );
+    let metricRowCount = $derived(Number(metricMetadata?.metricRowCount ?? 0));
 
     $effect(() => {
         const themedSpecification = applyTeamChartPalette(specification, team, sport);
@@ -60,6 +66,6 @@
         };
     });
 </script>
-<div class="chart" class:has-error={renderError} bind:this={target}>
+<div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} bind:this={target}>
     {#if renderError}<p class="chart-error">{renderError}</p>{/if}
 </div>

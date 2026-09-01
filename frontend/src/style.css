@@ -1734,11 +1734,26 @@ main {
 
 .chat-bubble small {
     display: block;
-    margin-bottom: 5px;
+    margin: 0;
     color: var(--color-text-tertiary);
     font: 10px var(--font-mono);
     letter-spacing: .08em;
     text-transform: uppercase
+}
+
+.chat-message-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 5px
+}
+
+.chat-message-meta time {
+    flex: 0 0 auto;
+    color: var(--color-text-tertiary);
+    font: 10px var(--font-mono);
+    letter-spacing: .04em
 }
 
 .chat-bubble p {
@@ -2223,7 +2238,9 @@ button.analyst-bubble:focus-visible,
 
 .chart-grid {
     display: grid;
-    grid-template-columns:1fr 1fr;
+    grid-template-columns:minmax(360px, 2fr) minmax(0, 3fr);
+    width: 100%;
+    margin-inline: auto;
     gap: 1px;
     background: var(--line)
 }
@@ -2231,8 +2248,9 @@ button.analyst-bubble:focus-visible,
 .chart-grid article {
     display: grid;
     grid-template-rows:auto auto 1fr;
+    min-width: 0;
     background: var(--color-surface-raised);
-    padding: 20px;
+    padding: clamp(18px, 1.8vw, 26px);
     overflow: hidden
 }
 
@@ -2266,13 +2284,37 @@ button.analyst-bubble:focus-visible,
     min-width: 0;
     min-height: 340px;
     max-height: 440px;
-    aspect-ratio: 16 / 9;
+    aspect-ratio: 21 / 8;
     overflow: hidden
 }
 
 .chart.has-error {
     min-height: 180px;
     aspect-ratio: auto
+}
+
+.chart.metric-rows {
+    min-height: 340px;
+    max-height: none;
+    aspect-ratio: auto;
+    align-items: flex-start
+}
+
+.chart:not(.metric-rows) {
+    min-height: 320px;
+    max-height: 400px;
+    aspect-ratio: 3 / 2
+}
+
+.chart.metric-rows .vega-embed,
+.chart.metric-rows .vega-embed > div {
+    align-items: flex-start;
+    height: auto;
+    min-height: 0
+}
+
+.chart.metric-rows svg {
+    height: auto
 }
 
 .chart-error {
@@ -2496,6 +2538,17 @@ button.analyst-bubble:focus-visible,
 
     .report-grid, .chart-grid {
         grid-template-columns:1fr
+    }
+
+    .chart {
+        min-height: 340px;
+        aspect-ratio: 16 / 9
+    }
+
+    .chart:not(.metric-rows) {
+        min-height: 340px;
+        max-height: 440px;
+        aspect-ratio: 16 / 9
     }
 
     .evidence-panel {

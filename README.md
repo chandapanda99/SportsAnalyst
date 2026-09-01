@@ -12,8 +12,11 @@ evidence produced by those tools; the model cannot invent measurements or execut
 - Runs NBA team or player analysis across full seasons and validated season segments, with an optional team-stint filter for traded players.
 - Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability
   context.
-- Provides NBA v1 box-score comparisons, multi-season trend charts, lineup-rate comparisons when lineup releases are synced, and representative play/possession evidence.
+- Provides NBA v1 box-score comparisons, multi-season trend charts, lineup-rate comparisons when lineup releases are synced, and diversified play/possession evidence from both
+  comparison windows.
 - Surfaces NFL evidence in an interactive field schematic and NBA evidence in a basketball tablet with recorded shot, score, and lineup context.
+- Selects representative evidence deterministically across different games and contexts, labeling typical examples, metric-relevant examples, support for the measured change,
+  and counterexamples.
 - Produces evidence-bound findings, charts, methodological caveats, team-themed HTML reports, and Markdown exports.
 - Saves investigations locally, supports follow-up conversations as child investigations, and allows complete investigation threads to be deleted.
 - Remains usable without a configured model by generating a deterministic evidence report.
@@ -26,11 +29,12 @@ metrics, datasets, and evidence renderer.
 The Svelte workbench provides:
 
 1. **Local Data Library** — select seasons and sport-specific packages, inspect local coverage, and sync data without using the CLI.
-2. **Scope** — choose an NFL or NBA team/player, analysis domain, season period, and comparison design using data-driven controls.
+2. **Scope** — choose an NFL or NBA team/player, analysis domain, season period, and comparison design using searchable, data-driven controls. Team and player searches filter
+   the options already loaded in the browser.
 3. **Metrics and diagnostic cuts** — use the recommended defaults, select all available metrics, or constrain the analysis to specific measurements and situations.
 4. **Investigation question** — ask a free-text analytical question or cycle through valid examples.
 5. **Live analysis** — follow backend stage progress while evidence is produced and reviewed.
-6. **Report and evidence inspector** — inspect every finding, all evidence attached to it, charts, representative plays, and provenance.
+6. **Report and evidence inspector** — inspect every finding, all evidence attached to it, charts, baseline/comparison evidence groups, selection rationale, and provenance.
 7. **Film Room** — reopen, continue, export, or delete saved investigation threads.
 
 ## Quick start
@@ -126,9 +130,9 @@ LANGSMITH_PROJECT=open-sports-analyst-local
 # LANGSMITH_WORKSPACE_ID=
 ```
 
-Each investigation is a root trace with child spans for planning, data loading, deterministic analysis, synthesis, and persistence. Follow-ups use the original
-investigation ID as their `thread_id`, while retaining their own `investigation_id`. Trace metadata contains scope identifiers and counts, not raw datasets or
-credentials. Tracing is fail-open: configuration or delivery failures are logged but do not fail an investigation.
+Each investigation is a root trace with child spans for planning, data loading, deterministic analysis, synthesis, and persistence. Follow-ups use the original investigation
+ID as their `thread_id`, while retaining their own `investigation_id`. Trace metadata contains scope identifiers and counts, not raw datasets or credentials. Tracing is
+fail-open: configuration or delivery failures are logged but do not fail an investigation.
 
 ## Data
 
@@ -187,28 +191,32 @@ Framework code is MIT-licensed. Synced datasets and derived outputs retain the a
 
 ### NBA controls
 
-NBA supports team and player subjects, including an optional team-stint filter for traded players. Comparison designs include full-season trends, named segment comparisons,
-and a current pre/post-All-Star milestone comparison. Validated segments include the regular season, playoffs, opening month, pre/post-All-Star, post-trade-deadline, play-in,
-each playoff round, and the NBA Finals. Schedule labels and reviewed milestone dates determine which choices appear for each season.
+NBA supports team and player subjects, including an optional team-stint filter for traded players. The team selector contains only the 30 current franchises; All-Star, Rising
+Stars, and other event teams are excluded. Player options are resolved from synced data for those franchises. Team and player combo boxes search their already-loaded option
+lists locally instead of issuing a new request for each keystroke. Comparison designs include full-season trends, named segment comparisons, and a current pre/post-All-Star
+milestone comparison. Validated segments include the regular season, playoffs, opening month, pre/post-All-Star, post-trade-deadline, play-in, each playoff round, and the NBA
+Finals. Schedule labels and reviewed milestone dates determine which choices appear for each season.
 
-Team domains cover offense, defense, shooting, playmaking, rebounding, turnovers, and lineups. Player domains cover scoring, shooting, playmaking, rebounding, usage, and
-impact. NBA v1 deterministically calculates selected box-score or lineup metrics for the two comparison windows. Full-season ranges also chart each included season. The NBA
-catalog reserves names for richer game trends, league benchmarks, splits, decomposition, opponent adjustment, and shot-profile diagnostics, but those operations are not yet
-separate executed evidence tools. Representative NBA evidence includes period, clock, score, event, player/team context, a half-court shot marker when coordinates exist, and
-lineup cards when recorded on-court identities are available. Missing coordinates or players fall back to textual evidence rather than inferred positions.
+Team domains cover offense, defense, shooting, playmaking, rebounding, turnovers, and lineups. Player domains cover scoring, shooting, playmaking, rebounding, usage, impact,
+and compatible lineup context. Subject mode controls which domains and metrics are offered, so team-only measurements are not presented as player statistics. NBA v1
+deterministically calculates selected box-score or lineup metrics for the two comparison windows. Full-season ranges also chart each included season. The NBA catalog reserves
+names for richer game trends, league benchmarks, splits, decomposition, opponent adjustment, and shot-profile diagnostics, but those operations are not yet separate executed
+evidence tools. Representative NBA evidence is selected from both windows and includes period, clock, score, event, player/team context, a half-court shot marker when
+coordinates exist, and lineup cards when recorded on-court identities are available. Missing coordinates or players fall back to textual evidence rather than inferred
+positions.
 
 ## Analysis controls
 
 ### NFL domains and default metrics
 
-|     Domain      | Recommended metrics                                         |
-|:---------------:|-------------------------------------------------------------|
-|     Passing     | EPA/dropback, success rate, CPOE, explosive-pass rate       |
-|     Rushing     | EPA/rush, rush success rate, yards/rush, explosive-run rate |
-| Overall offense | EPA/play, success rate, yards/play, turnover rate           |
-| Quarterback player | EPA/dropback, success rate, CPOE, yards/dropback         |
-| Receiving player | targets/game, EPA/target, catch rate, yards/target          |
-| Rushing player | carries/game, EPA/carry, rush success rate, yards/carry       |
+|       Domain       | Recommended metrics                                         |
+|:------------------:|-------------------------------------------------------------|
+|      Passing       | EPA/dropback, success rate, CPOE, explosive-pass rate       |
+|      Rushing       | EPA/rush, rush success rate, yards/rush, explosive-run rate |
+|  Overall offense   | EPA/play, success rate, yards/play, turnover rate           |
+| Quarterback player | EPA/dropback, success rate, CPOE, yards/dropback            |
+|  Receiving player  | targets/game, EPA/target, catch rate, yards/target          |
+|   Rushing player   | carries/game, EPA/carry, rush success rate, yards/carry     |
 
 Additional passing metrics include yards/play, sack rate, interception rate, air yards/attempt, and YAC/completion. Additional rushing metrics include stuff rate and rushing
 first-down rate.
@@ -225,9 +233,9 @@ incomplete fields are disabled or omitted.
 - **Before vs. after** compares two week ranges within one season around a selected boundary.
 
 Team comparison windows require at least 30 qualifying plays. Player comparisons use every attributed play available in each window, flag samples below 10 as highly uncertain,
-and omit only metrics whose required values are unavailable. Quarterback reports can add compatible synced weekly player stats, Next Gen passing, and PFR passing evidence without
-silently substituting those published statistics for differently defined play-derived metrics. Situational subgroups still require at least 10 qualifying plays in both windows.
-Results are observational and do not establish causality.
+and omit only metrics whose required values are unavailable. Quarterback reports can add compatible synced weekly player stats, Next Gen passing, and PFR passing evidence
+without silently substituting those published statistics for differently defined play-derived metrics. Situational subgroups still require at least 10 qualifying plays in both
+windows. Results are observational and do not establish causality.
 
 ### NBA metrics
 
@@ -249,7 +257,7 @@ The current NFL tool set includes:
 - Game outlier ranking and league/conference benchmarks.
 - Situational splits, play-mix comparison, metric decomposition, and game-state analysis.
 - Leave-one-game-out opponent adjustment and descriptive change-point detection.
-- Representative supporting plays and counterexamples.
+- Deterministic representative evidence from both windows, including typical plays, metric examples, evidence supporting the measured change, and counterexamples.
 - Player identity resolution and a normalized player-week layer.
 - First-class quarterback, receiving, and rushing player-window comparisons, trends, charts, and representative plays.
 - Player usage change, position-group availability, lineup continuity, and continuity decomposition.
@@ -258,6 +266,17 @@ The current NFL tool set includes:
 
 See the [Sports Tool Guide](docs/tool-guide.md) for formulas, inputs, data requirements, execution status, evidence behavior, limitations, and plugin extension guidance for
 both sports.
+
+### Representative evidence policy
+
+NFL and NBA use the shared, versioned `diverse-v1` selector. It chooses up to four distinct items per window in a stable role order: **typical**, **metric example**,
+**supports change**, and **counterexample**. Selection is based on the requested metric or the closest sport-appropriate event value, the observed direction between windows,
+and the quality of the available context. It prefers different games and penalizes repeated event types, opponents, and periods; if the sample is sparse, it returns fewer
+distinct items instead of duplicating or fabricating evidence.
+
+Every selected item records its window, role, reason, selection metric, candidate-pool size, and selector version. NFL evidence is scored with the selected play-level metric
+when available and otherwise falls back to EPA. NBA evidence uses domain-relevant event scoring and adds possession or lineup context only when a compatible synced source
+contains it. The report groups the selected evidence by baseline and comparison window so users can see both the measured pattern and credible exceptions.
 
 ### Play schematics
 
@@ -283,6 +302,10 @@ Simple questions use a smaller agent topology; broader diagnostic questions add 
 
 Follow-ups are saved as child investigations in a conversation-style thread. They reuse the root investigation's immutable evidence and charts, which makes follow-ups faster
 and keeps their citations reproducible. A follow-up that requires a new dataset, scope, metric, or algorithm should be started as a new investigation.
+
+When an analysis completes, the frontend validates and loads the saved bundle and its conversation thread together before replacing the loading view. Transient incomplete
+reads are retried with bounded backoff. If the progress stream disconnects or times out, the frontend polls the saved investigation status and resumes loading once persistence
+is complete, preventing an empty report from being shown during the handoff.
 
 ## CLI usage
 
@@ -347,27 +370,24 @@ FastAPI exposes:
 |    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
 |    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |
 
-Dataset sync and investigation progress use server-sent events. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
+Dataset sync and investigation progress use server-sent events. The frontend recovers interrupted investigation streams through the status endpoint and validates the complete
+bundle and thread before rendering them. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
 
 Interactive OpenAPI documentation is available at [http://127.0.0.1:8767/docs](http://127.0.0.1:8767/docs) while the API is running.
 
 ## Architecture
 
-```text
-Svelte workbench / Typer CLI
-             │
-          FastAPI
-             │
-      AnalystApplication service
-        ┌────────┴────────┐
- NFL connector/plugin  NBA connector/plugin
-        └────────┬────────┘
-          Polars + DuckDB
-                 │
-       Evidence-bound synthesis
-          Azure / Ollama / fallback
-                 │
- Local Parquet + investigation bundles
+```mermaid
+flowchart TD
+    A["Svelte workbench / Typer CLI"] --> B["FastAPI"]
+    B --> C["AnalystApplication service"]
+    C --> D["NFL connector / plugin"]
+    C --> E["NBA connector / plugin"]
+    D --> F["Polars + DuckDB"]
+    E --> F
+    F --> G["Evidence-bound synthesis"]
+    G --> H["Azure / Ollama / deterministic fallback"]
+    H --> I["Local Parquet + investigation bundles"]
 ```
 
 - **Svelte 5, TypeScript, Vega-Lite** — responsive dark-mode workbench, charts, evidence inspection, and play schematics.
@@ -393,27 +413,27 @@ protocol; core currently ships only `DisabledCustomAnalysisRunner` and reports `
 
 All settings use the following environment variables and may be placed in `.env`.
 
-|              Variable              |           Default            | Purpose                                               |
-|:----------------------------------:|:----------------------------:|-------------------------------------------------------|
-|             `DATA_DIR`             | Platform user-data directory | Local catalog, Parquet, and investigation root        |
-|          `MODEL_PROVIDER`          |       `azure_foundry`        | Active provider: `azure_foundry` or `ollama`          |
-|              `MODEL`               |        `gpt-5.6-luna`        | Azure Foundry model/deployment name                   |
-|         `FOUNDRY_ENDPOINT`         |            Empty             | HTTPS endpoint ending in `/openai/v1/`                |
-|         `FOUNDRY_API_KEY`          |            Empty             | Optional API key; empty uses `DefaultAzureCredential` |
-|         `REASONING_EFFORT`         |           `medium`           | Provider reasoning setting                            |
-|         `OLLAMA_BASE_URL`          |   `http://127.0.0.1:11434`   | Ollama server                                         |
-|           `OLLAMA_MODEL`           |          `qwen3:8b`          | Ollama model                                          |
-|          `SQL_ROW_LIMIT`           |           `10000`            | Maximum constrained-SQL result rows                   |
-|   `EVENT_STREAM_TIMEOUT_SECONDS`   |            `120`             | SSE inactivity timeout before frontend recovery       |
-|         `DATASET_CACHE_MB`         |            `384`             | In-memory analytical dataset cache; `0` disables it   |
-| `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |           `false`            | Recalculate SHA-256 whenever a manifest is loaded     |
-|   `INVESTIGATION_HISTORY_LIMIT`    |             `50`             | Default compact history page size                     |
-|            `LOG_LEVEL`             |            `INFO`            | Backend logging level                                 |
-|        `LANGSMITH_TRACING`         |           `false`            | Enable LangSmith tracing                              |
-|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                            |
-|        `LANGSMITH_API_KEY`         |            Empty             | LangSmith API key                                     |
-|         `LANGSMITH_PROJECT`        | `open-sports-analyst-local`  | Destination LangSmith project                         |
-|      `LANGSMITH_WORKSPACE_ID`      |            Empty             | Optional workspace for scoped API keys                |
+|              Variable              |              Default              | Purpose                                               |
+|:----------------------------------:|:---------------------------------:|-------------------------------------------------------|
+|             `DATA_DIR`             |   Platform user-data directory    | Local catalog, Parquet, and investigation root        |
+|          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`          |
+|              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                   |
+|         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                |
+|         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential` |
+|         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                            |
+|         `OLLAMA_BASE_URL`          |     `http://127.0.0.1:11434`      | Ollama server                                         |
+|           `OLLAMA_MODEL`           |            `qwen3:8b`             | Ollama model                                          |
+|          `SQL_ROW_LIMIT`           |              `10000`              | Maximum constrained-SQL result rows                   |
+|   `EVENT_STREAM_TIMEOUT_SECONDS`   |               `120`               | SSE inactivity timeout before frontend recovery       |
+|         `DATASET_CACHE_MB`         |               `384`               | In-memory analytical dataset cache; `0` disables it   |
+| `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |              `false`              | Recalculate SHA-256 whenever a manifest is loaded     |
+|   `INVESTIGATION_HISTORY_LIMIT`    |               `50`                | Default compact history page size                     |
+|            `LOG_LEVEL`             |              `INFO`               | Backend logging level                                 |
+|        `LANGSMITH_TRACING`         |              `false`              | Enable LangSmith tracing                              |
+|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                                |
+|        `LANGSMITH_API_KEY`         |               Empty               | LangSmith API key                                     |
+|        `LANGSMITH_PROJECT`         |    `open-sports-analyst-local`    | Destination LangSmith project                         |
+|      `LANGSMITH_WORKSPACE_ID`      |               Empty               | Optional workspace for scoped API keys                |
 
 Set `LOG_LEVEL=DEBUG` for lightweight diagnostics. Logs include IDs, lifecycle stages, timings, result counts, model/fallback outcomes, citation repair, and event timeouts.
 They intentionally exclude prompts, questions, evidence contents, SQL text, managed paths, credentials, and raw model responses.
@@ -432,7 +452,9 @@ npm run test
 npm run build
 ```
 
-Backend tests use synthetic fixtures and do not require model credentials or network access. Live provider and external dataset download tests remain opt-in.
+The maintained suite intentionally focuses on major workflows and compatibility contracts: sport-isolated sync and investigation behavior, NFL/NBA analysis, API persistence
+and recovery, frontend sport/subject state, and evidence rendering. Backend tests use synthetic fixtures and do not require model credentials or network access. Live provider
+and external dataset download tests remain opt-in.
 
 ## License
 

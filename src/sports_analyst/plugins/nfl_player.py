@@ -9,6 +9,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.chart_specs import metric_row_comparison_spec
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisRequest,
@@ -751,8 +752,8 @@ class NFLPlayerAnalysisMixin:
             record
             for item in metric_evidence
             for record in (
-                {"metric": item.label, "window": labels[0], "value": item.baseline_value},
-                {"metric": item.label, "window": labels[1], "value": item.comparison_value},
+                {"metric": item.label, "window": labels[0], "value": item.baseline_value, "unit": item.unit},
+                {"metric": item.label, "window": labels[1], "value": item.comparison_value, "unit": item.unit},
             )
         ]
         charts = []
@@ -760,22 +761,11 @@ class NFLPlayerAnalysisMixin:
             charts.append(ChartArtifact(
                 chart_id=stable_id("chart", {"type": "player-metric-comparison", **parameters}),
                 title=f"{domain.title()} performance comparison",
-                specification={
-                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                    "data": {"values": chart_values},
-                    "mark": {"type": "bar", "cornerRadiusEnd": 3},
-                    "encoding": {
-                        "x": {"field": "metric", "type": "nominal", "sort": None, "axis": {"labelAngle": -20}},
-                        "y": {"field": "value", "type": "quantitative"},
-                        "color": {"field": "window", "type": "nominal"},
-                        "xOffset": {"field": "window"},
-                        "tooltip": [
-                            {"field": "metric"},
-                            {"field": "window"},
-                            {"field": "value", "format": ".3f"},
-                        ],
-                    },
-                },
+                specification=metric_row_comparison_spec(
+                    chart_values,
+                    series_field="window",
+                    series_order=labels,
+                ),
                 evidence_ids=[item.evidence_id for item in metric_evidence],
             ))
         published_metric_evidence = [
@@ -788,26 +778,19 @@ class NFLPlayerAnalysisMixin:
                 record
                 for item in published_metric_evidence
                 for record in (
-                    {"metric": item.label, "window": labels[0], "value": item.baseline_value},
-                    {"metric": item.label, "window": labels[1], "value": item.comparison_value},
+                    {"metric": item.label, "window": labels[0], "value": item.baseline_value, "unit": item.unit},
+                    {"metric": item.label, "window": labels[1], "value": item.comparison_value, "unit": item.unit},
                 )
             ]
             charts.append(
                 ChartArtifact(
                     chart_id=stable_id("chart", {"type": "published-player-metric-comparison", **parameters}),
                     title="Supplemental published quarterback statistics",
-                    specification={
-                        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                        "data": {"values": published_values},
-                        "mark": {"type": "bar", "cornerRadiusEnd": 3},
-                        "encoding": {
-                            "x": {"field": "metric", "type": "nominal", "sort": None, "axis": {"labelAngle": -20}},
-                            "y": {"field": "value", "type": "quantitative"},
-                            "color": {"field": "window", "type": "nominal"},
-                            "xOffset": {"field": "window"},
-                            "tooltip": [{"field": "metric"}, {"field": "window"}, {"field": "value", "format": ".3f"}],
-                        },
-                    },
+                    specification=metric_row_comparison_spec(
+                        published_values,
+                        series_field="window",
+                        series_order=labels,
+                    ),
                     evidence_ids=[item.evidence_id for item in published_metric_evidence],
                 )
             )

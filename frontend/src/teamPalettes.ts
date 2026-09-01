@@ -37,6 +37,15 @@ export const NFL_TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
     WAS: ['#5A1414', '#FFB612']
 };
 
+export const NFL_TEAM_NAMES: Record<string, string> = {
+    ARI: 'CARDINALS', ATL: 'FALCONS', BAL: 'RAVENS', BUF: 'BILLS', CAR: 'PANTHERS', CHI: 'BEARS',
+    CIN: 'BENGALS', CLE: 'BROWNS', DAL: 'COWBOYS', DEN: 'BRONCOS', DET: 'LIONS', GB: 'PACKERS',
+    HOU: 'TEXANS', IND: 'COLTS', JAX: 'JAGUARS', KC: 'CHIEFS', LV: 'RAIDERS', LAC: 'CHARGERS',
+    LA: 'RAMS', MIA: 'DOLPHINS', MIN: 'VIKINGS', NE: 'PATRIOTS', NO: 'SAINTS', NYG: 'GIANTS',
+    NYJ: 'JETS', PHI: 'EAGLES', PIT: 'STEELERS', SF: '49ERS', SEA: 'SEAHAWKS', TB: 'BUCCANEERS',
+    TEN: 'TITANS', WAS: 'COMMANDERS'
+};
+
 // Reference: NBA Colors (Community), Figma page 0:1.
 // Primary and secondary follow the first two palette cards after each team's logo card.
 export const NBA_TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
@@ -75,12 +84,16 @@ export const NBA_TEAM_CHART_PALETTES: Record<string, TeamChartPalette> = {
 // Retained for callers that import the original NFL-only constant.
 export const TEAM_CHART_PALETTES = NFL_TEAM_CHART_PALETTES;
 const NBA_TEAM_ALIASES: Record<string, string> = {GS: 'GSW', NO: 'NOP', NY: 'NYK', SA: 'SAS', UTAH: 'UTA'};
+const NFL_ESPN_LOGO_IDS: Record<string, string> = {LA: 'lar', WAS: 'wsh'};
+const NBA_ESPN_LOGO_IDS: Record<string, string> = {GSW: 'gs', NOP: 'no', NYK: 'ny', SAS: 'sa', UTA: 'utah'};
 export const DEFAULT_CHART_PALETTE: TeamChartPalette = ['#6F9FD1', '#78DCCA'];
 export const CHART_SURFACE_COLOR = '#091521';
 const CHART_CONTRAST_TARGET = 3;
 const CHART_OUTLINE_COLOR = '#DBE8EE';
 const CHART_LABEL_COLOR = '#A8B7C1';
 const CHART_GRID_COLOR = '#31506A';
+const METRIC_PLOT_HEIGHT = 130;
+const METRIC_CHART_SPACING = 32;
 
 export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette {
     const normalized = team.toUpperCase();
@@ -88,6 +101,18 @@ export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette 
         return NBA_TEAM_CHART_PALETTES[NBA_TEAM_ALIASES[normalized] ?? normalized] ?? DEFAULT_CHART_PALETTE;
     }
     return NFL_TEAM_CHART_PALETTES[normalized] ?? DEFAULT_CHART_PALETTE;
+}
+
+export function teamLogoUrl(team: string, sport = 'nfl'): string | null {
+    const normalizedSport = sport.toLowerCase() === 'nba' ? 'nba' : 'nfl';
+    const normalized = team.trim().toUpperCase();
+    const canonical = normalizedSport === 'nba' ? (NBA_TEAM_ALIASES[normalized] ?? normalized) : normalized;
+    const palettes = normalizedSport === 'nba' ? NBA_TEAM_CHART_PALETTES : NFL_TEAM_CHART_PALETTES;
+    if (!(canonical in palettes)) return null;
+    const logoId = normalizedSport === 'nba'
+        ? (NBA_ESPN_LOGO_IDS[canonical] ?? canonical.toLowerCase())
+        : (NFL_ESPN_LOGO_IDS[canonical] ?? canonical.toLowerCase());
+    return `https://a.espncdn.com/i/teamlogos/${normalizedSport}/500/${logoId}.png`;
 }
 
 function rgb(hex: string): [number, number, number] {
@@ -143,6 +168,7 @@ export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl
 }
 
 function polishAxis(channel: string, definition: Record<string, unknown>): Record<string, unknown> {
+    if (definition.axis === null) return definition;
     const field = definition.field;
     const titles: Record<string, string | null> = {
         metric: null,
@@ -163,7 +189,7 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
             titleFontSize: 13,
             titleFontWeight: 600,
             titlePadding: 12,
-            grid: channel === 'y',
+            grid: 'grid' in axis ? axis.grid : channel === 'y',
             gridColor: CHART_GRID_COLOR,
             gridOpacity: 0.42,
             gridWidth: 0.7,
@@ -177,6 +203,105 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
 
 export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl'): Record<string, unknown> {
     const themed = structuredClone(specification);
+    const usermeta = themed.usermeta as Record<string, unknown> | undefined;
+    if (usermeta?.chartKind === 'metric-rows') {
+        const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values ?? [];
+        const seriesField = typeof usermeta.seriesField === 'string' ? usermeta.seriesField : undefined;
+        const seriesCount = seriesField ? new Set(values.map((value) => value[seriesField])).size : 2;
+        const palette = teamChartSeriesPalette(team, Math.max(2, seriesCount), sport);
+
+        const polishNestedSpec = (node: Record<string, unknown>) => {
+            const height = node.height;
+            if (height && typeof height === 'object' && !Array.isArray(height) && 'step' in height) {
+                node.height = METRIC_PLOT_HEIGHT;
+            }
+            const nestedEncoding = node.encoding as Record<string, unknown> | undefined;
+            const horizontal = nestedEncoding?.x as Record<string, unknown> | undefined;
+            const vertical = nestedEncoding?.y as Record<string, unknown> | undefined;
+            if (horizontal?.field === 'value' && vertical && vertical.field === seriesField) {
+                nestedEncoding!.x = {
+                    ...vertical,
+                    type: 'ordinal',
+                    axis: {
+                        ...((vertical.axis as Record<string, unknown> | undefined) ?? {}),
+                        title: null,
+                        ticks: false,
+                        domain: false,
+                        grid: false,
+                        labelAngle: 0
+                    }
+                };
+                nestedEncoding!.y = {
+                    ...horizontal,
+                    scale: {...((horizontal.scale as Record<string, unknown> | undefined) ?? {}), zero: false, nice: true},
+                    axis: {
+                        ...((horizontal.axis as Record<string, unknown> | undefined) ?? {}),
+                        title: null,
+                        tickCount: 4,
+                        grid: true
+                    }
+                };
+            }
+            const mark = node.mark as Record<string, unknown> | undefined;
+            if (mark?.type === 'text') {
+                node.mark = {...mark, align: 'center', dx: 0, dy: -10};
+            }
+            for (const channel of ['x', 'y']) {
+                const definition = nestedEncoding?.[channel];
+                if (definition && typeof definition === 'object') {
+                    nestedEncoding![channel] = polishAxis(channel, definition as Record<string, unknown>);
+                }
+            }
+            const nestedColor = nestedEncoding?.color as Record<string, unknown> | undefined;
+            if (nestedColor?.field) {
+                nestedEncoding!.color = {
+                    ...nestedColor,
+                    scale: {...((nestedColor.scale as Record<string, unknown> | undefined) ?? {}), range: palette},
+                    legend: nestedColor.legend === null ? null : {
+                        ...((nestedColor.legend as Record<string, unknown> | undefined) ?? {}),
+                        title: null,
+                        orient: 'top',
+                        direction: 'horizontal',
+                        columns: 2,
+                        labelColor: CHART_LABEL_COLOR,
+                        labelFontSize: 12,
+                        labelPadding: 5,
+                        symbolSize: 86,
+                        symbolStrokeWidth: 2
+                    }
+                };
+            }
+            for (const key of ['spec']) {
+                const child = node[key];
+                if (child && typeof child === 'object' && !Array.isArray(child)) polishNestedSpec(child as Record<string, unknown>);
+            }
+            for (const key of ['layer', 'vconcat', 'hconcat', 'concat']) {
+                const children = node[key];
+                if (Array.isArray(children)) {
+                    for (const child of children) {
+                        if (child && typeof child === 'object') polishNestedSpec(child as Record<string, unknown>);
+                    }
+                }
+            }
+        };
+        polishNestedSpec(themed);
+        return {
+            ...themed,
+            spacing: METRIC_CHART_SPACING,
+            bounds: 'full',
+            background: 'transparent',
+            config: {
+                ...((themed.config as Record<string, unknown> | undefined) ?? {}),
+                font: 'Manrope',
+                view: {stroke: null},
+                axis: {labelFont: 'Manrope', labelFontWeight: 500, titleFont: 'Manrope', titleFontWeight: 600},
+                header: {labelFont: 'Manrope', labelColor: CHART_LABEL_COLOR, labelFontWeight: 600},
+                legend: {labelFont: 'Manrope', labelFontWeight: 500, titleFont: 'Manrope', titleFontWeight: 600},
+                text: {font: 'Manrope', fontWeight: 500},
+                title: {font: 'Manrope', fontWeight: 600}
+            }
+        };
+    }
     const encoding = themed.encoding as Record<string, unknown> | undefined;
     for (const channel of ['x', 'y']) {
         const definition = encoding?.[channel];

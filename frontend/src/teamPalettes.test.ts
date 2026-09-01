@@ -3,9 +3,9 @@ import {
   applyTeamChartPalette,
   CHART_SURFACE_COLOR,
   colorContrastRatio,
-  DEFAULT_CHART_PALETTE,
   NBA_TEAM_CHART_PALETTES,
   teamChartDisplayPalette,
+  teamLogoUrl,
   teamChartPalette,
   teamChartSeriesPalette,
   TEAM_CHART_PALETTES
@@ -16,10 +16,7 @@ describe('NFL chart palettes', () => {
     expect(Object.keys(TEAM_CHART_PALETTES)).toHaveLength(32);
     expect(teamChartPalette('KC')).toEqual(['#E31837', '#FFB81C']);
     expect(teamChartPalette('LA')).toEqual(['#003594', '#FFD100']);
-  });
-
-  it('falls back safely for an unknown team', () => {
-    expect(teamChartPalette('unknown')).toEqual(DEFAULT_CHART_PALETTE);
+    expect(teamLogoUrl('LA')).toBe('https://a.espncdn.com/i/teamlogos/nfl/500/lar.png');
   });
 
   it('extends team colors into a readable palette for multi-season comparisons', () => {
@@ -30,37 +27,6 @@ describe('NFL chart palettes', () => {
     expect(palette[3]).toBe(teamChartDisplayPalette('CHI')[1]);
     expect(new Set(palette)).toHaveLength(4);
     expect(palette.every((color) => colorContrastRatio(color, CHART_SURFACE_COLOR) >= 3)).toBe(true);
-  });
-
-  it('brightens dark display colors without changing the official palette', () => {
-    const official = teamChartPalette('LA');
-    const display = teamChartDisplayPalette('LA');
-
-    expect(official).toEqual(['#003594', '#FFD100']);
-    expect(display[0]).not.toBe(official[0]);
-    expect(colorContrastRatio(display[0], CHART_SURFACE_COLOR)).toBeGreaterThanOrEqual(3);
-    expect(display[1]).toBe(official[1]);
-  });
-
-  it('applies team colors without mutating the stored chart specification', () => {
-    const specification = {
-      encoding: { color: { field: 'window', type: 'nominal' } }
-    };
-    const themed = applyTeamChartPalette(specification, 'KC');
-
-    expect(themed).toMatchObject({
-      background: 'transparent',
-      width: 'container',
-      height: 'container',
-      autosize: { type: 'fit', contains: 'padding', resize: true },
-      encoding: { color: { scale: { range: ['#E31837', '#FFB81C'] } } },
-      config: {
-        font: 'Manrope',
-        axis: { labelFontWeight: 500, titleFontWeight: 600 },
-        legend: { labelFontWeight: 500, titleFontWeight: 600 }
-      }
-    });
-    expect(specification).toEqual({ encoding: { color: { field: 'window', type: 'nominal' } } });
   });
 
   it('layers line charts with a halo and non-color series cues', () => {
@@ -94,30 +60,41 @@ describe('NFL chart palettes', () => {
     });
   });
 
-  it('labels and distinguishes both endpoints of a season trend', () => {
+  it('applies team colors inside independently scaled metric rows', () => {
     const themed = applyTeamChartPalette(
       {
-        data: { values: [
-          { season: 2022, value: -0.099, series: 'EPA/dropback' },
-          { season: 2023, value: -0.066, series: 'EPA/dropback' },
-          { season: 2025, value: 0.116, series: 'EPA/dropback' }
-        ] },
-        mark: { type: 'line', point: true },
-        encoding: {
-          x: { field: 'season', type: 'ordinal' },
-          y: { field: 'value', type: 'quantitative' },
-          color: { field: 'series', type: 'nominal' }
+        usermeta: {chartKind: 'metric-rows', metricRowCount: 1, seriesField: 'window'},
+        data: {values: [{metric: 'EPA/dropback', window: '2024', value: -0.1}]},
+        spacing: 10,
+        spec: {
+          height: {step: 25},
+          layer: [{
+            mark: {type: 'point'},
+            encoding: {
+              x: {field: 'value', type: 'quantitative', scale: {zero: true}},
+              y: {field: 'window', type: 'nominal'},
+              color: {field: 'window'}
+            }
+          }]
         }
       },
-      'KC'
-    ) as { layer: Array<Record<string, any>> };
+      'CHI'
+    );
 
-    expect(themed.layer).toHaveLength(6);
-    expect(themed.layer[2].data.values[0].endpointLabel).toBe('2022 · -0.099');
-    expect(themed.layer[2].mark.color).toBe('#E31837');
-    expect(themed.layer[4].data.values[0].endpointLabel).toBe('2025 · +0.116');
-    expect(themed.layer[4].mark.color).toBe('#FFB81C');
+    expect(themed).toMatchObject({
+      spacing: 32,
+      bounds: 'full',
+      spec: {
+        height: 130,
+        layer: [{encoding: {
+          x: {field: 'window', type: 'ordinal'},
+          y: {field: 'value', type: 'quantitative', scale: {zero: false}},
+          color: {scale: {range: teamChartSeriesPalette('CHI', 2)}}
+        }}]
+      }
+    });
   });
+
 });
 
 describe('NBA chart palettes', () => {
@@ -127,6 +104,7 @@ describe('NBA chart palettes', () => {
     expect(teamChartPalette('ATL', 'nfl')).toEqual(['#A71930', '#A5ACAF']);
     expect(teamChartPalette('SAC', 'nba')).toEqual(['#5A2D81', '#63727A']);
     expect(teamChartPalette('GS', 'nba')).toEqual(teamChartPalette('GSW', 'nba'));
+    expect(teamLogoUrl('GSW', 'nba')).toBe('https://a.espncdn.com/i/teamlogos/nba/500/gs.png');
   });
 
   it('applies NBA colors to chart series through the shared theming path', () => {

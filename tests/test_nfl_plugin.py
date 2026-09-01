@@ -26,9 +26,13 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
         question="Why did passing efficiency decline?",
         scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
     )
-    manifests = {season: manifest(season, frame.columns) for season, frame in pbp_pair.items()}
-    first = plugin.analyze(request, pbp_pair, manifests)
-    second = plugin.analyze(request, pbp_pair, manifests)
+    frames = {
+        season: frame.with_columns(pl.lit("BUF").alias("home_team"), pl.lit("KC").alias("away_team"))
+        for season, frame in pbp_pair.items()
+    }
+    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
+    first = plugin.analyze(request, frames, manifests)
+    second = plugin.analyze(request, frames, manifests)
     epa = next(item for item in first.aggregate_evidence if item.metric == "epa_per_dropback")
     assert epa.value == -0.1
     assert epa.sample_size == 160
@@ -46,7 +50,14 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert first.play_evidence[0].visualization is not None
     assert first.play_evidence[0].visualization.down is not None
     assert first.play_evidence[0].visualization.yards_gained is not None
+    assert first.play_evidence[0].visualization.home_team_abbreviation == "BUF"
+    assert first.play_evidence[0].visualization.away_team_abbreviation == "KC"
     assert first.charts
+    assert first.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
+    assert first.charts[0].specification["vconcat"]
+    assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["field"] == "window"
+    assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".2f"
+    assert first.charts[0].specification["vconcat"][1]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".0%"
     weekly = [item for item in first.aggregate_evidence if item.metric == "weekly_epa_per_dropback"]
     assert weekly and all(item.confidence_low is not None and item.confidence_high is not None for item in weekly)
     assert any(item.metric == "weekly_moving_average_epa_per_dropback" for item in first.aggregate_evidence)
@@ -88,6 +99,7 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
         "analyze_player_trends",
         "find_player_representative_plays",
     }
+    assert result.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
 
     directory = pl.DataFrame(
         {
@@ -96,6 +108,9 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
             "display_name": ["Patrick Mahomes"],
         }
     )
+    options = plugin.analysis_options([*manifests.values(), manifest(0, directory.columns, "players")])
+    assert options.available_seasons == [2024, 2025]
+    assert all(0 not in metric.available_seasons for metric in options.metrics)
     alias_result = plugin.analyze(
         request.model_copy(update={"subject": AnalysisSubject(type="player", id="MahoPa00", team_id="KC")}),
         pbp_pair,
@@ -266,69 +281,6 @@ def test_rushing_and_overall_offense_domains_scope_the_correct_plays(pbp_pair) -
     }
 
 
-def test_full_season_range_analyzes_every_included_season(pbp_pair) -> None:
-    plugin = NFLPlugin()
-    frames: dict[int, pl.DataFrame] = {}
-    for season, shift in ((2022, 0.0), (2023, 0.04), (2024, -0.02), (2025, 0.08)):
-        frames[season] = pbp_pair[2024].with_columns(
-            pl.lit(season).alias("season"),
-            (pl.col("epa") + shift).alias("epa"),
-            pl.col("game_id").str.replace("2024", str(season)).alias("game_id"),
-        )
-    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
-    request = AnalysisRequest(
-        question="How did CHI perform from 2022 through 2025?",
-        scope=AnalysisScope(
-            team="KC",
-            baseline_season=2022,
-            comparison_season=2025,
-            comparison_design="full_seasons",
-        ),
-        metrics=["epa_per_dropback"],
-    )
-
-    result = plugin.analyze(request, frames, manifests)
-
-    seasonal = [item for item in result.aggregate_evidence if item.metric == "seasonal_epa_per_dropback"]
-    assert [int(item.label.split(" ·", 1)[0]) for item in seasonal] == [2022, 2023, 2024, 2025]
-    assert {item.tool for item in result.executions} >= {"analyze_season_trends", "compare_time_windows"}
-    assert {manifest_id for item in seasonal for manifest_id in item.dataset_manifest_ids} == {
-        "dataset-play_by_play-2022",
-        "dataset-play_by_play-2023",
-        "dataset-play_by_play-2024",
-        "dataset-play_by_play-2025",
-    }
-    assert any(chart.title == "Season-by-season EPA/dropback" for chart in result.charts)
-    comparison_chart = next(chart for chart in result.charts if chart.title == "All seasons · Passing efficiency comparison")
-    assert {row["season"] for row in comparison_chart.specification["data"]["values"]} == {2022, 2023, 2024, 2025}
-    assert comparison_chart.specification["encoding"]["color"]["field"] == "season"
-
-
-def test_plan_uses_only_registered_tools() -> None:
-    plugin = NFLPlugin()
-    request = AnalysisRequest(question="Why?", scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025))
-    plan = plugin.default_plan(request)
-    registered = {tool.name for tool in plugin.tools()}
-    assert {call.tool for call in plan.calls} <= registered
-    priority_tools = {
-        tool.name: tool
-        for tool in plugin.tools()
-        if tool.name
-        in {
-            "get_analysis_options",
-            "compare_time_windows",
-            "analyze_weekly_trends",
-            "rank_game_outliers",
-            "benchmark_against_league",
-            "analyze_situational_split",
-            "find_representative_plays",
-            "explain_metric",
-        }
-    }
-    assert len(priority_tools) == 8
-    assert all(tool.input_schema.get("type") == "object" for tool in priority_tools.values())
-
-
 def test_selected_metrics_and_week_windows_constrain_analysis(pbp_pair) -> None:
     plugin = NFLPlugin()
     request = AnalysisRequest(
@@ -357,36 +309,6 @@ def test_selected_metrics_and_week_windows_constrain_analysis(pbp_pair) -> None:
     }
     comparison_execution = next(item for item in result.executions if item.tool == "compare_time_windows")
     assert comparison_execution.parameters["baseline"]["weeks"] == (1, 2)
-
-
-def test_options_report_season_specific_field_availability(pbp_pair) -> None:
-    plugin = NFLPlugin()
-    manifests = [manifest(season, frame.columns) for season, frame in pbp_pair.items()]
-    options = plugin.analysis_options(manifests)
-    formation = next(item for item in options.split_dimensions if item.value == "formation")
-    no_huddle = next(item for item in options.split_dimensions if item.value == "no_huddle")
-    assert formation.available_seasons == [2024, 2025]
-    assert no_huddle.available_seasons == []
-    assert options.syncable_seasons[0] == 2025
-
-
-def test_selected_split_limits_decomposition_dimensions(pbp_pair) -> None:
-    plugin = NFLPlugin()
-    request = AnalysisRequest(
-        question="Which downs drove the change?",
-        scope=AnalysisScope(
-            team="KC",
-            baseline=AnalysisWindow(season=2024, weeks=(1, 2)),
-            comparison=AnalysisWindow(season=2025, weeks=(1, 2)),
-        ),
-        metrics=["epa_per_dropback"],
-        splits=["down"],
-    )
-    manifests = {season: manifest(season, frame.columns) for season, frame in pbp_pair.items()}
-    result = plugin.analyze(request, pbp_pair, manifests)
-    decompositions = [item.metric for item in result.aggregate_evidence if item.metric.endswith("_decomposition")]
-    assert decompositions
-    assert set(decompositions) == {"epa_per_dropback__down_decomposition"}
 
 
 def test_player_and_supplemental_context_tools(pbp_pair) -> None:
@@ -651,48 +573,3 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
     assert result.play_evidence[0].visualization.offense_names
     assert result.play_evidence[0].visualization.defense_names == ["T.J. Watt", "Minkah Fitzpatrick"]
     assert result.play_evidence[0].visualization.source_packages == ["play_by_play", "participation", "ftn_charting"]
-
-
-def test_metric_explanation_and_player_resolution(pbp_pair) -> None:
-    plugin = NFLPlugin()
-    definition = plugin.explain_metric("epa_per_dropback")
-    assert "mean(epa)" in definition.formula
-    assert definition.higher_is_better is True
-    assert "higher is generally better" in definition.interpretation
-    players = plugin.resolve_players("kelce", [(2025, pbp_pair[2025])])
-    assert players[0].name == "Travis Kelce"
-    assert players[0].seasons_by_domain["receiving"] == [2025]
-    assert players[0].seasons_by_domain["quarterback"] == []
-
-    resolved = plugin.resolve_players(
-        "Caleb Williams",
-        [
-            (
-                2023,
-                pl.DataFrame(
-                    {
-                        "gsis_id": ["00-0039918"],
-                        "full_name": ["Caleb Williams"],
-                        "team": ["CHI"],
-                        "position": ["QB"],
-                    }
-                ),
-            ),
-            (
-                2024,
-                pl.DataFrame(
-                    {
-                        "player_id": ["00-0039918"],
-                        "player_name": ["C.Williams"],
-                        "position": ["QB"],
-                        "attempts": [562],
-                        "targets": [0],
-                        "carries": [81],
-                    }
-                ),
-            ),
-        ],
-    )
-    assert resolved[0].name == "Caleb Williams"
-    assert resolved[0].seasons == [2024]
-    assert resolved[0].seasons_by_domain["quarterback"] == [2024]

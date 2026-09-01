@@ -40,4 +40,4 @@ line-length = 143
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.black]
-line-length = 140
+line-length = 143

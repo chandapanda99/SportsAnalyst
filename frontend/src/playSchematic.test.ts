@@ -19,7 +19,7 @@ describe('play schematic reconstruction', () => {
       defense_positions: ['LB'],
     });
 
-    expect(schematic.lineupMode).toBe('recorded');
+    expect(schematic.lineupMode).toBe('hybrid');
     expect(schematic.players.some(player => player.name === 'J.Hunt' && player.side === 'defense')).toBe(true);
     expect(schematic.paths.map(path => path.kind)).toEqual(['pass', 'return']);
     expect(schematic.markers.some(marker => marker.label === 'INT · J.Hunt')).toBe(true);
@@ -34,6 +34,13 @@ describe('play schematic reconstruction', () => {
     expect(line.C).toBeLessThan(line.RG);
     expect(line.RG).toBeLessThan(line.RT);
     expect(line.C).toBe(schematic.hashY);
+    expect(line.RG).toBeDefined();
+    expect(Math.max(...Object.values(line)) - Math.min(...Object.values(line))).toBeLessThan(15);
+    expect(new Set(
+      schematic.players
+        .filter(player => ['LT', 'LG', 'C', 'RG', 'RT'].includes(player.position))
+        .map(player => player.x),
+    ).size).toBe(1);
   });
 
   it('falls back to an eleven-player template with play-by-play alone', () => {
@@ -53,4 +60,70 @@ describe('play schematic reconstruction', () => {
     expect(schematic.players.filter(player => player.side === 'defense')).toHaveLength(11);
     expect(schematic.paths.map(path => path.kind)).toEqual(['pass', 'after-catch']);
   });
+
+  it('uses every recorded generic lineman before creating inferred line placeholders', () => {
+    const completeLine = buildPlaySchematic({
+      offense_names: ['Center', 'Right Guard', 'Right Tackle', 'Tackle One', 'Tackle Two', 'Quarterback'],
+      offense_positions: ['C', 'RG', 'RT', 'T', 'T', 'QB'],
+    });
+    const linemen = completeLine.players.filter(player =>
+      player.side === 'offense' && ['LT', 'LG', 'C', 'RG', 'RT'].includes(player.position)
+    );
+
+    expect(linemen).toHaveLength(5);
+    expect(linemen.every(player => player.recorded)).toBe(true);
+    expect(linemen.find(player => player.name === 'Tackle One')).toMatchObject({position: 'LT', inferredPlacement: true});
+    expect(linemen.find(player => player.name === 'Tackle Two')).toMatchObject({position: 'LG', inferredPlacement: true});
+
+    const incompleteLine = buildPlaySchematic({
+      offense_names: ['Center', 'Right Guard', 'Right Tackle', 'Left Tackle'],
+      offense_positions: ['C', 'RG', 'RT', 'LT'],
+    });
+    expect(incompleteLine.players.find(player => player.side === 'offense' && player.position === 'LG'))
+      .toMatchObject({recorded: false, inferredPlacement: true});
+  });
+
+  it('turns football terminology into consistent formation, box, rush, and coverage geometry', () => {
+    const schematic = buildPlaySchematic({
+      yardline_100: 52,
+      play_type: 'pass',
+      formation: 'SHOTGUN',
+      personnel: '11',
+      defensive_personnel: '2 DL, 4 LB, 5 DB',
+      defenders_in_box: 6,
+      pass_rushers: 4,
+      blitzers: 1,
+      coverage_type: 'COVER_3',
+      man_zone: 'ZONE',
+      starting_hash: 'L',
+      qb_location: 'S',
+      offense_backfield_count: 1,
+      offense_names: ['Quarterback'],
+      offense_positions: ['QB'],
+    });
+
+    const offense = schematic.players.filter(player => player.side === 'offense');
+    const defense = schematic.players.filter(player => player.side === 'defense');
+    expect(offense).toHaveLength(11);
+    expect(defense).toHaveLength(11);
+    expect(schematic.context).toEqual({
+      formation: 'Shotgun',
+      offensivePersonnel: '11 personnel · 1 RB, 1 TE, 3 WR',
+      defensivePersonnel: '2 DL, 4 LB, 5 DB',
+      boxCount: 6,
+      passRusherCount: 4,
+      blitzerCount: 1,
+      coverage: 'Cover 3 · Zone',
+    });
+    expect(defense.filter(player => player.inBox)).toHaveLength(6);
+    expect(defense.filter(player => player.rushRole)).toHaveLength(4);
+    expect(defense.filter(player => player.rushRole === 'blitzer')).toHaveLength(1);
+    expect(defense.filter(player => player.placementBasis.startsWith('Deep alignment'))).toHaveLength(3);
+
+    const line = offense.filter(player => ['LT', 'LG', 'C', 'RG', 'RT'].includes(player.position));
+    const quarterback = offense.find(player => player.position === 'QB')!;
+    expect(new Set(line.map(player => player.x)).size).toBe(1);
+    expect(quarterback.x).toBeLessThan(line[0].x);
+  });
+
 });

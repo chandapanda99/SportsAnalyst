@@ -1,23 +1,50 @@
 <script lang="ts">
     import type {Evidence} from './types';
-    import {buildPlaySchematic} from './playSchematic';
-    import {colorContrastRatio, teamChartDisplayPalette} from './teamPalettes';
+    import {
+        buildPlaySchematic,
+        describeHash,
+        describeQbAlignment,
+        FOOTBALL_FIELD_WIDTH,
+        NFL_HASH_FROM_SIDELINE,
+        type SchematicPlayer
+    } from './playSchematic';
+    import {colorContrastRatio, NFL_TEAM_NAMES, teamChartDisplayPalette, teamChartPalette, teamLogoUrl} from './teamPalettes';
 
     export let play: Evidence;
     export let onclose: () => void;
 
+    let focusedPlayerId: string | null = null;
+    const fieldMidpoint = FOOTBALL_FIELD_WIDTH / 2;
+    const fiveYardLines = Array.from({length: 19}, (_, index) => 15 + index * 5);
+    const numberedYardLines = Array.from({length: 9}, (_, index) => 20 + index * 10);
+    const oneYardTicks = Array.from({length: 99}, (_, index) => 11 + index).filter((yard) => yard % 5 !== 0);
+    const hashRows = [NFL_HASH_FROM_SIDELINE, FOOTBALL_FIELD_WIDTH - NFL_HASH_FROM_SIDELINE];
+
     $: offenseTeam = play.visualization?.possession_team ?? play.team ?? '';
     $: defenseTeam = play.visualization?.defensive_team ?? '';
+    $: homeTeam = play.visualization?.home_team_abbreviation ?? inferredHomeTeam(play.game_id) ?? offenseTeam;
     $: offensePalette = teamChartDisplayPalette(offenseTeam);
     $: defensePalette = teamChartDisplayPalette(defenseTeam);
+    $: homePalette = teamChartPalette(homeTeam);
+    $: homeTeamName = NFL_TEAM_NAMES[homeTeam.toUpperCase()] ?? homeTeam.toUpperCase();
+    $: endzoneTextColor = colorContrastRatio(homePalette[0], homePalette[1]) >= 3
+        ? homePalette[1]
+        : colorContrastRatio(homePalette[0], '#F4F8FA') >= 4.5 ? '#F4F8FA' : '#07121D';
+    $: homeLogo = teamLogoUrl(homeTeam);
     $: schematic = buildPlaySchematic(play.visualization);
     $: sourcePackages = play.visualization?.source_packages ?? ['play_by_play'];
     $: markerPrefix = `play-${play.evidence_id.replace(/[^a-zA-Z0-9]/g, '')}`;
     $: offensePlayers = playerRows(play.visualization?.offense_names, play.visualization?.offense_positions);
     $: defensePlayers = playerRows(play.visualization?.defense_names, play.visualization?.defense_positions);
+    $: focusedPlayer = schematic.players.find(player => player.id === focusedPlayerId) ?? null;
 
     function sourceLabel(source: string) {
         return source === 'play_by_play' ? 'PBP' : source === 'participation' ? 'PARTICIPATION' : source === 'ftn_charting' ? 'FTN' : source.toUpperCase();
+    }
+
+    function inferredHomeTeam(gameId?: string) {
+        const candidate = gameId?.split('_').at(-1)?.toUpperCase();
+        return candidate && teamLogoUrl(candidate) ? candidate : null;
     }
 
     function pathColor(kind: string) {
@@ -28,6 +55,13 @@
 
     function pathMarker(kind: string) {
         return `url(#${markerPrefix}-${kind})`;
+    }
+
+    function yardArrowPath(x: number, y: number) {
+        const pointsLeft = x < 60;
+        const innerEdge = pointsLeft ? x - 2.35 : x + 2.35;
+        const tip = pointsLeft ? innerEdge - 1.05 : innerEdge + 1.05;
+        return `M ${tip} ${y} L ${innerEdge} ${y - .78} L ${innerEdge} ${y + .78} Z`;
     }
 
     function playerRows(names: string[] = [], positions: string[] = []) {
@@ -44,6 +78,23 @@
 
     function recordedFlag(value: boolean | null | undefined, yes: string, no = 'No') {
         return value == null ? 'Not recorded' : value ? yes : no;
+    }
+
+    function tooltipLabel(player: SchematicPlayer) {
+        const identity = player.recorded ? `${player.name} · ${player.position}` : `${player.position} · Identity not recorded`;
+        const assignment = player.rushRole === 'blitzer' ? 'inferred blitzer'
+            : player.rushRole === 'rusher' ? 'inferred rusher'
+                : player.inBox ? 'inferred in box' : '';
+        return [identity, assignment].filter(Boolean).join(' · ');
+    }
+
+    function tooltipWidth(player: SchematicPlayer) {
+        return Math.min(52, Math.max(12, tooltipLabel(player).length * .64));
+    }
+
+    function tooltipX(player: SchematicPlayer) {
+        const halfWidth = tooltipWidth(player) / 2;
+        return Math.max(halfWidth + .8, Math.min(120 - halfWidth - .8, player.x));
     }
 </script>
 
@@ -66,15 +117,15 @@
         <b>{play.epa?.toFixed(2)} EPA</b>
     </div>
     <div class="reconstruction-meta">
-        <div><strong>{schematic.lineupMode === 'recorded' ? 'Recorded participants' : 'Formation-template lineup'}</strong>
-            <span>{schematic.lineupMode === 'recorded' ? 'Player identities are recorded; spatial placement is reconstructed.' : 'Supporting participation data is unavailable; positions are inferred from the recorded play context.'}</span>
+        <div><strong>{schematic.lineupMode === 'recorded' ? 'Recorded participants' : schematic.lineupMode === 'hybrid' ? 'Recorded participants · completed formation' : 'Formation-template lineup'}</strong>
+            <span>{schematic.context.formation} · {schematic.context.offensivePersonnel} offense · {schematic.context.defensivePersonnel} defense · {schematic.context.boxCount} in box · {schematic.context.passRusherCount} rushers</span>
         </div>
         <div class="source-badges" aria-label="Sources used by this schematic">
             {#each sourcePackages as source}<span>{sourceLabel(source)}</span>{/each}
         </div>
     </div>
     <div class="field-wrap">
-        <svg class="field" viewBox="0 0 120 53.3" role="img" aria-label="Reconstructed play showing lineup and ball movement">
+        <svg class="field" viewBox={`0 0 120 ${FOOTBALL_FIELD_WIDTH}`} style={`--venue-primary:${homePalette[0]};--venue-secondary:${homePalette[1]};--venue-endzone-text:${endzoneTextColor}`} role="img" aria-label={`Reconstructed play on ${homeTeam}'s home field showing lineup and ball movement`}>
             <defs>
                 <filter id={`${markerPrefix}-glow`} x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
                     <feGaussianBlur stdDeviation="1.05" result="blur"/>
@@ -86,35 +137,51 @@
                     </marker>
                 {/each}
             </defs>
-            <rect width="120" height="53.3" rx="1" class="turf"/>
-            <rect x="0" width="10" height="53.3" class="endzone" style={`fill:${offensePalette[0]}`}/>
-            <rect x="110" width="10" height="53.3" class="endzone" style={`fill:${defensePalette[0]}`}/>
-            {#each Array.from({length: 11}, (_, index) => index) as marker}
-                <line x1={10 + marker * 10} x2={10 + marker * 10} y1="0" y2="53.3" class="yard-line"/>
-                {#if marker > 0 && marker < 10}
-                    <text x={10 + marker * 10} y="5" class="yard-number">{marker <= 5 ? marker * 10 : (10 - marker) * 10}</text>
-                    <text x={10 + marker * 10} y="50.2" class="yard-number bottom">{marker <= 5 ? marker * 10 : (10 - marker) * 10}</text>
+            <rect width="120" height={FOOTBALL_FIELD_WIDTH} rx="1" class="turf"/>
+            <rect x="0" width="10" height={FOOTBALL_FIELD_WIDTH} class="endzone"/>
+            <rect x="110" width="10" height={FOOTBALL_FIELD_WIDTH} class="endzone"/>
+            <rect x=".35" y=".35" width="119.3" height={FOOTBALL_FIELD_WIDTH - .7} class="field-boundary"/>
+            <text class="endzone-name" x="5" y={fieldMidpoint} textLength="42" lengthAdjust="spacingAndGlyphs" transform={`rotate(90 5 ${fieldMidpoint})`} aria-hidden="true">{homeTeamName}</text>
+            <text class="endzone-name" x="115" y={fieldMidpoint} textLength="42" lengthAdjust="spacingAndGlyphs" transform={`rotate(-90 115 ${fieldMidpoint})`} aria-hidden="true">{homeTeamName}</text>
+            <line x1="10" x2="10" y1=".35" y2={FOOTBALL_FIELD_WIDTH - .35} class="goal-line"/>
+            <line x1="110" x2="110" y1=".35" y2={FOOTBALL_FIELD_WIDTH - .35} class="goal-line"/>
+            <g class="midfield-brand" aria-label={`${homeTeam} midfield logo`}>
+                <circle cx="60" cy={fieldMidpoint} r="7.2"/>
+                <text x="60" y={fieldMidpoint + .5}>{homeTeam}</text>
+                {#if homeLogo}<image href={homeLogo} x="54" y={fieldMidpoint - 6} width="12" height="12" preserveAspectRatio="xMidYMid meet"/>{/if}
+            </g>
+            {#each fiveYardLines as x}
+                <line x1={x} x2={x} y1=".35" y2={FOOTBALL_FIELD_WIDTH - .35} class:major-yard-line={(x - 10) % 10 === 0} class="yard-line"/>
+            {/each}
+            {#each oneYardTicks as x}
+                <line x1={x} x2={x} y1=".45" y2="1.18" class="sideline-tick"/>
+                <line x1={x} x2={x} y1={FOOTBALL_FIELD_WIDTH - 1.18} y2={FOOTBALL_FIELD_WIDTH - .45} class="sideline-tick"/>
+                {#each hashRows as hashY}
+                    <line x1={x} x2={x} y1={hashY - 1 / 3} y2={hashY + 1 / 3} class="inbound-hash"/>
+                {/each}
+            {/each}
+            {#each numberedYardLines as x, marker}
+                {@const yardNumber = marker < 5 ? (marker + 1) * 10 : (9 - marker) * 10}
+                <text x={x} y="11.8" class="yard-number top" transform={`rotate(180 ${x} 11.8)`}>{yardNumber}</text>
+                <text x={x} y={FOOTBALL_FIELD_WIDTH - 11.8} class="yard-number bottom">{yardNumber}</text>
+                {#if yardNumber !== 50}
+                    <path d={yardArrowPath(x, 11.8)} class="yard-direction top" data-yard-number={yardNumber}/>
+                    <path d={yardArrowPath(x, FOOTBALL_FIELD_WIDTH - 11.8)} class="yard-direction bottom" data-yard-number={yardNumber}/>
                 {/if}
             {/each}
-            {#each [18, 35.3] as hashY}
-                <line x1="10" x2="110" y1={hashY} y2={hashY} class="hash-line"/>
-            {/each}
-            <line x1={schematic.startX} x2={schematic.startX} y1="2" y2="51.3" class="scrimmage"/>
+            <line x1={schematic.startX} x2={schematic.startX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="scrimmage"/>
             {#if play.visualization?.yards_to_go != null}
-                <line x1={schematic.lineToGainX} x2={schematic.lineToGainX} y1="2" y2="51.3" class="line-to-gain"/>
+                <line x1={schematic.lineToGainX} x2={schematic.lineToGainX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="line-to-gain"/>
             {/if}
             {#each schematic.paths as segment}
                 <path d={segment.d} class={`play-path-glow ${segment.kind}`} style={`stroke:${pathColor(segment.kind)}`} filter={`url(#${markerPrefix}-glow)`}/>
                 <path d={segment.d} class={`play-path ${segment.kind}`} style={`stroke:${pathColor(segment.kind)}`} marker-end={pathMarker(segment.kind)}/>
             {/each}
             {#each schematic.players as player}
-                <g class={`field-player ${player.side} ${player.recorded ? 'recorded' : 'generic'}`} transform={`translate(${player.x} ${player.y})`} role="img" aria-label={player.recorded ? `${player.name}, ${player.position}` : `${player.position}, template placement`}>
+                <g class={`field-player ${player.side} ${player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} transform={`translate(${player.x} ${player.y})`} role="img" aria-label={tooltipLabel(player)} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
+                    {#if player.rushRole}<circle class={`rush-ring ${player.rushRole}`} r="2.12"/>{/if}
                     <circle r="1.65" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
                     <text class="position-label" y=".12" style={`fill:${markerTextColor(player.side)}`}>{player.position.slice(0, 3)}</text>
-                    <g class="player-tooltip">
-                        <rect x={-Math.max(4.2, player.label.length * .58)} y="2" width={Math.max(8.4, player.label.length * 1.16)} height="3.4" rx=".65"/>
-                        <text class="name-label" y="4.28">{player.recorded ? player.label : `Template ${player.position}`}</text>
-                    </g>
                 </g>
             {/each}
             {#each schematic.markers as marker}
@@ -124,11 +191,19 @@
                     <text y="3.82">{marker.label}</text>
                 </g>
             {/each}
+            {#if focusedPlayer}
+                <g class="player-tooltip visible" transform={`translate(${tooltipX(focusedPlayer)} ${focusedPlayer.y})`} aria-hidden="true">
+                    <rect x={-tooltipWidth(focusedPlayer) / 2} y={focusedPlayer.y < 7 ? 2.5 : -6.2} width={tooltipWidth(focusedPlayer)} height="3.8" rx=".65"/>
+                    <text class="name-label" y={focusedPlayer.y < 7 ? 5.05 : -3.65}>{tooltipLabel(focusedPlayer)}</text>
+                </g>
+            {/if}
         </svg>
         <div class="field-legend">
             <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{play.visualization?.possession_team ?? play.team} offense</span>
             <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
             <span><i class="flight-key"></i>Ball flight</span>
+            {#if schematic.players.some(player => player.rushRole === 'rusher')}<span><i class="rush-key"></i>Inferred rusher</span>{/if}
+            {#if schematic.players.some(player => player.rushRole === 'blitzer')}<span><i class="blitz-key"></i>Inferred blitzer</span>{/if}
             {#if schematic.paths.some(path => path.kind === 'after-catch')}<span><i class="yac-key"></i>After catch</span>{/if}
             {#if schematic.paths.some(path => path.kind === 'return')}<span><i class="return-key"></i>Turnover return</span>{/if}
         </div>
@@ -138,19 +213,19 @@
         <dl>
             <div>
                 <dt>Formation <i>PBP</i></dt>
-                <dd>{play.visualization?.formation ?? 'Not recorded'}{play.visualization?.shotgun ? ' · Shotgun' : ''}{play.visualization?.no_huddle ? ' · No huddle' : ''}</dd>
+                <dd>{schematic.context.formation}{play.visualization?.no_huddle ? ' · No huddle' : ''}</dd>
             </div>
             <div>
                 <dt>Personnel <i>PART</i></dt>
-                <dd>{play.visualization?.personnel ?? 'Offense not recorded'}<br/>{play.visualization?.defensive_personnel ?? 'Defense not recorded'}</dd>
+                <dd>Offense: {schematic.context.offensivePersonnel}<br/>Defense: {schematic.context.defensivePersonnel}</dd>
             </div>
             <div>
                 <dt>Alignment <i>FTN</i></dt>
-                <dd>{play.visualization?.starting_hash ? `${play.visualization.starting_hash} hash` : 'Hash not recorded'} · {play.visualization?.qb_location ?? 'QB location unavailable'}{play.visualization?.offense_backfield_count != null ? ` · ${play.visualization.offense_backfield_count} backfield` : ''}</dd>
+                <dd>{describeHash(play.visualization?.starting_hash)} · {describeQbAlignment(play.visualization ?? {})}{play.visualization?.offense_backfield_count != null ? ` · ${play.visualization.offense_backfield_count} in backfield` : ''}</dd>
             </div>
             <div>
                 <dt>Box & rush <i>PART/FTN</i></dt>
-                <dd>{play.visualization?.defenders_in_box ?? play.visualization?.defense_box_count ?? '—'} in box · {play.visualization?.pass_rushers ?? '—'} rushers{play.visualization?.blitzers != null ? ` · ${play.visualization.blitzers} blitzers` : ''}</dd>
+                <dd>{schematic.context.boxCount} in box · {schematic.context.passRusherCount} rushers · {schematic.context.blitzerCount} blitzers</dd>
             </div>
             <div>
                 <dt>Play design <i>PBP/FTN</i></dt>
@@ -162,7 +237,7 @@
             </div>
             <div>
                 <dt>Coverage & read <i>PART/FTN</i></dt>
-                <dd>{play.visualization?.coverage_type ?? play.visualization?.man_zone ?? 'Coverage not recorded'}{play.visualization?.read_thrown ? ` · ${play.visualization.read_thrown} read` : ''}</dd>
+                <dd>{schematic.context.coverage}{play.visualization?.read_thrown ? ` · ${play.visualization.read_thrown} read` : ''}</dd>
             </div>
             <div>
                 <dt>Target context <i>PART/FTN</i></dt>
@@ -187,7 +262,7 @@
         </dl>
         {#if offensePlayers.length || defensePlayers.length}
             <div class="on-field">
-                <div class="on-field-heading"><strong>Recorded on-field personnel</strong><span>Participation package · placement above uses formation templates</span></div>
+                <div class="on-field-heading"><strong>Recorded on-field personnel</strong><span>Identities are recorded; placement uses personnel, formation, box, rush, and coverage constraints</span></div>
                 <div class="lineup-columns">
                     <section><h4>{play.visualization?.possession_team ?? play.team} offense</h4>
                         <div>{#each offensePlayers as player}<span><b>{player.position}</b>{player.name}</span>{/each}</div>
@@ -198,7 +273,7 @@
                 </div>
             </div>
         {/if}
-        <small>The tablet progressively enhances play-by-play with locally available participation and FTN charting. Formation placement and ball curves are schematic reconstructions; they are not player-tracking coordinates or measured trajectories.</small>
+        <small>The tablet uses recorded identities and football-context constraints wherever the local packages provide them. Exact player coordinates, individual rusher/blitzer assignments, and ball curves remain inferred because these sources do not provide tracking coordinates or assignment identities.</small>
     </div>
 </section>
 
@@ -311,9 +386,10 @@
     .field {
         display: block;
         width: 100%;
-        max-height: 460px;
+        height: auto;
+        aspect-ratio: 120 / 53.333;
         border: 1px solid color-mix(in srgb, var(--mint) 24%, var(--line));
-        background: #062c20
+        background: transparent
     }
 
     .turf {
@@ -321,27 +397,87 @@
     }
 
     .endzone {
-        opacity: .75
+        fill: var(--venue-primary);
+        opacity: .9
+    }
+
+    .endzone-name {
+        fill: var(--venue-endzone-text);
+        font: 800 4.2px var(--font-sans);
+        letter-spacing: .08em;
+        text-anchor: middle;
+        dominant-baseline: middle;
+        paint-order: stroke;
+        stroke: rgb(0 0 0 / 22%);
+        stroke-width: .16;
+        pointer-events: none
+    }
+
+    .goal-line {
+        stroke: var(--venue-secondary);
+        stroke-width: .7;
+        opacity: .95
+    }
+
+    .field-boundary {
+        fill: none;
+        stroke: #f4f7f8;
+        stroke-width: .42;
+        opacity: .9
+    }
+
+    .midfield-brand circle {
+        fill: color-mix(in srgb, var(--venue-primary) 22%, rgb(3 40 27 / 68%));
+        stroke: var(--venue-secondary);
+        stroke-width: .32;
+        opacity: .82
+    }
+
+    .midfield-brand text {
+        fill: var(--venue-secondary);
+        font: 700 2.25px var(--font-mono);
+        text-anchor: middle;
+        dominant-baseline: middle;
+        opacity: .3
+    }
+
+    .midfield-brand image {
+        opacity: .72;
+        filter: drop-shadow(0 .45px .55px rgb(0 0 0 / 45%))
     }
 
     .yard-line {
         stroke: #dbe8ee;
-        stroke-width: .2;
-        opacity: .45
+        stroke-width: .13;
+        opacity: .38
+    }
+
+    .yard-line.major-yard-line {
+        stroke-width: .24;
+        opacity: .66
     }
 
     .yard-number {
-        fill: rgb(237 244 247 / 58%);
-        font: 3px var(--font-mono);
+        fill: rgb(244 248 250 / 72%);
+        font: 600 2.75px var(--font-sans);
         text-anchor: middle;
         dominant-baseline: middle
     }
 
-    .hash-line {
+    .inbound-hash,
+    .sideline-tick {
         stroke: #dbe8ee;
-        stroke-width: .12;
-        stroke-dasharray: .7 1;
-        opacity: .45
+        stroke-width: .2;
+        opacity: .72
+    }
+
+    .sideline-tick {
+        stroke-width: .16;
+        opacity: .58
+    }
+
+    .yard-direction {
+        fill: rgb(244 248 250 / 65%)
     }
 
     .scrimmage {
@@ -396,9 +532,25 @@
         vector-effect: non-scaling-stroke
     }
 
-    .field-player.generic circle {
+    .field-player.inferred circle:not(.rush-ring) {
         opacity: .74;
         stroke-dasharray: 1 1
+    }
+
+    .field-player .rush-ring {
+        fill: none;
+        stroke: #f5c451;
+        stroke-width: .34;
+        stroke-dasharray: none;
+        opacity: .95;
+        filter: drop-shadow(0 0 .55px rgb(245 196 81 / 75%));
+        pointer-events: none
+    }
+
+    .field-player .rush-ring.blitzer {
+        stroke: #ff8b5d;
+        stroke-dasharray: .7 .38;
+        filter: drop-shadow(0 0 .65px rgb(255 139 93 / 82%))
     }
 
     .position-label {
@@ -416,8 +568,9 @@
         transition: opacity .14s ease-out
     }
 
-    .field-player:hover .player-tooltip {
-        opacity: 1
+    .player-tooltip.visible {
+        opacity: 1;
+        filter: drop-shadow(0 .8px 1.6px rgb(0 0 0 / 72%))
     }
 
     .player-tooltip rect {
@@ -493,6 +646,8 @@
     .field-legend .yac-key { color: #e7c56a; border-top-style: solid }
     .field-legend .return-key { color: #ff9d66 }
     .field-legend .flight-key { color: var(--mint) }
+    .field-legend .rush-key { color: #f5c451; border-top-style: solid }
+    .field-legend .blitz-key { color: #ff8b5d; border-top-style: dotted }
 
     @keyframes draw-path {
         from { opacity: 0; stroke-dashoffset: 12 }
