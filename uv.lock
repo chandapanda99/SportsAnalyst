@@ -1662,7 +1662,7 @@ requires-dist = [
     { name = "curl-cffi", marker = "extra == 'test'", specifier = ">=0.13,<1" },
     { name = "deepagents", specifier = ">=0.7" },
     { name = "duckdb", specifier = ">=1.4,<2" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.119" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.28,<1" },
     { name = "langchain-ollama", specifier = ">=1.0" },
     { name = "langchain-openai", specifier = ">=1.0" },

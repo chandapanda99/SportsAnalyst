@@ -11,7 +11,7 @@ dependencies = [
     "azure-identity>=1.25,<2",
     "deepagents>=0.7",
     "duckdb>=1.4,<2",
-    "fastapi[standard]>=0.119",
+    "fastapi[standard]>=0.141.1",
     "langchain-ollama>=1.0",
     "langchain-openai>=1.0",
     "langsmith>=0.11,<0.12",
@@ -47,6 +47,9 @@ packages = ["src/sports_analyst"]
 testpaths = ["tests"]
 addopts = "-q"
 markers = ["integration: downloads an external sports dataset", "live: requires a configured model provider or live sports endpoint"]
+
+[tool.fastapi]
+entrypoint = "src/sports_analyst.api:app"
 
 [tool.ruff]
 target-version = "py313"
