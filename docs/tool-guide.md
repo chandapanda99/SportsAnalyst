@@ -172,7 +172,8 @@ FGA - offensive rebounds + turnovers + 0.44 × FTA
 ```
 
 Team offensive and defensive ratings are points scored or allowed per 100 estimated possessions. Other team metrics cover shooting, playmaking, rebounding, and turnovers.
-Player metrics cover scoring, shooting, playmaking, rebounding, a usage proxy, and plus/minus. Lineup ratings are minutes-weighted when lineup data is available.
+Player metrics cover scoring, shooting, playmaking, rebounding, a usage proxy, and plus/minus. Lineup ratings are possession-weighted when possession counts are present and
+minutes-weighted only as a fallback. The plugin selects advanced-measure rows, one preferred per-mode, the requested regular-season/playoff phase, and one row per group ID.
 
 Use `GET /api/sports/nba/options` and the metric-definition endpoint for the exact metrics currently exposed for each domain and subject type.
 
@@ -186,14 +187,18 @@ Use `GET /api/sports/nba/options` and the metric-definition endpoint for the exa
 |       `find_representative_possessions` behavior        | Implemented from both windows of synced play-by-play as part of the investigation         |
 |                    Lineup comparison                    | Implemented when compatible lineup seasons are synced for both windows                    |
 |   Local/live-derived V3 possession/lineup enrichment    | Implemented when matching rows are registered; no V3 bulk release is currently advertised |
-|       `analyze_game_trends`, `rank_game_outliers`       | Catalog surface; not a separate NBA v1 execution path                                     |
-| `benchmark_against_league`, `analyze_situational_split` | Catalog surface; selected NBA diagnostic cuts are not yet executed                        |
-|    `decompose_metric_change`, `adjust_for_opponents`    | Catalog surface                                                                           |
-| `compare_shot_profiles`, `compare_possession_outcomes`  | Catalog surface                                                                           |
-|  `compare_player_usage`, `analyze_lineup_performance`   | Catalog surface                                                                           |
+|       `analyze_game_trends`, `rank_game_outliers`       | Executed for box-score analyses, with game variability and comparison-window extremes     |
+| `benchmark_against_league`                              | Executed for team analyses when the comparison release contains league rows                |
+| `adjust_for_opponents`                                  | Executed as descriptive schedule context when opponent identities are available            |
+| `compare_shot_profiles`                                 | Executed for shooting analyses from recorded play-by-play shot value/distance              |
+| `compare_player_usage`                                  | Executed for player analyses to separate minutes/involvement from efficiency                |
+| `analyze_lineup_performance`                            | Executed with named units, minutes, possessions, ratings, contribution, and roster status  |
+| `analyze_situational_split`, `decompose_metric_change`  | Catalog surface; selected NBA diagnostic cuts are not yet executed                         |
+| `compare_possession_outcomes`                           | Catalog surface pending validated normalized possession outcomes                           |
 |                  `query_play_by_play`                   | Catalog surface                                                                           |
 
-The catalog-only entries preserve the intended interface without overstating current report behavior.
+Aggregate lineup releases support full regular-season or playoff scopes. Arbitrary date-bounded lineup segments require possession-level lineup data and fail explicitly
+rather than silently applying full-season units. Box-score metric changes include a descriptive 95% game-level interval when each window contains at least two games.
 
 ### NBA evidence and enrichment
 

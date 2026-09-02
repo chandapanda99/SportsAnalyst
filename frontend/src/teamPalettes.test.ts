@@ -55,7 +55,8 @@ describe('NFL chart palettes', () => {
             x: { axis: { title: 'Week' } },
             y: { axis: { title: 'EPA / dropback', titleFontSize: 13, gridOpacity: 0.42 } }
           }
-        }
+        },
+        {mark: {type: 'point', size: 700, opacity: 0.001}}
       ]
     });
   });

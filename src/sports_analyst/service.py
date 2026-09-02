@@ -28,7 +28,7 @@ from sports_analyst.models import (
     ToolDefinition,
     stable_id,
 )
-from sports_analyst.nba_data import SportsDataverseNBAConnector, nba_live_transport_available
+from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
 from sports_analyst.providers import provider_ids
 from sports_analyst.sql import execute_read_only_sql
@@ -144,15 +144,36 @@ class AnalystApplication:
             ",".join(str(season) for season in sorted(seasons)),
             ",".join(selected_datasets or []),
         )
-        self.events.emit(key, "starting", f"Downloading selected {sport.upper()} datasets", 0.05)
-        manifests = connector.sync(seasons, selected_datasets)
+        self.events.emit(key, "starting", f"Preparing selected {sport.upper()} datasets", 0.03)
+
+        def report_nba_sync(phase: str, dataset: str, season: int, completed: int, total: int) -> None:
+            if total <= 0:
+                return
+            label = dataset.replace("_", " ").title()
+            season_label = f"{season - 1}–{str(season)[-2:]}"
+            offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
+            unit_progress = min(total, completed + offsets.get(phase, 0.0))
+            progress = 0.08 + 0.68 * unit_progress / total
+            messages = {
+                "downloading": f"Downloading {label} for {season_label} · {completed + 1} of {total}",
+                "processing": f"Processing {label} for {season_label} · {completed + 1} of {total}",
+                "downloaded": f"Downloaded {label} for {season_label} · {completed} of {total}",
+                "skipped": f"Skipped unavailable {label} for {season_label} · {completed} of {total}",
+            }
+            self.events.emit(key, phase, messages.get(phase, f"Syncing {label} for {season_label}"), progress)
+
+        manifests = (
+            connector.sync(seasons, selected_datasets, progress_callback=report_nba_sync)
+            if sport == "nba"
+            else connector.sync(seasons, selected_datasets)
+        )
         for index, manifest in enumerate(manifests, start=1):
             self.store.save_manifest(manifest)
             self.events.emit(
                 key,
                 "registering",
                 f"Registered {manifest.dataset} {manifest.season}",
-                0.1 + 0.8 * index / len(manifests),
+                0.78 + 0.2 * index / len(manifests),
             )
         connector.clear_cache()
         self.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
@@ -163,6 +184,34 @@ class AnalystApplication:
             round((perf_counter() - started_at) * 1000),
         )
         return manifests
+
+    def dataset_sync_timeout_seconds(
+        self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
+    ) -> int:
+        """Size the inactivity timeout to the selected bulk-download workload."""
+        baseline = self.settings.event_stream_timeout_seconds
+        if sport != "nba":
+            return baseline
+        selected = list(dict.fromkeys(datasets or ["play_by_play", "schedules", "team_boxscores", "player_boxscores"]))
+        weights = {
+            "play_by_play": 5,
+            "stats_play_by_play": 5,
+            "shots": 3,
+            "stats_shots": 3,
+            "lineups": 3,
+            "team_boxscores": 2,
+            "player_boxscores": 2,
+            "stats_team_boxscores": 2,
+            "stats_player_boxscores": 2,
+            "stats_player_game_logs": 2,
+        }
+        workload = sum(
+            weights.get(dataset, 1)
+            for season in set(seasons)
+            for dataset in selected
+            if dataset in NBA_DATASETS and season in NBA_DATASETS[dataset].available_seasons
+        )
+        return min(3_600, max(baseline, baseline + 20 * workload))
 
     def _thread_id(self, parent_id: str | None, default: str) -> str:
         if not parent_id:
@@ -193,9 +242,7 @@ class AnalystApplication:
         }
 
     def investigate(self, request: AnalysisRequest, investigation_id: str | None = None) -> InvestigationBundle:
-        identifier = investigation_id or stable_id(
-            "investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()}
-        )
+        identifier = investigation_id or stable_id("investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()})
         thread_id = self._thread_id(request.parent_investigation_id, identifier)
         metadata = self._investigation_metadata(request, identifier, thread_id)
         tags = ["open-sports-analyst", f"sport:{request.sport}", f"domain:{request.analysis_domain}"]
@@ -246,17 +293,12 @@ class AnalystApplication:
             len(request.splits),
         )
         self.events.emit(identifier, "planning", "Resolving scope and analytical tools", 0.1)
-        with self.telemetry.span(
-            "sports-analyst.plan-analysis", metadata=trace_metadata, parent=root_span, run_type="tool"
-        ) as plan_span:
+        with self.telemetry.span("sports-analyst.plan-analysis", metadata=trace_metadata, parent=root_span, run_type="tool") as plan_span:
             plan = plugin.default_plan(request)
             self.telemetry.add_outputs(plan_span, {"planned_tool_count": len(plan.calls)})
-        with self.telemetry.span(
-            "sports-analyst.load-datasets", metadata=trace_metadata, parent=root_span, run_type="tool"
-        ) as load_span:
+        with self.telemetry.span("sports-analyst.load-datasets", metadata=trace_metadata, parent=root_span, run_type="tool") as load_span:
             manifests = {
-                season: self.store.manifest_for_season(season, "play_by_play", request.sport)
-                for season in request.scope.included_seasons
+                season: self.store.manifest_for_season(season, "play_by_play", request.sport) for season in request.scope.included_seasons
             }
             pbp_columns = plugin.required_play_by_play_columns(request)
             datasets = {season: connector.load(manifest, pbp_columns) for season, manifest in manifests.items()}
@@ -311,9 +353,7 @@ class AnalystApplication:
         )
         self.events.emit(identifier, "synthesizing", "Reviewing evidence and drafting findings", 0.75)
         synthesis_started_at = perf_counter()
-        with self.telemetry.span(
-            "sports-analyst.synthesize-report", metadata=trace_metadata, parent=root_span
-        ) as synthesis_span:
+        with self.telemetry.span("sports-analyst.synthesize-report", metadata=trace_metadata, parent=root_span) as synthesis_span:
             conversation_context = None
             if request.parent_investigation_id:
                 conversation_context = [
@@ -448,8 +488,7 @@ class AnalystApplication:
             self.events.emit(identifier, "planning", "Reviewing the existing investigation", 0.1)
             self.events.emit(identifier, "analyzing", "Reusing validated evidence from the parent investigation", 0.55)
             conversation_context = [
-                {"question": item.run.question, "summary": item.summary}
-                for item in self.store.investigation_thread(root.run.investigation_id)
+                {"question": item.run.question, "summary": item.summary} for item in self.store.investigation_thread(root.run.investigation_id)
             ]
             self.telemetry.add_outputs(
                 reuse_span,
@@ -460,9 +499,7 @@ class AnalystApplication:
                 },
             )
         self.events.emit(identifier, "synthesizing", "Answering the follow-up from validated evidence", 0.75)
-        with self.telemetry.span(
-            "sports-analyst.synthesize-follow-up", metadata=trace_metadata, parent=root_span
-        ) as synthesis_span:
+        with self.telemetry.span("sports-analyst.synthesize-follow-up", metadata=trace_metadata, parent=root_span) as synthesis_span:
             draft, model_id, fallback = self.agent.synthesize(
                 question,
                 root.run.subject.id if root.run.subject else root.run.scope.team,

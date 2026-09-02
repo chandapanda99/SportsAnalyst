@@ -198,10 +198,10 @@ milestone comparison. Validated segments include the regular season, playoffs, o
 Finals. Schedule labels and reviewed milestone dates determine which choices appear for each season.
 
 Team domains cover offense, defense, shooting, playmaking, rebounding, turnovers, and lineups. Player domains cover scoring, shooting, playmaking, rebounding, usage, impact,
-and compatible lineup context. Subject mode controls which domains and metrics are offered, so team-only measurements are not presented as player statistics. NBA v1
-deterministically calculates selected box-score or lineup metrics for the two comparison windows. Full-season ranges also chart each included season. The NBA catalog reserves
-names for richer game trends, league benchmarks, splits, decomposition, opponent adjustment, and shot-profile diagnostics, but those operations are not yet separate executed
-evidence tools. Representative NBA evidence is selected from both windows and includes period, clock, score, event, player/team context, a half-court shot marker when
+and compatible lineup context. Subject mode controls which domains and metrics are offered, so team-only measurements are not presented as player statistics. NBA analysis
+calculates selected box-score or canonical five-player lineup metrics for the two comparison windows. Full-season ranges also chart each included season. Reports now execute
+game-level trend and outlier analysis, team league benchmarks, available opponent context, shooting-zone profiles, and unit-level lineup analysis with player names, minutes,
+possessions, ratings, and new/returning/departed status. Representative NBA evidence is selected from both windows and includes period, clock, score, event, player/team context, a half-court shot marker when
 coordinates exist, and lineup cards when recorded on-court identities are available. Missing coordinates or players fall back to textual evidence rather than inferred
 positions.
 
@@ -241,11 +241,15 @@ windows. Results are observational and do not establish causality.
 
 NBA team metrics include points per game, estimated offensive and defensive rating, estimated pace, win percentage, field-goal and three-point percentage, effective and true
 shooting percentage, three-point rate, assists, assist-to-turnover ratio, rebounds, offensive rebounds, turnovers, and turnover rate. Player metrics include scoring and
-shooting measures, assists, rebounds, turnovers, minutes, an involvement-per-minute usage proxy, and recorded box-score plus/minus. Synced lineup releases add minutes-weighted
-offensive, defensive, and net rating.
+shooting measures, assists, rebounds, turnovers, minutes, an involvement-per-minute usage proxy, and recorded box-score plus/minus. Synced lineup releases add possession-weighted
+offensive, defensive, and net rating (minutes are used only when possessions are unavailable). Lineup rows are restricted to advanced measures, one published per-mode, the
+requested regular-season/playoff phase, and one row per five-player group before aggregation.
 
 Possessions used for team ratings and pace are estimated as `FGA - OREB + TOV + 0.44 × FTA`. These values are descriptive box-score estimates, not the published V3 possession
 count. NBA v1 requires at least one qualifying box-score row in each window; it does not apply the NFL 30-play and 10-play subgroup thresholds.
+
+Where at least two games exist in each window, box-score changes include descriptive game-level uncertainty intervals. These intervals, lineup ratings, league ranks, and
+opponent-strength summaries are observational context and should not be interpreted as causal player or coaching effects.
 
 ## Analytical capabilities
 

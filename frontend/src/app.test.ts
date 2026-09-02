@@ -43,6 +43,11 @@ describe('Open Sports Analyst workbench', () => {
           status: 200, headers: { 'content-type': 'application/json' }
         }));
       }
+      if (init?.method === 'POST' && /\/api\/datasets\/[^/]+\/sync$/.test(url)) {
+        return Promise.resolve(new Response(JSON.stringify({ job_id: 'sync-running', timeout_seconds: 640 }), {
+          status: 202, headers: { 'content-type': 'application/json' }
+        }));
+      }
       if (url.endsWith('/status')) {
         return Promise.resolve(new Response(JSON.stringify({
           stage: 'pending', message: 'Investigation is still running', progress: 0.75
@@ -311,13 +316,21 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByRole('checkbox', { name: 'Down' })).toBeTruthy();
   });
 
-  it('selects locally available packages when the selected seasons change', async () => {
+  it('keeps package selection independent from local-installation badges', async () => {
+    let progressUrl = '';
+    class IdleEventSource {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(url: string) { progressUrl = url; }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', IdleEventSource);
     render(App);
     const season2024 = await screen.findByRole('checkbox', { name: '2024 season' }) as HTMLInputElement;
     const season2025 = screen.getByRole('checkbox', { name: '2025 season' }) as HTMLInputElement;
-    const playByPlay = await screen.findByLabelText(/Play By Play/) as HTMLInputElement;
-    const rosters = screen.getByLabelText(/Rosters/) as HTMLInputElement;
-    const injuries = screen.getByLabelText(/Injuries/) as HTMLInputElement;
+    const playByPlay = await screen.findByRole('checkbox', { name: /Play By Play/ }) as HTMLInputElement;
+    const rosters = screen.getByRole('checkbox', { name: /Rosters/ }) as HTMLInputElement;
+    const injuries = screen.getByRole('checkbox', { name: /Injuries/ }) as HTMLInputElement;
 
     expect(season2024.checked).toBe(true);
     expect(season2025.checked).toBe(true);
@@ -327,22 +340,29 @@ describe('Open Sports Analyst workbench', () => {
     expect(rosters.checked).toBe(true);
     expect(injuries.checked).toBe(true);
     expect(rosters.indeterminate).toBe(false);
+    expect(screen.getByLabelText('Rosters local status: Installed')).toBeTruthy();
 
     await fireEvent.click(season2025);
 
     expect(playByPlay.checked).toBe(true);
     expect(playByPlay.indeterminate).toBe(false);
     expect(rosters.checked).toBe(true);
-    expect(rosters.indeterminate).toBe(true);
+    expect(rosters.indeterminate).toBe(false);
     expect(injuries.checked).toBe(true);
-    expect(injuries.indeterminate).toBe(true);
+    expect(injuries.indeterminate).toBe(false);
+    expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
-    const nextgen = screen.getByLabelText(/Nextgen Passing/) as HTMLInputElement;
+    const nextgen = screen.getByRole('checkbox', { name: /Nextgen Passing/ }) as HTMLInputElement;
     await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => input.checked)).toBe(true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => !input.checked)).toBe(true);
+    expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Sync Selected Data/ }));
+    await waitFor(() => expect(progressUrl).toBe('/api/dataset-jobs/sync-running/events?timeout_seconds=640'));
   });
 
   it('groups follow-ups as a saved conversation and deletes the full thread', async () => {

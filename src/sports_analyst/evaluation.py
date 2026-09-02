@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class EvaluationCase(BaseModel):
+    sport: str = "nfl"
     question: str
     expected_tools: list[str]
     expected_dimensions: list[str]
@@ -17,7 +18,7 @@ def evaluation_cases() -> list[EvaluationCase]:
         ("Did {team} improve because of situation mix or execution?", ["down", "offense_formation", "score_differential"]),
         ("How stable was {team}'s passing performance across the season?", ["week", "epa_per_dropback", "confidence_interval"]),
     ]
-    return [
+    nfl_cases = [
         EvaluationCase(
             question=pattern.format(team=team),
             expected_tools=[
@@ -44,3 +45,30 @@ def evaluation_cases() -> list[EvaluationCase]:
         for team in teams
         for pattern, dimensions in patterns
     ]
+    nba_cases = [
+        EvaluationCase(
+            sport="nba",
+            question="Which five-player units drove Detroit's net-rating change?",
+            expected_tools=["compare_time_windows", "analyze_lineup_performance"],
+            expected_dimensions=["players", "possessions", "net_rating", "returning_new_departed"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="Did Boston improve through shot selection or shot making?",
+            expected_tools=["compare_time_windows", "compare_shot_profiles", "rank_game_outliers"],
+            expected_dimensions=["shot_zone", "attempt_share", "conversion", "game_variability"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="How meaningful was this player's scoring change?",
+            expected_tools=["compare_time_windows", "analyze_game_trends", "find_representative_possessions"],
+            expected_dimensions=["games", "confidence_interval", "usage", "counterexample"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="How did Denver's offense compare with the league after accounting for opponents?",
+            expected_tools=["benchmark_against_league", "adjust_for_opponents"],
+            expected_dimensions=["league_rank", "opponent_context", "offensive_rating"],
+        ),
+    ]
+    return nfl_cases + nba_cases

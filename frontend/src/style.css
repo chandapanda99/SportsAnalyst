@@ -1371,13 +1371,44 @@ main {
     accent-color: var(--mint)
 }
 
-.dataset-options label span {
+.dataset-options label > span {
     display: grid;
     min-width: 0;
     flex: 1;
     gap: 2px;
     margin: 0;
     line-height: 1.2
+}
+
+.dataset-options .dataset-name {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    min-width: 0
+}
+
+.dataset-options .dataset-name > span {
+    min-width: 0
+}
+
+.dataset-options .dataset-name b {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    border: 1px solid color-mix(in srgb, var(--mint) 45%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--mint) 10%, transparent);
+    color: var(--mint);
+    font: 600 8px var(--font-mono);
+    letter-spacing: .04em;
+    line-height: 1.4;
+    text-transform: uppercase
+}
+
+.dataset-options .dataset-name b.partial {
+    border-color: color-mix(in srgb, var(--color-text-tertiary) 42%, transparent);
+    background: color-mix(in srgb, var(--color-text-tertiary) 8%, transparent);
+    color: var(--color-text-secondary)
 }
 
 .dataset-options label small {

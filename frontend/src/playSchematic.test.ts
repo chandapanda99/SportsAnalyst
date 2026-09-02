@@ -111,8 +111,11 @@ describe('play schematic reconstruction', () => {
       offensivePersonnel: '11 personnel · 1 RB, 1 TE, 3 WR',
       defensivePersonnel: '2 DL, 4 LB, 5 DB',
       boxCount: 6,
+      boxCountRecorded: true,
       passRusherCount: 4,
+      passRusherCountRecorded: true,
       blitzerCount: 1,
+      blitzerCountRecorded: true,
       coverage: 'Cover 3 · Zone',
     });
     expect(defense.filter(player => player.inBox)).toHaveLength(6);
@@ -124,6 +127,35 @@ describe('play schematic reconstruction', () => {
     const quarterback = offense.find(player => player.position === 'QB')!;
     expect(new Set(line.map(player => player.x)).size).toBe(1);
     expect(quarterback.x).toBeLessThan(line[0].x);
+  });
+
+  it('keeps the box inside tackle width and honors position-specific defensive landmarks', () => {
+    const schematic = buildPlaySchematic({
+      play_type: 'pass',
+      starting_hash: 'C',
+      defensive_personnel: '3 DL, 3 LB, 5 DB',
+      defenders_in_box: 6,
+      pass_rushers: 4,
+      blitzers: 1,
+      coverage_type: 'COVER_2',
+      defense_names: ['Nose', 'End', 'Tackle', 'Mike', 'Inside', 'Sam', 'Corner A', 'Corner B', 'Nickel', 'Free', 'Strong'],
+      defense_positions: ['NT', 'DE', 'DT', 'MLB', 'ILB', 'OLB', 'CB', 'CB', 'NB', 'FS', 'SS'],
+    });
+
+    const defense = schematic.players.filter(player => player.side === 'defense');
+    const box = defense.filter(player => player.inBox);
+    const middle = defense.find(player => player.position === 'MLB')!;
+    const outside = defense.find(player => player.position === 'OLB')!;
+    const interior = defense.find(player => player.position === 'NT')!;
+    const corners = defense.filter(player => player.position === 'CB');
+    const safeties = defense.filter(player => ['FS', 'SS'].includes(player.position));
+
+    expect(box).toHaveLength(6);
+    expect(box.every(player => Math.abs(player.y - schematic.hashY) <= 7.2)).toBe(true);
+    expect(Math.abs(middle.y - schematic.hashY)).toBeLessThanOrEqual(1.8);
+    expect(Math.abs(outside.y - schematic.hashY)).toBeGreaterThan(Math.abs(interior.y - schematic.hashY));
+    expect(corners.every(player => Math.abs(player.y - schematic.hashY) > 15)).toBe(true);
+    expect(safeties.every(player => player.x - schematic.startX >= 14)).toBe(true);
   });
 
 });

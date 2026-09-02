@@ -909,22 +909,36 @@
 
   function packageCoverage(dataset: string, selectedSeasons = syncSeasons) {
     if (isReferenceDataset(dataset)) {
-      return datasets.some((item) => item.dataset === dataset) ? 'shared local' : 'shared reference';
+      return 'shared reference data';
     }
     if (!selectedSeasons.length) return 'Select seasons';
     const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
-    const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     const minimum = datasetMinimumSeason(dataset);
     const published = datasetAvailableSeasons(dataset);
     if (published) {
       if (!eligibleSeasons.length) return 'not offered for selected seasons';
       const first = Math.min(...published);
       const last = Math.max(...published);
-      return `${local}/${eligibleSeasons.length} local · ${seasonLabel(first)} to ${seasonLabel(last)}`;
+      return `${seasonLabel(first)} to ${seasonLabel(last)}`;
     }
     const minimumLabel = minimum ? `${seasonLabel(minimum)}+` : '';
     if (!eligibleSeasons.length) return `not offered · ${minimumLabel}`;
-    return `${local}/${eligibleSeasons.length} local${minimum ? ` · ${minimumLabel}` : ''}`;
+    return minimumLabel || 'offered for selected seasons';
+  }
+
+  function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons) {
+    if (isReferenceDataset(dataset)) {
+      return datasets.some((item) => item.dataset === dataset)
+          ? { state: 'installed', label: 'Installed' }
+          : null;
+    }
+    const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
+    if (!eligibleSeasons.length) return null;
+    const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
+    if (!local) return null;
+    return local === eligibleSeasons.length
+        ? { state: 'installed', label: 'Installed' }
+        : { state: 'partial', label: `Local ${local}/${eligibleSeasons.length}` };
   }
 
   function packageEligible(dataset: string, selectedSeasons = syncSeasons) {
@@ -973,22 +987,6 @@
     return (analysisOptions?.analysis_domains ?? []).find((option) => option.value === domain)?.label
         ?? domain?.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase())
         ?? 'Analysis';
-  }
-
-  function packagePartiallyAvailable(dataset: string, selectedSeasons = syncSeasons) {
-    if (isReferenceDataset(dataset)) return false;
-    const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
-    const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
-    return local > 0 && local < eligibleSeasons.length;
-  }
-
-  function showPartialSelection(node: HTMLInputElement, partial: boolean) {
-    node.indeterminate = partial;
-    return {
-      update(nextPartial: boolean) {
-        node.indeterminate = nextPartial;
-      }
-    };
   }
 
   function wait(milliseconds: number) {
@@ -1048,7 +1046,14 @@
     return false;
   }
 
-  function stream(url: string, complete: () => Promise<void>, recover?: () => Promise<boolean>, onSettled?: () => void) {
+  function stream(
+      url: string,
+      complete: () => Promise<void>,
+      recover?: () => Promise<boolean>,
+      onSettled?: () => void,
+      timeoutMessage = 'The investigation is still unavailable after the progress stream timed out. Refresh to check again.',
+      disconnectMessage = 'The progress stream disconnected and the investigation could not be recovered. Refresh to check again.'
+  ) {
     const source = new EventSource(url);
     let settled = false;
     let recovering = false;
@@ -1096,11 +1101,11 @@
         onSettled?.();
       }
       if (event.stage === 'timeout') {
-        await recoverOrFail('The investigation is still unavailable after the progress stream timed out. Refresh to check again.');
+        await recoverOrFail(timeoutMessage);
       }
     };
     source.onerror = () => {
-      void recoverOrFail('The progress stream disconnected and the investigation could not be recovered. Refresh to check again.');
+      void recoverOrFail(disconnectMessage);
     };
   }
 
@@ -1179,11 +1184,18 @@
     error = '';
     busy = true;
     stage = 'Preparing data sync';
+    progress = 0.03;
     try {
-      const {job_id} = await api.sync(activeSport, requestedSeasons, requestedDatasets);
-      stream(`/api/dataset-jobs/${job_id}/events`, async () => {
-        await refresh();
-      });
+      const {job_id, timeout_seconds} = await api.sync(activeSport, requestedSeasons, requestedDatasets);
+      const timeout = Math.max(30, Math.min(3_600, Number(timeout_seconds) || 120));
+      stream(
+          `/api/dataset-jobs/${job_id}/events?timeout_seconds=${timeout}`,
+          async () => { await refresh(); },
+          undefined,
+          undefined,
+          'The data sync is still running after its extended progress window. Refresh the data catalog to check completed packages.',
+          'The data-sync progress connection was interrupted. Refresh the data catalog to check completed packages.'
+      );
     } catch (problem) {
       error = String(problem);
       busy = false;
@@ -1458,12 +1470,20 @@
                       </button>
                     </legend>
                     <div class="dataset-options">
-                      {#each analysisOptions?.syncable_datasets ?? [] as dataset}<label><input type="checkbox"
-                                                                                               checked={syncDatasets.includes(dataset)}
-                                                                                               disabled={!packageEligible(dataset, syncSeasons)}
-                                                                                               use:showPartialSelection={packagePartiallyAvailable(dataset, syncSeasons)}
-                                                                                               on:change={() => toggleSyncDataset(dataset)}/><span>{datasetLabel(dataset)}
-                        <small>{packageCoverage(dataset, syncSeasons)}</small></span></label>{/each}
+                      {#each analysisOptions?.syncable_datasets ?? [] as dataset}
+                        {@const installStatus = packageInstallStatus(dataset, syncSeasons)}
+                        <label><input type="checkbox" aria-label={datasetLabel(dataset)}
+                                      checked={syncDatasets.includes(dataset)}
+                                      disabled={!packageEligible(dataset, syncSeasons)}
+                                      on:change={() => toggleSyncDataset(dataset)}/><span>
+                          <span class="dataset-name"><span>{datasetLabel(dataset)}</span>
+                            {#if installStatus}
+                              <b class:partial={installStatus.state === 'partial'}
+                                 aria-label={`${datasetLabel(dataset)} local status: ${installStatus.label}`}>{installStatus.label}</b>
+                            {/if}
+                          </span>
+                          <small>{packageCoverage(dataset, syncSeasons)}</small></span></label>
+                      {/each}
                     </div>
                   </fieldset>
                 </div>
@@ -1975,6 +1995,22 @@
                     <dd>{evidence.sample_size || '1 play'}</dd>
                     <dt>Change / value</dt>
                     <dd>{evidence.value ?? evidence.epa ?? evidence.metric_value}</dd>
+                    {#if evidence.context?.status}
+                      <dt>Unit status</dt>
+                      <dd>{evidence.context.status}</dd>
+                    {/if}
+                    {#if evidence.context?.possessions}
+                      <dt>Possessions</dt>
+                      <dd>{evidence.context.possessions}</dd>
+                    {/if}
+                    {#if evidence.context?.minutes}
+                      <dt>Minutes</dt>
+                      <dd>{evidence.context.minutes}</dd>
+                    {/if}
+                    {#if evidence.context?.estimated_net_points != null}
+                      <dt>Estimated net points</dt>
+                      <dd>{Number(evidence.context.estimated_net_points).toFixed(1)}</dd>
+                    {/if}
                   </dl>
                   {#each evidence.caveats || [] as caveat}<p class="caveat">{caveat}</p>{/each}
                 </article>

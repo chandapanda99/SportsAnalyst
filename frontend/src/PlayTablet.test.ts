@@ -41,6 +41,7 @@ describe('football evidence tablet venue styling', () => {
     );
     expect(container.querySelectorAll('.rush-ring')).toHaveLength(4);
     expect(container.querySelectorAll('.rush-ring.blitzer')).toHaveLength(1);
+    expect(container.querySelector('[aria-label="Reconstructed tackle box containing 6 defenders"]')).toBeTruthy();
     expect(container.textContent).toContain('11 personnel · 1 RB, 1 TE, 3 WR');
     expect(container.textContent).toContain('2 DL, 4 LB, 5 DB');
     expect(container.textContent).toContain('Cover 1 · Man');

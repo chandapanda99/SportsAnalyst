@@ -6,6 +6,7 @@
         describeQbAlignment,
         FOOTBALL_FIELD_WIDTH,
         NFL_HASH_FROM_SIDELINE,
+        OFFENSIVE_LINE_HALF_WIDTH,
         type SchematicPlayer
     } from './playSchematic';
     import {colorContrastRatio, NFL_TEAM_NAMES, teamChartDisplayPalette, teamChartPalette, teamLogoUrl} from './teamPalettes';
@@ -118,7 +119,7 @@
     </div>
     <div class="reconstruction-meta">
         <div><strong>{schematic.lineupMode === 'recorded' ? 'Recorded participants' : schematic.lineupMode === 'hybrid' ? 'Recorded participants · completed formation' : 'Formation-template lineup'}</strong>
-            <span>{schematic.context.formation} · {schematic.context.offensivePersonnel} offense · {schematic.context.defensivePersonnel} defense · {schematic.context.boxCount} in box · {schematic.context.passRusherCount} rushers</span>
+            <span>{schematic.context.formation} · {schematic.context.offensivePersonnel} offense · {schematic.context.defensivePersonnel} defense · {schematic.context.boxCount} in box{schematic.context.boxCountRecorded ? '' : ' (estimated)'} · {schematic.context.passRusherCount} rushers{schematic.context.passRusherCountRecorded ? '' : ' (estimated)'}</span>
         </div>
         <div class="source-badges" aria-label="Sources used by this schematic">
             {#each sourcePackages as source}<span>{sourceLabel(source)}</span>{/each}
@@ -169,6 +170,14 @@
                     <path d={yardArrowPath(x, FOOTBALL_FIELD_WIDTH - 11.8)} class="yard-direction bottom" data-yard-number={yardNumber}/>
                 {/if}
             {/each}
+            <rect
+                x={schematic.startX - .25}
+                y={schematic.hashY - OFFENSIVE_LINE_HALF_WIDTH}
+                width="6.5"
+                height={OFFENSIVE_LINE_HALF_WIDTH * 2}
+                class="box-area"
+                aria-label={`Reconstructed tackle box containing ${schematic.context.boxCount} defenders`}
+            />
             <line x1={schematic.startX} x2={schematic.startX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="scrimmage"/>
             {#if play.visualization?.yards_to_go != null}
                 <line x1={schematic.lineToGainX} x2={schematic.lineToGainX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="line-to-gain"/>
@@ -201,6 +210,7 @@
         <div class="field-legend">
             <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{play.visualization?.possession_team ?? play.team} offense</span>
             <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
+            <span><i class="box-key"></i>Reconstructed box</span>
             <span><i class="flight-key"></i>Ball flight</span>
             {#if schematic.players.some(player => player.rushRole === 'rusher')}<span><i class="rush-key"></i>Inferred rusher</span>{/if}
             {#if schematic.players.some(player => player.rushRole === 'blitzer')}<span><i class="blitz-key"></i>Inferred blitzer</span>{/if}
@@ -225,7 +235,7 @@
             </div>
             <div>
                 <dt>Box & rush <i>PART/FTN</i></dt>
-                <dd>{schematic.context.boxCount} in box · {schematic.context.passRusherCount} rushers · {schematic.context.blitzerCount} blitzers</dd>
+                <dd>{schematic.context.boxCount} in box{schematic.context.boxCountRecorded ? '' : ' (estimated)'} · {schematic.context.passRusherCount} rushers{schematic.context.passRusherCountRecorded ? '' : ' (estimated)'} · {schematic.context.blitzerCount} blitzers{schematic.context.blitzerCountRecorded ? '' : ' (estimated)'}</dd>
             </div>
             <div>
                 <dt>Play design <i>PBP/FTN</i></dt>
@@ -492,6 +502,14 @@
         stroke-dasharray: .8 .7
     }
 
+    .box-area {
+        fill: rgb(245 196 81 / 4%);
+        stroke: rgb(245 196 81 / 44%);
+        stroke-width: .2;
+        stroke-dasharray: .55 .45;
+        pointer-events: none
+    }
+
     .play-path,
     .play-path-glow {
         fill: none;
@@ -646,6 +664,7 @@
     .field-legend .yac-key { color: #e7c56a; border-top-style: solid }
     .field-legend .return-key { color: #ff9d66 }
     .field-legend .flight-key { color: var(--mint) }
+    .field-legend .box-key { color: #f5c451; border-top-style: dashed }
     .field-legend .rush-key { color: #f5c451; border-top-style: solid }
     .field-legend .blitz-key { color: #ff8b5d; border-top-style: dotted }
 

@@ -50,8 +50,11 @@ export type PlaySchematic = {
     offensivePersonnel: string;
     defensivePersonnel: string;
     boxCount: number;
+    boxCountRecorded: boolean;
     passRusherCount: number;
+    passRusherCountRecorded: boolean;
     blitzerCount: number;
+    blitzerCountRecorded: boolean;
     coverage: string;
   };
 };
@@ -61,6 +64,7 @@ export const NFL_HASH_FROM_SIDELINE = (70 + 9 / 12) / 3;
 const FIELD_MIN = 10;
 const FIELD_MAX = 110;
 const FIELD_MIDDLE = FOOTBALL_FIELD_WIDTH / 2;
+export const OFFENSIVE_LINE_HALF_WIDTH = 7.2;
 
 const clamp = (value: number, minimum = FIELD_MIN, maximum = FIELD_MAX) =>
   Math.max(minimum, Math.min(maximum, value));
@@ -408,6 +412,83 @@ function coverageDepth(visualization: PlayVisualization) {
   return 2;
 }
 
+function symmetricOffsets(count: number, outer: number) {
+  if (count <= 0) return [];
+  if (count === 1) return [0];
+  return Array.from({length: count}, (_, index) => -outer + index * ((outer * 2) / (count - 1)));
+}
+
+function assignOffsets(
+  target: Map<PlayerRecord, number>,
+  records: PlayerRecord[],
+  centerY: number,
+  outer: number,
+) {
+  symmetricOffsets(records.length, outer).forEach((offset, index) => target.set(records[index], centerY + offset));
+}
+
+function assignEdgeOffsets(
+  target: Map<PlayerRecord, number>,
+  records: PlayerRecord[],
+  centerY: number,
+  distance: number,
+) {
+  records.forEach((record, index) => {
+    const side = index % 2 === 0 ? -1 : 1;
+    const stepInward = Math.floor(index / 2) * 1.5;
+    target.set(record, centerY + side * Math.max(2, distance - stepInward));
+  });
+}
+
+function defensiveLateralPreferences(
+  fronts: PlayerRecord[],
+  linebackers: PlayerRecord[],
+  backs: PlayerRecord[],
+  centerY: number,
+) {
+  const preferred = new Map<PlayerRecord, number>();
+  const frontEdges = fronts.filter(record => ['DE', 'EDGE'].includes(record.position));
+  const nose = fronts.filter(record => record.position === 'NT');
+  const tackles = fronts.filter(record => record.position === 'DT');
+  const genericFront = fronts.filter(record => record.position === 'DL');
+  const outsideBackers = linebackers.filter(record => record.position === 'OLB');
+  assignEdgeOffsets(preferred, [...frontEdges, ...outsideBackers], centerY, OFFENSIVE_LINE_HALF_WIDTH);
+  assignOffsets(preferred, nose, centerY, nose.length > 1 ? 1.4 : 0);
+  assignOffsets(preferred, tackles, centerY, tackles.length > 1 ? 2.8 : 0);
+  assignOffsets(preferred, genericFront, centerY, genericFront.length <= 2 ? 3.2 : 6.8);
+
+  const insideBackers = linebackers.filter(record => record.position === 'ILB');
+  const middleBackers = linebackers.filter(record => record.position === 'MLB');
+  const genericBackers = linebackers.filter(record => record.position === 'LB');
+  assignOffsets(preferred, insideBackers, centerY, insideBackers.length > 1 ? 2.8 : 0);
+  assignOffsets(preferred, middleBackers, centerY, middleBackers.length > 1 ? 1.8 : 0);
+  assignOffsets(preferred, genericBackers, centerY, genericBackers.length <= 2 ? 3.2 : 6.8);
+
+  const corners = backs.filter(record => record.position === 'CB');
+  const nickels = backs.filter(record => ['NB', 'DB'].includes(record.position));
+  const safeties = backs.filter(record => ['S', 'FS', 'SS'].includes(record.position));
+  assignEdgeOffsets(preferred, corners, centerY, FIELD_MIDDLE - 5.4);
+  assignEdgeOffsets(preferred, nickels, centerY, 11);
+  assignOffsets(preferred, safeties, centerY, safeties.length > 1 ? 10 : 0);
+  return preferred;
+}
+
+function constrainedRushLanes(records: PlayerRecord[], preferred: Map<PlayerRecord, number>, centerY: number) {
+  const result = new Map<PlayerRecord, number>();
+  const occupied: number[] = [];
+  [...records]
+    .sort((left, right) => Math.abs((preferred.get(right) ?? centerY) - centerY) - Math.abs((preferred.get(left) ?? centerY) - centerY))
+    .forEach(record => {
+      const desired = Math.max(centerY - OFFENSIVE_LINE_HALF_WIDTH, Math.min(centerY + OFFENSIVE_LINE_HALF_WIDTH, preferred.get(record) ?? centerY));
+      const candidates = [desired, desired - 1.8, desired + 1.8, desired - 3.6, desired + 3.6, centerY]
+        .map(value => Math.max(centerY - OFFENSIVE_LINE_HALF_WIDTH, Math.min(centerY + OFFENSIVE_LINE_HALF_WIDTH, value)));
+      const lane = candidates.find(value => occupied.every(other => Math.abs(other - value) >= 1.7)) ?? desired;
+      result.set(record, lane);
+      occupied.push(lane);
+    });
+  return result;
+}
+
 function placeDefense(
   records: PlayerRecord[],
   startX: number,
@@ -421,7 +502,9 @@ function placeDefense(
   const boxCount = Math.max(0, Math.min(11, visualization.defenders_in_box ?? visualization.defense_box_count ?? 7));
   const rusherCount = Math.max(0, Math.min(11, visualization.pass_rushers ?? (visualization.play_type === 'pass' ? 4 : fronts.length)));
   const blitzerCount = Math.max(0, Math.min(rusherCount, visualization.blitzers ?? 0));
-  const rushCandidates = [...fronts, ...linebackers, ...backs];
+  const edgeBackers = linebackers.filter(record => record.position === 'OLB');
+  const insideBackers = linebackers.filter(record => record.position !== 'OLB');
+  const rushCandidates = [...fronts, ...edgeBackers, ...insideBackers, ...backs];
   const rushers = new Set(rushCandidates.slice(0, rusherCount));
   const nonLineRushers = [...rushers].filter(record => !fronts.includes(record));
   const blitzerPool = nonLineRushers.length >= blitzerCount ? nonLineRushers : [...rushers];
@@ -432,35 +515,51 @@ function placeDefense(
     return safety(left) - safety(right);
   });
   const deep = new Set(safetyFirst.slice(0, deepCount));
-  const boxCandidates = [...rushers, ...fronts, ...linebackers, ...backs.filter(record => !deep.has(record)), ...deep];
+  const boxCandidates = [
+    ...rushers,
+    ...fronts,
+    ...insideBackers,
+    ...edgeBackers,
+    ...backs.filter(record => ['NB', 'SS', 'S'].includes(record.position) && !deep.has(record)),
+    ...backs.filter(record => !deep.has(record)),
+    ...deep,
+  ];
   const box = new Set<PlayerRecord>();
   for (const record of boxCandidates) {
     if (box.size >= boxCount) break;
     box.add(record);
   }
+  const preferredY = defensiveLateralPreferences(fronts, linebackers, backs, centerY);
   const slots: Array<{record: PlayerRecord; x: number; y: number; inBox: boolean; rushRole?: 'rusher' | 'blitzer'; basis: string}> = [];
   const rushing = [...rushers];
+  const boxRushers = rushing.filter(record => box.has(record));
+  const rushLanes = constrainedRushLanes(boxRushers, preferredY, centerY);
   rushing.forEach((record, index) => slots.push({
     record,
     x: startX + 1.35,
-    y: distribute(index, rushing.length, centerY - 11.5, centerY + 11.5),
-    inBox: true,
+    y: box.has(record)
+      ? rushLanes.get(record) ?? centerY
+      : preferredY.get(record) ?? distribute(index, rushing.length, 5.5, FOOTBALL_FIELD_WIDTH - 5.5),
+    inBox: box.has(record),
     rushRole: blitzers.has(record) ? 'blitzer' : 'rusher',
-    basis: blitzers.has(record) ? 'Inferred blitz assignment from FTN blitzer count' : 'Inferred pass-rush assignment from recorded rusher count',
+    basis: blitzers.has(record)
+      ? 'Inferred blitz assignment; lane constrained by position and offensive-line width'
+      : 'Inferred pass-rush assignment; lane constrained by position and offensive-line width',
   }));
   const boxCoverage = [...box].filter(record => !rushers.has(record));
   boxCoverage.forEach((record, index) => slots.push({
     record,
     x: startX + 4.8,
-    y: distribute(index, boxCoverage.length, centerY - 10.5, centerY + 10.5),
+    y: Math.max(centerY - OFFENSIVE_LINE_HALF_WIDTH, Math.min(centerY + OFFENSIVE_LINE_HALF_WIDTH,
+      preferredY.get(record) ?? distribute(index, boxCoverage.length, centerY - 4.8, centerY + 4.8))),
     inBox: true,
-    basis: 'Aligned in the box from the recorded defender count',
+    basis: 'Aligned inside tackle width from the recorded box count and listed position',
   }));
   const underneath = records.filter(record => !rushers.has(record) && !box.has(record) && !deep.has(record));
   underneath.forEach((record, index) => slots.push({
     record,
     x: startX + (backs.includes(record) ? 7.5 : 6.2),
-    y: distribute(index, underneath.length, 5.5, FOOTBALL_FIELD_WIDTH - 5.5),
+    y: preferredY.get(record) ?? distribute(index, underneath.length, 5.5, FOOTBALL_FIELD_WIDTH - 5.5),
     inBox: false,
     basis: backs.includes(record) ? 'Underneath coverage alignment inferred from personnel' : 'Second-level alignment inferred outside the box',
   }));
@@ -468,7 +567,7 @@ function placeDefense(
   deepPlayers.forEach((record, index) => slots.push({
     record,
     x: startX + 14,
-    y: distribute(index, deepPlayers.length, 10, FOOTBALL_FIELD_WIDTH - 10),
+    y: deepPlayers.length === 1 ? centerY : distribute(index, deepPlayers.length, 10, FOOTBALL_FIELD_WIDTH - 10),
     inBox: false,
     basis: `Deep alignment inferred from ${visualization.coverage_type ?? 'unrecorded coverage shell'}`,
   }));
@@ -560,8 +659,11 @@ export function buildPlaySchematic(visualization: PlayVisualization = {}): PlayS
       offensivePersonnel: describeOffensivePersonnel(visualization.personnel),
       defensivePersonnel: describeDefensivePersonnel(visualization.defensive_personnel),
       boxCount,
+      boxCountRecorded: visualization.defenders_in_box != null || visualization.defense_box_count != null,
       passRusherCount,
+      passRusherCountRecorded: visualization.pass_rushers != null,
       blitzerCount,
+      blitzerCountRecorded: visualization.blitzers != null,
       coverage: describeCoverage(visualization),
     },
   };

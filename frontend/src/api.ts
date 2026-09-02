@@ -41,7 +41,7 @@ export const api = {
   evidenceBatch: (id: string, evidenceIds: string[]) => json<Evidence[]>(`/api/investigations/${id}/evidence/batch`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ evidence_ids: evidenceIds })
   }),
-  sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string }>(`/api/datasets/${sport}/sync`, {
+  sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
   }),
   investigate: (request: InvestigationRequest) =>

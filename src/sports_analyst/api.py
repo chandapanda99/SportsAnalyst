@@ -99,7 +99,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.post("/api/datasets/{sport}/sync", status_code=202)
-    def sync_datasets(sport: str, request: SyncRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
+    def sync_datasets(sport: str, request: SyncRequest, background_tasks: BackgroundTasks) -> dict[str, str | int]:
         try:
             service._sport(sport)
         except ValueError as error:
@@ -108,6 +108,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             "sync",
             {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
+        timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
 
         def execute() -> None:
             try:
@@ -118,12 +119,15 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
                 service.events.emit(job_id, "failed", str(error), 1.0)
 
         background_tasks.add_task(execute)
-        return {"job_id": job_id}
+        return {"job_id": job_id, "timeout_seconds": timeout_seconds}
 
     @api.get("/api/dataset-jobs/{job_id}/events")
-    async def dataset_events(job_id: str) -> StreamingResponse:
+    async def dataset_events(
+        job_id: str,
+        timeout_seconds: int | None = Query(default=None, ge=30, le=3_600),
+    ) -> StreamingResponse:
         return StreamingResponse(
-            _event_stream(service, job_id),
+            _event_stream(service, job_id, timeout_seconds=timeout_seconds),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

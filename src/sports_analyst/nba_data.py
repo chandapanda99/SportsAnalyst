@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 NBA_ATTRIBUTION = "Data loaded through SportsDataverse from its published NBA data releases."
 NBA_LICENSE = "See the source release metadata for the selected dataset."
 
+
 class NBADatasetDefinition(NamedTuple):
     loader: str
     minimum: int
@@ -45,18 +46,12 @@ NBA_DATASETS: dict[str, NBADatasetDefinition] = {
     "rosters": NBADatasetDefinition("load_nba_rosters", 2025, "espn_nba_rosters", _seasons(2025, 2027)),
     "officials": NBADatasetDefinition("load_nba_officials", 2002, "espn_nba_officials", _seasons(2002, 2026)),
     "standings": NBADatasetDefinition("load_nba_standings", 2002, "espn_nba_standings", _seasons(2002, 2026)),
-    "player_season_stats": NBADatasetDefinition(
-        "load_nba_player_season_stats", 2002, "espn_nba_player_season_stats", _seasons(2002, 2026)
-    ),
-    "team_season_stats": NBADatasetDefinition(
-        "load_nba_team_season_stats", 2002, "espn_nba_team_season_stats", _seasons(2002, 2026)
-    ),
+    "player_season_stats": NBADatasetDefinition("load_nba_player_season_stats", 2002, "espn_nba_player_season_stats", _seasons(2002, 2026)),
+    "team_season_stats": NBADatasetDefinition("load_nba_team_season_stats", 2002, "espn_nba_team_season_stats", _seasons(2002, 2026)),
     "draft": NBADatasetDefinition("load_nba_draft", 2003, "espn_nba_draft", _seasons(2003, 2027)),
     "stats_schedules": NBADatasetDefinition("load_nba_stats_schedules", 1996, "nba_stats_schedules", _seasons(1996, 2026)),
     "stats_coaches": NBADatasetDefinition("load_nba_stats_coaches", 1997, "nba_stats_coaches", _seasons(1997, 2026)),
-    "stats_game_rosters": NBADatasetDefinition(
-        "load_nba_stats_game_rosters", 1997, "nba_stats_game_rosters", _seasons(1997, 2026)
-    ),
+    "stats_game_rosters": NBADatasetDefinition("load_nba_stats_game_rosters", 1997, "nba_stats_game_rosters", _seasons(1997, 2026)),
     "lineups": NBADatasetDefinition("load_nba_stats_lineups", 2008, "nba_stats_lineups", _seasons(2008, 2026)),
     "stats_officials": NBADatasetDefinition("load_nba_stats_officials", 1997, "nba_stats_officials", _seasons(1997, 2026)),
     "stats_play_by_play": NBADatasetDefinition("load_nba_stats_pbp", 1996, "nba_stats_pbp", _seasons(1996, 2026)),
@@ -72,9 +67,7 @@ NBA_DATASETS: dict[str, NBADatasetDefinition] = {
     "stats_rosters": NBADatasetDefinition("load_nba_stats_rosters", 1997, "nba_stats_rosters", _seasons(1997, 2026)),
     "stats_shots": NBADatasetDefinition("load_nba_stats_shots", 1997, "nba_stats_shots", _seasons(1997, 2026)),
     "stats_standings": NBADatasetDefinition("load_nba_stats_standings", 1997, "nba_stats_standings", _seasons(1997, 2026)),
-    "stats_team_boxscores": NBADatasetDefinition(
-        "load_nba_stats_team_boxscores", 1997, "nba_stats_team_boxscores", _seasons(1997, 2026)
-    ),
+    "stats_team_boxscores": NBADatasetDefinition("load_nba_stats_team_boxscores", 1997, "nba_stats_team_boxscores", _seasons(1997, 2026)),
     "stats_team_season_stats": NBADatasetDefinition(
         "load_nba_stats_team_season_stats", 1997, "nba_stats_team_season_stats", _seasons(1997, 2026)
     ),
@@ -129,7 +122,12 @@ class SportsDataverseNBAConnector:
             raise RuntimeError("SportsDataverse is not installed; sync dependencies before using NBA data") from error
         return {dataset: getattr(nba_loaders, definition[0]) for dataset, definition in NBA_DATASETS.items()}
 
-    def sync(self, seasons: list[int], datasets: list[str] | None = None) -> list[DatasetManifest]:
+    def sync(
+        self,
+        seasons: list[int],
+        datasets: list[str] | None = None,
+        progress_callback: Callable[[str, str, int, int, int], None] | None = None,
+    ) -> list[DatasetManifest]:
         selected = list(dict.fromkeys(datasets or NBA_DEFAULT_DATASETS))
         unknown = sorted(set(selected) - set(NBA_DATASETS))
         if unknown:
@@ -137,36 +135,44 @@ class SportsDataverseNBAConnector:
         loaders = self._loader_registry()
         from sportsdataverse.errors import SeasonNotFoundError
 
+        work = [
+            (season, dataset) for season in sorted(set(seasons)) for dataset in selected if season in NBA_DATASETS[dataset].available_seasons
+        ]
         manifests: list[DatasetManifest] = []
-        for season in sorted(set(seasons)):
-            for dataset in selected:
-                definition = NBA_DATASETS[dataset]
-                if season not in definition.available_seasons:
-                    continue
-                try:
-                    raw = loaders[dataset]([season], return_as_pandas=False)
-                except SeasonNotFoundError as error:
-                    # SportsDataverse's release catalog can lag its loader
-                    # metadata. An unavailable optional season must not discard
-                    # core datasets that loaded successfully in the same job.
-                    logger.info(
-                        "nba_dataset_season_unavailable dataset=%s season=%d reason=%s",
-                        dataset,
-                        season,
-                        error,
-                    )
-                    continue
-                frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
-                if frame.is_empty():
-                    continue
-                frame = self.normalize(frame, season, dataset)
-                path = self.data_dir / f"{dataset}_{season}.parquet"
-                frame.write_parquet(path)
-                manifests.append(self.manifest_for(path, season, frame, dataset))
+        for index, (season, dataset) in enumerate(work):
+            if progress_callback:
+                progress_callback("downloading", dataset, season, index, len(work))
+            try:
+                raw = loaders[dataset]([season], return_as_pandas=False)
+            except SeasonNotFoundError as error:
+                # SportsDataverse's release catalog can lag its loader
+                # metadata. An unavailable optional season must not discard
+                # core datasets that loaded successfully in the same job.
+                logger.info(
+                    "nba_dataset_season_unavailable dataset=%s season=%d reason=%s",
+                    dataset,
+                    season,
+                    error,
+                )
+                if progress_callback:
+                    progress_callback("skipped", dataset, season, index + 1, len(work))
+                continue
+            if progress_callback:
+                progress_callback("processing", dataset, season, index, len(work))
+            frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
+            if frame.is_empty():
+                if progress_callback:
+                    progress_callback("skipped", dataset, season, index + 1, len(work))
+                continue
+            frame = self.normalize(frame, season, dataset)
+            path = self.data_dir / f"{dataset}_{season}.parquet"
+            frame.write_parquet(path)
+            manifests.append(self.manifest_for(path, season, frame, dataset))
+            if progress_callback:
+                progress_callback("downloaded", dataset, season, index + 1, len(work))
         if not manifests:
             raise ValueError(
-                "none of the selected NBA datasets are available for the selected seasons; "
-                "choose a supported season or include a core dataset"
+                "none of the selected NBA datasets are available for the selected seasons; choose a supported season or include a core dataset"
             )
         return manifests
 
@@ -286,12 +292,12 @@ class SportsDataverseNBAConnector:
             if signature in self._verified_files:
                 return
         metadata_changed = (
-                manifest.file_size is not None
-                and manifest.modified_ns is not None
-                and (manifest.file_size != stat.st_size or manifest.modified_ns != stat.st_mtime_ns)
+            manifest.file_size is not None
+            and manifest.modified_ns is not None
+            and (manifest.file_size != stat.st_size or manifest.modified_ns != stat.st_mtime_ns)
         )
         if (self.settings.verify_dataset_checksums_on_load or metadata_changed or manifest.file_size is None) and (
-                sha256_file(path) != manifest.sha256
+            sha256_file(path) != manifest.sha256
         ):
             raise ValueError(f"dataset checksum changed: {manifest.manifest_id}")
         with self._cache_lock:
