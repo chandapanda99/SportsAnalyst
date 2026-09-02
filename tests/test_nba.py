@@ -22,7 +22,7 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
             {
                 "game_id": [game_id, game_id],
                 "sequence_number": [1, 2],
-                "text": ["Jayson Tatum makes 26-foot 3-pt jump shot", "Jayson Tatum misses layup"],
+                "text": ["Jayson Tatum makes 26-foot 3-pt jump shot (Derrick White assists)", "Jayson Tatum misses layup"],
                 "period_number": [1, 4],
                 "clock_display_value": ["11:42", "00:08"],
                 "team_id": ["2", "2"],
@@ -30,8 +30,12 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
                 "away_team_id": ["13", "13"],
                 "home_team_abbrev": ["BOS", "BOS"],
                 "away_team_abbrev": ["LAL", "LAL"],
+                "home_team_name": ["Celtics", "Celtics"],
+                "away_team_name": ["Lakers", "Lakers"],
                 "athlete_id_1": ["4065648", "4065648"],
                 "athlete_name_1": ["Jayson Tatum", "Jayson Tatum"],
+                "athlete_id_2": ["4433134", None],
+                "athlete_name_2": ["Derrick White", None],
                 "home_score": [3, points],
                 "away_score": [0, points - 4],
                 "score_value": [3, 0],
@@ -39,6 +43,9 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
                 "shooting_play": [True, True],
                 "coordinate_x_raw": [8.0, 1.0],
                 "coordinate_y_raw": [23.0, 4.0],
+                "game_date": [f"{season - 1}-11-01", f"{season - 1}-11-01"],
+                "start_quarter_seconds_remaining": [702.0, 8.0],
+                "start_game_seconds_remaining": [2862.0, 8.0],
             }
         ),
         "schedules": pl.DataFrame(
@@ -92,12 +99,19 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
         ),
         "lineups": pl.DataFrame(
             {
-                "team_abbreviation": ["BOS", "BOS"],
-                "group_id": ["4065648-4433134-1628369-1628401-201143", "4065648-4433134-1628369-201143-1630202"],
-                "min": [18.0, 12.0],
-                "off_rating": [114.0 + season - 2024, 109.0 + season - 2024],
-                "def_rating": [108.0, 111.0],
-                "net_rating": [6.0 + season - 2024, -2.0 + season - 2024],
+                "team_abbreviation": ["BOS"] * 6,
+                "group_id": ["4065648-4433134-1628369-1628401-201143"] * 3 + ["4065648-4433134-1628369-201143-1630202"] * 3,
+                "group_name": ["J. Tatum - D. White - J. Brown - A. Horford - J. Holiday"] * 3
+                + ["J. Tatum - D. White - J. Brown - J. Holiday - K. Porzingis"] * 3,
+                "group_set": ["Lineups"] * 6,
+                "measure_type": ["Advanced", "Advanced", "Base", "Advanced", "Advanced", "Base"],
+                "per_mode": ["Totals", "PerGame", "Totals", "Totals", "PerGame", "Totals"],
+                "season_type": ["Regular Season"] * 6,
+                "min": [18.0, 18.0, 18.0, 12.0, 12.0, 12.0],
+                "poss": [38.0, 38.0, 38.0, 24.0, 24.0, 24.0],
+                "off_rating": [114.0 + season - 2024, 114.0 + season - 2024, None, 109.0 + season - 2024, 109.0 + season - 2024, None],
+                "def_rating": [108.0, 108.0, None, 111.0, 111.0, None],
+                "net_rating": [6.0 + season - 2024, 6.0 + season - 2024, None, -2.0 + season - 2024, -2.0 + season - 2024, None],
             }
         ),
         "lineups_v3": pl.DataFrame(
@@ -128,12 +142,34 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
                 **{f"def_player_{index}": [value] for index, value in enumerate(["2544", "1641709", "203076", "1630559", "1629060"], 1)},
             }
         ),
+        "game_rosters": pl.DataFrame(
+            {
+                "game_id": [game_id] * 10,
+                "athlete_id": ["4065648", "4433134", "1628369", "1628401", "201143", "2544", "1641709", "203076", "1630559", "1629060"],
+                "athlete_display_name": [
+                    "Jayson Tatum",
+                    "Derrick White",
+                    "Jaylen Brown",
+                    "Al Horford",
+                    "Jrue Holiday",
+                    "LeBron James",
+                    "Austin Reaves",
+                    "Anthony Davis",
+                    "Max Christie",
+                    "Rui Hachimura",
+                ],
+                "athlete_position": ["SF", "SG", "SG", "C", "PG", "SF", "SG", "PF", "SG", "PF"],
+                "team_abbreviation": ["BOS"] * 5 + ["LAL"] * 5,
+                "starter": [True] * 10,
+            }
+        ),
     }
 
 
 def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Path, monkeypatch) -> None:
     connector = SportsDataverseNBAConnector(Settings(data_dir=tmp_path))
     calls: list[tuple[str, list[int], bool]] = []
+    progress: list[tuple[str, str, int, int, int]] = []
 
     def loader(dataset: str):
         def load(seasons: list[int], return_as_pandas: bool) -> pl.DataFrame:
@@ -147,11 +183,14 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
         "_loader_registry",
         lambda: {dataset: loader(dataset) for dataset in NBA_DEFAULT_DATASETS},
     )
-    manifests = connector.sync([2025], NBA_DEFAULT_DATASETS)
+    manifests = connector.sync([2025], NBA_DEFAULT_DATASETS, progress_callback=lambda *event: progress.append(event))
 
     assert {item.dataset for item in manifests} == set(NBA_DEFAULT_DATASETS)
     assert all(item.sport == "nba" and item.season == 2025 and item.sha256 for item in manifests)
     assert all(call[1:] == ([2025], False) for call in calls)
+    assert progress[0] == ("downloading", "play_by_play", 2025, 0, 4)
+    assert progress[-1] == ("downloaded", "player_boxscores", 2025, 4, 4)
+    assert {event[0] for event in progress} == {"downloading", "processing", "downloaded"}
     pbp = connector.load(next(item for item in manifests if item.dataset == "play_by_play"))
     assert {"season", "play_id", "description", "period", "clock", "team_abbreviation"} <= set(pbp.columns)
     with pytest.raises(ValueError, match="cannot load nfl"):
@@ -250,6 +289,16 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
             metrics=["points_per_game", "true_shooting_pct"],
         )
     )
+    shooting = application.investigate(
+        AnalysisRequest(
+            sport="nba",
+            subject=AnalysisSubject(type="team", id="BOS"),
+            question="How did Boston's shot profile change?",
+            scope=scope,
+            analysis_domain="shooting",
+            metrics=["effective_fg_pct", "three_point_rate"],
+        )
+    )
     assert player.run.subject and player.run.subject.display_name == "Jayson Tatum"
     lineup = application.investigate(
         AnalysisRequest(
@@ -270,18 +319,37 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
 
     assert team.run.sport == player.run.sport == "nba"
     assert team.aggregate_evidence and player.aggregate_evidence
+    assert {item.tool for item in team.executions} >= {"analyze_game_trends", "rank_game_outliers", "benchmark_against_league"}
+    assert any(item.tool == "compare_player_usage" for item in player.executions)
+    assert any(item.tool == "compare_shot_profiles" for item in shooting.executions)
+    assert any(item.metric == "shot_zone_share" for item in shooting.aggregate_evidence)
     assert team.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
     assert {item.window for item in team.play_evidence} == {"baseline", "comparison"}
     assert all(item.selection_reason and item.selector_version == "diverse-v1" for item in team.play_evidence)
-    assert {item.evidence_role for item in team.play_evidence} <= {
-        "typical", "metric_example", "supports_change", "counterexample"
-    }
+    assert {item.evidence_role for item in team.play_evidence} <= {"typical", "metric_example", "supports_change", "counterexample"}
     representative_tool = next(item for item in team.executions if item.tool == "find_representative_possessions")
     assert [window["season"] for window in representative_tool.parameters["windows"]] == [2024, 2025]
     assert representative_tool.parameters["selector_version"] == "diverse-v1"
-    assert [chart.title for chart in lineup.charts] == ["NBA range endpoints", "Season-by-season Lineup net rating"]
+    assert [chart.title for chart in lineup.charts] == [
+        "NBA range endpoints",
+        "Season-by-season Lineup net rating",
+        "Five-player lineup performance",
+    ]
     assert all(chart.specification["data"]["values"] for chart in lineup.charts)
     assert {row["season"] for row in lineup.charts[1].specification["data"]["values"]} == {2024, 2025}
+    assert lineup.charts[1].specification["encoding"]["tooltip"] == [
+        {"field": "season", "type": "ordinal", "title": "Season"},
+        {"field": "series", "type": "nominal", "title": "Metric"},
+        {"field": "value", "type": "quantitative", "title": "Lineup net rating"},
+    ]
+    lineup_tool = next(item for item in lineup.executions if item.tool == "analyze_lineup_performance")
+    assert lineup_tool.parameters["canonicalization"] == "advanced/preferred-per-mode/unique-group-v1"
+    units = [item for item in lineup.aggregate_evidence if item.metric == "lineup_unit"]
+    assert units and all(item.context["players"] and item.context["possessions"] for item in units)
+    assert any("J. Tatum" in claim.statement for claim in lineup.claims)
+    net_rating = next(item for item in lineup.aggregate_evidence if item.metric == "lineup_net_rating")
+    assert net_rating.sample_size == 62
+    assert net_rating.unit == "per 100 possessions"
     assert team.play_evidence[0].visualization.sport == "nba"
     assert team.play_evidence[0].visualization.shot_x is not None
     made_shot = next(item for item in team.play_evidence if "makes 26-foot" in item.description)
@@ -289,8 +357,19 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     assert made_shot.visualization.shot_distance == 26
     assert (made_shot.visualization.shot_x, made_shot.visualization.shot_y) == (8.0, 23.0)
     assert made_shot.visualization.shot_coordinate_system == "court_feet"
+    assert made_shot.visualization.secondary_player_name == "Derrick White"
+    assert made_shot.visualization.secondary_player_role == "assist"
+    assert made_shot.visualization.game_seconds_remaining == 2862.0
+    assert made_shot.visualization.quarter_seconds_remaining == 702.0
+    assert made_shot.visualization.game_date and made_shot.visualization.game_date.endswith("-11-01")
+    assert made_shot.visualization.home_team_name == "Celtics"
+    assert made_shot.visualization.away_team_name == "Lakers"
     enriched = next(item for item in team.play_evidence if item.visualization.possession_number == 1)
     assert len(enriched.visualization.offense_player_ids) == 5
+    assert enriched.visualization.offense_names == ["Jayson Tatum", "Derrick White", "Jaylen Brown", "Al Horford", "Jrue Holiday"]
+    assert enriched.visualization.offense_positions[0] == "SF"
+    assert enriched.visualization.defense_names[0] == "LeBron James"
+    assert "game_rosters" in enriched.visualization.source_packages
     assert {item.sport for item in team.dataset_manifests} == {"nba"}
     assert {item.run.subject.type for item in application.store.list_investigation_summaries(sport="nba")} == {
         "team",
@@ -318,6 +397,24 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     assert "stats_game_rosters" in options["syncable_datasets"]
     assert "lineups_v3" not in options["syncable_datasets"]
     assert "possessions_v3" not in options["syncable_datasets"]
+    progress_manifests = application.store.manifests(sport="nba")[:2]
+
+    def progress_sync(_seasons, _datasets, progress_callback):
+        progress_callback("downloading", "play_by_play", 2024, 0, 2)
+        progress_callback("processing", "play_by_play", 2024, 0, 2)
+        progress_callback("downloaded", "play_by_play", 2024, 1, 2)
+        progress_callback("downloading", "schedules", 2024, 1, 2)
+        progress_callback("processing", "schedules", 2024, 1, 2)
+        progress_callback("downloaded", "schedules", 2024, 2, 2)
+        return progress_manifests
+
+    monkeypatch.setattr(connector, "sync", progress_sync)
+    application.sync([2024], "nba-progress", ["play_by_play", "schedules"], "nba")
+    sync_events = application.events.events("nba-progress")
+    sync_progress = [float(event["progress"]) for event in sync_events]
+    assert sync_progress == sorted(sync_progress)
+    assert {event["stage"] for event in sync_events} >= {"downloading", "processing", "downloaded", "registering", "complete"}
+    assert any("Play By Play" in str(event["message"]) and "1 of 2" in str(event["message"]) for event in sync_events)
     synced: dict[str, object] = {}
 
     def capture_sync(seasons, _job_id, datasets, sport):
@@ -330,6 +427,7 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
         json={"seasons": options["syncable_seasons"], "datasets": options["syncable_datasets"]},
     )
     assert full_sync.status_code == 202
+    assert full_sync.json()["timeout_seconds"] > application.settings.event_stream_timeout_seconds
     assert synced == {
         "seasons": options["syncable_seasons"],
         "datasets": options["syncable_datasets"],

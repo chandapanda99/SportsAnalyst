@@ -325,6 +325,7 @@ class AggregateEvidence(BaseModel):
     dataset_manifest_ids: list[str]
     tool_execution_id: str
     caveats: list[str] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlayVisualization(BaseModel):
@@ -433,6 +434,15 @@ class PlayVisualization(BaseModel):
     possession_number: int | None = None
     offense_player_ids: list[str] = Field(default_factory=list)
     defense_player_ids: list[str] = Field(default_factory=list)
+    game_date: str | None = None
+    home_team_name: str | None = None
+    away_team_name: str | None = None
+    quarter_seconds_remaining: float | None = None
+    game_seconds_remaining: float | None = None
+    secondary_player_name: str | None = None
+    secondary_player_role: str | None = None
+    tertiary_player_name: str | None = None
+    tertiary_player_role: str | None = None
 
 
 class PlayEvidence(BaseModel):

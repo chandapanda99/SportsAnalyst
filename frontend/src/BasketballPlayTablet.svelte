@@ -23,7 +23,18 @@
     $: homeLogo = teamLogoUrl(home, 'nba');
     $: defenseTeam = eventTeam === home ? away : home;
     $: defensePalette = teamChartDisplayPalette(defenseTeam, 'nba');
-    $: courtPlayers = lineupMarkers(visualization?.offense_player_ids, visualization?.defense_player_ids);
+    $: courtPlayers = lineupMarkers(
+        visualization?.offense_player_ids, visualization?.defense_player_ids,
+        visualization?.offense_names, visualization?.defense_names,
+        visualization?.offense_positions, visualization?.defense_positions,
+    );
+    $: gameDate = formatGameDate(visualization?.game_date);
+    $: margin = scoreMargin(visualization?.home_score, visualization?.away_score, home, away);
+    $: gameTimeLeft = formatClock(visualization?.game_seconds_remaining);
+    $: credits = playCredits(visualization?.secondary_player_name, visualization?.secondary_player_role,
+        visualization?.tertiary_player_name, visualization?.tertiary_player_role);
+    $: offenseLineup = lineupList(visualization?.offense_player_ids, visualization?.offense_names, visualization?.offense_positions);
+    $: defenseLineup = lineupList(visualization?.defense_player_ids, visualization?.defense_names, visualization?.defense_positions);
 
     function courtPoint(rawX?: number, rawY?: number, coordinateSystem?: string) {
         if (rawX == null || rawY == null || !Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
@@ -41,13 +52,68 @@
         return match ? Number(match[1]) : undefined;
     }
 
-    function lineupMarkers(offenseIds: string[] = [], defenseIds: string[] = []) {
+    function lineupMarkers(
+        offenseIds: string[] = [], defenseIds: string[] = [],
+        offenseNames: string[] = [], defenseNames: string[] = [],
+        offensePositions: string[] = [], defensePositions: string[] = [],
+    ) {
         const offenseSlots = [[25, 11], [9, 20], [41, 20], [17, 32], [33, 32]];
         const defenseSlots = [[25, 8], [11.5, 17], [38.5, 17], [19, 28], [31, 28]];
-        return [
-            ...offenseIds.slice(0, 5).map((id, index) => ({id, side: 'offense', team: eventTeam, palette: teamPalette, x: offenseSlots[index][0], y: offenseSlots[index][1], label: `O${index + 1}`})),
-            ...defenseIds.slice(0, 5).map((id, index) => ({id, side: 'defense', team: defenseTeam, palette: defensePalette, x: defenseSlots[index][0], y: defenseSlots[index][1], label: `D${index + 1}`})),
-        ];
+        const marker = (side: 'offense' | 'defense') => (id: string, index: number) => {
+            const names = side === 'offense' ? offenseNames : defenseNames;
+            const positions = side === 'offense' ? offensePositions : defensePositions;
+            const slots = side === 'offense' ? offenseSlots : defenseSlots;
+            const name = names[index] && names[index] !== id ? names[index] : undefined;
+            return {
+                id, side, name,
+                position: positions[index] || undefined,
+                team: side === 'offense' ? eventTeam : defenseTeam,
+                palette: side === 'offense' ? teamPalette : defensePalette,
+                x: slots[index][0], y: slots[index][1],
+                label: name ? initials(name) : `${side === 'offense' ? 'O' : 'D'}${index + 1}`,
+            };
+        };
+        return [...offenseIds.slice(0, 5).map(marker('offense')), ...defenseIds.slice(0, 5).map(marker('defense'))];
+    }
+
+    function initials(name: string) {
+        const parts = name.trim().split(/\s+/).filter(Boolean);
+        return parts.length > 1 ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase() : name.slice(0, 2).toUpperCase();
+    }
+
+    function lineupList(ids: string[] = [], names: string[] = [], positions: string[] = []) {
+        return ids.map((id, index) => {
+            const name = names[index] && names[index] !== id ? names[index] : id;
+            return positions[index] ? `${name} (${positions[index]})` : name;
+        }).join(' · ');
+    }
+
+    function playCredits(secondaryName?: string, secondaryRole?: string, tertiaryName?: string, tertiaryRole?: string) {
+        const labels: Record<string, string> = {assist: 'Assist', steal: 'Steal', block: 'Block', 'foul drawn': 'Foul drawn'};
+        return [{name: secondaryName, role: secondaryRole}, {name: tertiaryName, role: tertiaryRole}]
+            .filter((credit): credit is {name: string; role?: string} => Boolean(credit.name))
+            .map(credit => ({name: credit.name, label: labels[credit.role ?? ''] ?? 'Also involved'}));
+    }
+
+    function formatClock(seconds?: number) {
+        if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+        const whole = Math.round(seconds);
+        return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+    }
+
+    function formatGameDate(value?: string) {
+        if (!value) return null;
+        const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
+        return Number.isNaN(parsed.getTime())
+            ? null
+            : parsed.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+    }
+
+    function scoreMargin(homeScore?: number, awayScore?: number, homeAbbr?: string, awayAbbr?: string) {
+        if (homeScore == null || awayScore == null) return null;
+        const difference = homeScore - awayScore;
+        if (difference === 0) return 'Tied';
+        return `${difference > 0 ? homeAbbr : awayAbbr} +${Math.abs(difference)}`;
     }
 
     function markerTextColor(palette: readonly [string, string]) {
@@ -58,14 +124,16 @@
 <section class="tablet basketball" style={`--nba-primary:${teamPalette[0]};--nba-secondary:${teamPalette[1]};--home-primary:${homeVenuePalette[0]};--home-secondary:${homeVenuePalette[1]}`}
          aria-label={`Basketball play for ${play.game_id}, event ${play.play_id}`}>
     <header>
-        <div><span>NBA PLAY-BY-PLAY</span><h3>{play.game_id} · Event #{play.play_id}</h3></div>
+        <div><span>NBA PLAY-BY-PLAY{gameDate ? ` · ${gameDate.toUpperCase()}` : ''}</span><h3>{play.game_id} · Event #{play.play_id}</h3></div>
         <button type="button" aria-label="Close basketball play" on:click={onclose}>×</button>
     </header>
     <div class="scorebar">
         <strong><span class="team-score" style={`--score-color:${awayPalette[0]}`}>{away} {visualization?.away_score ?? '—'}</span>
             <i>–</i><span class="team-score" style={`--score-color:${homePalette[0]}`}>{home} {visualization?.home_score ?? '—'}</span></strong>
+        {#if margin}<span class="margin" title="Score margin when the play was recorded">{margin}</span>{/if}
         <span>{visualization?.period ? `Q${visualization.period}` : 'Period —'}</span>
         <span>{visualization?.clock ?? 'Clock —'}</span>
+        {#if gameTimeLeft}<span title="Regulation game time remaining when the play started">{gameTimeLeft} game left</span>{/if}
         <b>{visualization?.event_type ?? (visualization?.shooting_play ? 'Shot' : 'Recorded event')}</b>
     </div>
     <div class="body">
@@ -86,7 +154,7 @@
                 </g>
                 {#each courtPlayers as player}
                     <g class={`court-player ${player.side}`} transform={`translate(${player.x} ${player.y})`}>
-                        <title>{player.team} · player {player.id} · reconstructed lineup position</title>
+                        <title>{player.team} · {player.name ?? `player ${player.id}`}{player.position ? ` · ${player.position}` : ''} · reconstructed lineup position</title>
                         <circle r="1.35" style={`fill:${player.palette[0]};stroke:${player.palette[1]}`}/>
                         <text y=".12" style={`fill:${markerTextColor(player.palette)}`}>{player.label}</text>
                     </g>
@@ -113,11 +181,17 @@
                 <div><dt>Result</dt><dd>{visualization?.shot_result ?? (madeShot ? 'Made' : missedShot ? 'Missed' : 'Not recorded')}</dd></div>
                 <div><dt>Distance</dt><dd>{shotDistance != null ? `${shotDistance} ft` : '—'}</dd></div>
                 <div><dt>Evidence value</dt><dd>{play.metric_value ?? play.epa ?? '—'}</dd></div>
+                {#each credits as credit}
+                    <div><dt>{credit.label}</dt><dd>{credit.name}</dd></div>
+                {/each}
+                {#if visualization?.possession_number != null}
+                    <div><dt>Possession</dt><dd>#{visualization.possession_number}</dd></div>
+                {/if}
             </dl>
             {#if visualization?.offense_player_ids?.length || visualization?.defense_player_ids?.length}
                 <div class="lineups">
-                    <div><strong>Offense</strong><span>{visualization.offense_player_ids?.join(' · ')}</span></div>
-                    <div><strong>Defense</strong><span>{visualization.defense_player_ids?.join(' · ')}</span></div>
+                    <div><strong>Offense · {eventTeam}</strong><span>{offenseLineup}</span></div>
+                    <div><strong>Defense · {defenseTeam}</strong><span>{defenseLineup}</span></div>
                 </div>
             {/if}
         </div>
@@ -130,7 +204,7 @@
     header,.scorebar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line)}
     header span,.event-card>span{font:10px var(--font-mono);letter-spacing:.12em;color:var(--nba-primary)}
     h3,h4{margin:4px 0 0} header button{width:32px;height:32px;border:1px solid var(--color-border-strong);border-radius:6px;background:var(--color-surface-control);color:var(--ink);font-size:22px;cursor:pointer}
-    .scorebar{justify-content:flex-start;background:var(--color-surface-raised);font-size:13px}.scorebar strong{display:flex;align-items:center;gap:7px;margin-right:auto}.scorebar strong i{color:var(--color-text-tertiary);font-style:normal}.scorebar strong .team-score{color:var(--score-color)}.scorebar>span{color:var(--color-text-secondary)}.scorebar b{color:var(--nba-secondary)}
+    .scorebar{justify-content:flex-start;background:var(--color-surface-raised);font-size:13px}.scorebar strong{display:flex;align-items:center;gap:7px;margin-right:auto}.scorebar strong i{color:var(--color-text-tertiary);font-style:normal}.scorebar strong .team-score{color:var(--score-color)}.scorebar>span{color:var(--color-text-secondary)}.scorebar .margin{color:var(--ink);font-weight:600}.scorebar b{color:var(--nba-secondary)}
     .body{display:grid;grid-template-columns:minmax(300px,1.1fr) minmax(260px,.9fr);gap:20px;padding:20px}.court-wrap{display:grid;gap:8px}.court{width:100%;max-height:430px;background:#d7a765;border:1px solid var(--home-secondary)}.court rect,.court line,.court circle,.court path{fill:none;stroke:#fff7e5;stroke-width:.35}.court .court-floor{fill:color-mix(in srgb,#d7a765 84%,var(--home-primary));stroke:var(--home-secondary);stroke-width:.55}.court .paint{fill:color-mix(in srgb,var(--home-primary) 15%,transparent);stroke:var(--home-secondary);stroke-opacity:.72}.court .backboard{stroke-width:.65}.court .rim{stroke:var(--home-secondary);stroke-width:.55}.court-brand circle{fill:color-mix(in srgb,var(--home-primary) 17%,transparent);stroke:var(--home-secondary);stroke-width:.3}.court-brand text{fill:var(--home-primary);font:700 1.7px var(--font-mono);text-anchor:middle;dominant-baseline:middle;opacity:.28}.court-brand image{opacity:.68;filter:drop-shadow(0 .35px .5px rgb(0 0 0 / 38%))}.court .court-player circle{stroke-width:.42}.court-player text{font:700 1.05px var(--font-mono);text-anchor:middle;dominant-baseline:middle;pointer-events:none}.shot>circle:first-child{fill:var(--nba-secondary);stroke:#fff;stroke-width:.35}.shot path{stroke:#fff;stroke-width:.45}.shot.made>circle:first-child{fill:var(--nba-primary)}.shot .made-dot{fill:#fff;stroke:none}.court-wrap small,footer{color:var(--color-text-tertiary);font-size:10px}
     .event-card{padding:18px;border:1px solid color-mix(in srgb,var(--nba-primary) 48%,var(--line));background:var(--color-surface-raised)}.event-card p{color:var(--color-text-secondary);line-height:1.55}.event-card dl{display:grid;grid-template-columns:1fr 1fr;gap:8px}.event-card dl div{padding:9px;background:var(--color-surface-panel)}dt{color:var(--muted);font-size:10px;text-transform:uppercase}dd{margin:3px 0 0}.lineups{display:grid;gap:7px;margin-top:12px}.lineups div{display:grid;gap:3px;padding:8px;border:1px solid var(--line)}.lineups span{font:10px var(--font-mono);color:var(--color-text-secondary)}footer{padding:11px 20px;border-top:1px solid var(--line)}
     @media(max-width:760px){.body{grid-template-columns:1fr}.scorebar{flex-wrap:wrap}}

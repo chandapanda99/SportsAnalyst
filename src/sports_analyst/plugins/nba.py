@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -126,6 +127,72 @@ def _shot_value(description: str, row: dict[str, Any]) -> int | None:
         return 3
     score = row.get("score_value")
     return int(score) if score not in (None, 0, "0") else None
+
+
+def _maybe_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _related_player_role(description: str, name: str | None) -> str | None:
+    """Classify how a secondary athlete participated, using only the recorded text."""
+    if not name:
+        return None
+    text, token = description.casefold(), name.casefold()
+    index = text.find(token)
+    window = text[index + len(token) : index + len(token) + 32] if index >= 0 else text
+    for role, keyword in (("assist", "assist"), ("steal", "steal"), ("block", "block"), ("foul drawn", "draws the foul")):
+        if keyword in window:
+            return role
+    return None
+
+
+def _player_directory(
+    supplemental: dict[str, dict[int, pl.DataFrame]], season: int
+) -> tuple[dict[str, tuple[str, str]], list[str]]:
+    """Map recorded player ids to display names and positions; no identities are inferred."""
+    directory: dict[str, tuple[str, str]] = {}
+    packages: list[str] = []
+    crosswalk = supplemental.get("player_crosswalk", {}).get(season, pl.DataFrame())
+    if not crosswalk.is_empty():
+        for row in crosswalk.iter_rows(named=True):
+            name = str(row.get("player_name") or row.get("espn_full_name") or row.get("nba_player_name") or "").strip()
+            position = str(row.get("nba_position") or row.get("espn_position") or "").strip()
+            if not name:
+                continue
+            for key in ("nba_player_id", "espn_athlete_id"):
+                identifier = str(row.get(key) or "").strip()
+                if identifier:
+                    directory.setdefault(identifier, (name, position))
+        if directory:
+            packages.append("player_crosswalk")
+    stats_rosters = supplemental.get("stats_game_rosters", {}).get(season, pl.DataFrame())
+    if not stats_rosters.is_empty():
+        before = len(directory)
+        for row in stats_rosters.iter_rows(named=True):
+            identifier = str(row.get("player_id") or "").strip()
+            name = " ".join(
+                part for part in (str(row.get("first_name") or "").strip(), str(row.get("last_name") or "").strip()) if part
+            )
+            if identifier and name:
+                directory.setdefault(identifier, (name, ""))
+        if len(directory) > before:
+            packages.append("stats_game_rosters")
+    rosters = supplemental.get("game_rosters", {}).get(season, pl.DataFrame())
+    if not rosters.is_empty():
+        before = len(directory)
+        for row in rosters.iter_rows(named=True):
+            identifier = str(row.get("athlete_id") or row.get("player_id") or "").strip()
+            name = str(row.get("athlete_display_name") or row.get("player_name") or "").strip()
+            position = str(row.get("athlete_position") or "").strip()
+            if identifier and name and identifier not in directory:
+                directory[identifier] = (name, position)
+        if len(directory) > before:
+            packages.append("game_rosters")
+    return directory, packages
 
 
 def _shot_point(row: dict[str, Any]) -> tuple[float, float] | None:
@@ -378,10 +445,10 @@ def _possessions(frame: pl.DataFrame) -> float | None:
         return None
     value = frame.select(
         (
-                _numeric(frame, "field_goals_attempted")
-                - _numeric(frame, "offensive_rebounds")
-                + _numeric(frame, "turnovers")
-                + 0.44 * _numeric(frame, "free_throws_attempted")
+            _numeric(frame, "field_goals_attempted")
+            - _numeric(frame, "offensive_rebounds")
+            + _numeric(frame, "turnovers")
+            + 0.44 * _numeric(frame, "free_throws_attempted")
         ).sum()
     ).item()
     return float(value) if value is not None else None
@@ -450,8 +517,7 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
             return None
         minutes = _sum(frame, "minutes") or 0
         events = (
-                (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (
-                _sum(frame, turnover_col) or 0)
+            (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (_sum(frame, turnover_col) or 0)
         )
         return float(events / minutes) if minutes else None
     if name == "plus_minus_per_game":
@@ -460,14 +526,78 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
         source = {"lineup_net_rating": "net_rating", "lineup_off_rating": "off_rating", "lineup_def_rating": "def_rating"}[name]
         if source not in frame.columns:
             return None
-        weight = "min" if "min" in frame.columns else None
+        weight = "poss" if "poss" in frame.columns else "min" if "min" in frame.columns else None
         if weight:
-            values = frame.select(
-                (_numeric(frame, source) * _numeric(frame, weight)).sum().alias("n"), _numeric(frame, weight).sum().alias("d")
+            valid = frame.filter(_numeric(frame, source).is_not_null() & _numeric(frame, weight).is_not_null())
+            values = valid.select(
+                (_numeric(valid, source) * _numeric(valid, weight)).sum().alias("n"), _numeric(valid, weight).sum().alias("d")
             ).row(0)
             return float(values[0] / values[1]) if values[1] else None
         return _mean(frame, source)
     return None
+
+
+def _effective_segment(segment: str, season_type: str) -> str:
+    if segment == "full_season":
+        return {"REG": "regular_season", "POST": "playoffs"}.get(season_type, segment)
+    return segment
+
+
+def _metric_unit(metric: str) -> str:
+    if metric.startswith("lineup_") or metric in {"offensive_rating", "defensive_rating"}:
+        return "per 100 possessions"
+    if metric.endswith("pct") or "rate" in metric or metric in {"win_pct", "usage_proxy"}:
+        return "rate"
+    return "per game"
+
+
+def _sample_size(frame: pl.DataFrame, metric: str) -> int:
+    if metric.startswith("lineup_"):
+        for column in ("poss", "min"):
+            value = _sum(frame, column)
+            if value is not None:
+                return max(0, round(value))
+        return frame.height
+    return frame.get_column("game_id").n_unique() if "game_id" in frame.columns else frame.height
+
+
+def _metric_game_values(frame: pl.DataFrame, metric: str, subject_type: str) -> list[float]:
+    if metric.startswith("lineup_") or "game_id" not in frame.columns:
+        return []
+    values = []
+    for game in frame.partition_by("game_id", maintain_order=True):
+        value = _metric(game, metric, subject_type)
+        if value is not None and math.isfinite(value):
+            values.append(value)
+    return values
+
+
+def _metric_game_rows(frame: pl.DataFrame, metric: str, subject_type: str) -> list[dict[str, Any]]:
+    if metric.startswith("lineup_") or "game_id" not in frame.columns:
+        return []
+    result = []
+    for game in frame.partition_by("game_id", maintain_order=True):
+        value = _metric(game, metric, subject_type)
+        if value is None or not math.isfinite(value):
+            continue
+        row = game.row(0, named=True)
+        result.append(
+            {
+                "game_id": str(row.get("game_id")),
+                "opponent": row.get("opponent_team_abbreviation") or row.get("opponent_abbreviation"),
+                "game_date": row.get("game_date") or row.get("date"),
+                "value": value,
+            }
+        )
+    return result
+
+
+def _difference_interval(baseline: list[float], comparison: list[float]) -> tuple[float | None, float | None]:
+    if len(baseline) < 2 or len(comparison) < 2:
+        return None, None
+    delta = statistics.mean(comparison) - statistics.mean(baseline)
+    standard_error = math.sqrt(statistics.variance(baseline) / len(baseline) + statistics.variance(comparison) / len(comparison))
+    return delta - 1.96 * standard_error, delta + 1.96 * standard_error
 
 
 class NBAPlugin:
@@ -510,6 +640,10 @@ class NBAPlugin:
             "coordinate_x_raw",
             "coordinate_y_raw",
             "game_date",
+            "home_team_name",
+            "away_team_name",
+            "start_quarter_seconds_remaining",
+            "start_game_seconds_remaining",
         }
 
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
@@ -517,6 +651,9 @@ class NBAPlugin:
             "schedules",
             "lineups_v3",
             "possessions_v3",
+            "game_rosters",
+            "stats_game_rosters",
+            "player_crosswalk",
             "team_boxscores" if request.subject is None or request.subject.type == "team" else "player_boxscores",
         }
         if request.analysis_domain == "shooting":
@@ -577,8 +714,7 @@ class NBAPlugin:
             sport=self.sport_id,
             teams=teams,
             available_seasons=available,
-            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons},
-                                    reverse=True),
+            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons}, reverse=True),
             metrics=metric_options,
             default_metrics=DEFAULTS["offense"],
             analysis_domains=DOMAINS,
@@ -664,15 +800,15 @@ class NBAPlugin:
                 (
                     name
                     for name in (
-                    "display_name",
-                    "athlete_display_name",
-                    "espn_full_name",
-                    "player_name",
-                    "player",
-                    "full_name",
-                    "nba_player_name",
-                    "name",
-                )
+                        "display_name",
+                        "athlete_display_name",
+                        "espn_full_name",
+                        "player_name",
+                        "player",
+                        "full_name",
+                        "nba_player_name",
+                        "name",
+                    )
                     if name in frame.columns
                 ),
                 None,
@@ -729,15 +865,32 @@ class NBAPlugin:
         calls = [
             PlannedToolCall(tool="validate_analysis_scope", arguments={}, purpose="Validate the NBA subject, data, and segments."),
             PlannedToolCall(tool="compare_time_windows", arguments={}, purpose="Compare selected NBA metrics across the two windows."),
-            PlannedToolCall(tool="analyze_game_trends", arguments={}, purpose="Measure game-level variation and sample context."),
             PlannedToolCall(
                 tool="find_representative_possessions", arguments={}, purpose="Attach representative and counterexample evidence."
             ),
         ]
+        planned_metrics = request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["offense"])
+        lineup_analysis = request.analysis_domain in {"lineups", "impact"} and any(metric.startswith("lineup_") for metric in planned_metrics)
+        if not lineup_analysis:
+            calls.extend(
+                [
+                    PlannedToolCall(tool="analyze_game_trends", arguments={}, purpose="Measure game-level variation and sample context."),
+                    PlannedToolCall(tool="rank_game_outliers", arguments={}, purpose="Identify games that materially shaped the result."),
+                ]
+            )
         if request.analysis_domain == "shooting":
             calls.append(PlannedToolCall(tool="compare_shot_profiles", arguments={}, purpose="Explain changes in shot mix and conversion."))
-        if request.analysis_domain in {"lineups", "impact"}:
+        if request.subject and request.subject.type == "player" and not lineup_analysis:
+            calls.append(PlannedToolCall(tool="compare_player_usage", arguments={}, purpose="Separate changes in role from efficiency."))
+        if lineup_analysis:
             calls.append(PlannedToolCall(tool="analyze_lineup_performance", arguments={}, purpose="Compare five-player-unit results."))
+        if request.subject and request.subject.type == "team" and not lineup_analysis:
+            calls.extend(
+                [
+                    PlannedToolCall(tool="benchmark_against_league", arguments={}, purpose="Place the result in league context."),
+                    PlannedToolCall(tool="adjust_for_opponents", arguments={}, purpose="Describe the opponents faced in each window."),
+                ]
+            )
         payload = {
             "sport": self.sport_id,
             "question": request.question,
@@ -748,10 +901,10 @@ class NBAPlugin:
 
     @staticmethod
     def _window_frame(
-            request: AnalysisRequest,
-            season: int,
-            segment: str,
-            supplemental: dict[str, dict[int, pl.DataFrame]],
+        request: AnalysisRequest,
+        season: int,
+        segment: str,
+        supplemental: dict[str, dict[int, pl.DataFrame]],
     ) -> pl.DataFrame:
         subject = request.subject
         dataset = "team_boxscores" if subject is None or subject.type == "team" else "player_boxscores"
@@ -783,6 +936,7 @@ class NBAPlugin:
                     frame = frame.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == team_id)
                 elif "team_id" in frame.columns:
                     frame = frame.filter(pl.col("team_id").cast(pl.String) == str(subject.team_id))
+        segment = _effective_segment(segment, request.scope.season_type)
         schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())
         game_ids = segment_game_ids(schedule, season, segment)
         if game_ids and "game_id" in frame.columns:
@@ -794,12 +948,12 @@ class NBAPlugin:
         return frame
 
     def analyze(
-            self,
-            request: AnalysisRequest,
-            datasets: dict[int, pl.DataFrame],
-            manifests: dict[int, DatasetManifest],
-            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+        self,
+        request: AnalysisRequest,
+        datasets: dict[int, pl.DataFrame],
+        manifests: dict[int, DatasetManifest],
+        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NBAAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
@@ -825,8 +979,12 @@ class NBAPlugin:
             required = {request.scope.baseline.season, request.scope.comparison.season}
             if not required <= set(lineup_frames):
                 raise ValueError("lineup metrics require a synced NBA Stats lineup package for both comparison seasons")
-            baseline = self._scope_lineups(lineup_frames[request.scope.baseline.season], subject)
-            comparison = self._scope_lineups(lineup_frames[request.scope.comparison.season], subject)
+            baseline = self._scope_lineups(lineup_frames[request.scope.baseline.season], subject, request.scope.season_type, baseline_segment)
+            comparison = self._scope_lineups(
+                lineup_frames[request.scope.comparison.season], subject, request.scope.season_type, comparison_segment
+            )
+            if baseline.is_empty() or comparison.is_empty():
+                raise ValueError("each NBA comparison window requires at least one canonical five-player lineup")
         all_manifests = list(manifests.values()) + [
             manifest for per_season in supplemental_manifests.values() for manifest in per_season.values()
         ]
@@ -846,6 +1004,10 @@ class NBAPlugin:
             if baseline_value is None or comparison_value is None:
                 continue
             payload = {**parameters, "metric": metric_name, "baseline_value": baseline_value, "comparison_value": comparison_value}
+            low, high = _difference_interval(
+                _metric_game_values(baseline, metric_name, subject_type),
+                _metric_game_values(comparison, metric_name, subject_type),
+            )
             aggregate.append(
                 AggregateEvidence(
                     evidence_id=stable_id("evidence", payload),
@@ -854,12 +1016,22 @@ class NBAPlugin:
                     value=round(comparison_value - baseline_value, 4),
                     baseline_value=round(baseline_value, 4),
                     comparison_value=round(comparison_value, 4),
-                    unit="rate" if metric_name.endswith("pct") or "rate" in metric_name else "per game",
-                    sample_size=comparison.height,
+                    unit=_metric_unit(metric_name),
+                    sample_size=_sample_size(comparison, metric_name),
+                    confidence_low=round(low, 4) if low is not None else None,
+                    confidence_high=round(high, 4) if high is not None else None,
                     row_set_sha256=_sha(payload),
                     dataset_manifest_ids=[item.manifest_id for item in all_manifests],
                     tool_execution_id=execution_id,
-                    caveats=["NBA possession rates use box-score possession estimates unless possession data is synced."],
+                    caveats=(
+                        ["Lineup ratings are possession-weighted associations for canonical five-player units."]
+                        if metric_name.startswith("lineup_")
+                        else [
+                            "The interval is a descriptive normal approximation over games, not a causal estimate."
+                            if low is not None
+                            else "The sample does not support a game-level uncertainty interval."
+                        ]
+                    ),
                 )
             )
         if not aggregate:
@@ -931,7 +1103,12 @@ class NBAPlugin:
             trend_values: list[dict[str, Any]] = []
             for season in request.scope.included_seasons:
                 if primary.metric.startswith("lineup_"):
-                    season_frame = self._scope_lineups(supplemental.get("lineups", {}).get(season, pl.DataFrame()), subject)
+                    season_frame = self._scope_lineups(
+                        supplemental.get("lineups", {}).get(season, pl.DataFrame()),
+                        subject,
+                        request.scope.season_type,
+                        "full_season",
+                    )
                 else:
                     season_frame = self._window_frame(request, season, "full_season", supplemental)
                 value = _metric(season_frame, primary.metric, subject_type)
@@ -950,23 +1127,595 @@ class NBAPlugin:
                                 "x": {"field": "season", "type": "ordinal", "sort": "ascending"},
                                 "y": {"field": "value", "type": "quantitative", "axis": {"title": primary.label}},
                                 "color": {"field": "series", "type": "nominal", "legend": None},
-                                "tooltip": ["season", "series", "value"],
+                                "tooltip": [
+                                    {"field": "season", "type": "ordinal", "title": "Season"},
+                                    {"field": "series", "type": "nominal", "title": "Metric"},
+                                    {"field": "value", "type": "quantitative", "title": primary.label},
+                                ],
                             },
                         },
                         evidence_ids=[primary.evidence_id],
                     )
                 )
+        executions = [execution, play_execution]
+        if any(item.metric.startswith("lineup_") for item in aggregate):
+            lineup_evidence, lineup_execution, lineup_chart = self._lineup_analysis(request, baseline, comparison, all_manifests)
+            if not lineup_evidence:
+                raise ValueError("lineup analysis did not produce unit-level evidence from the synced lineup package")
+            aggregate.extend(lineup_evidence)
+            executions.append(lineup_execution)
+            charts.append(lineup_chart)
+        else:
+            diagnostic_evidence, diagnostic_executions, diagnostic_charts = self._game_and_league_analysis(
+                request, baseline, comparison, supplemental, all_manifests, selected_metrics[0]
+            )
+            aggregate.extend(diagnostic_evidence)
+            executions.extend(diagnostic_executions)
+            charts.extend(diagnostic_charts)
+            if subject.type == "player":
+                usage_evidence, usage_execution = self._player_usage_analysis(request, baseline, comparison, all_manifests)
+                aggregate.extend(usage_evidence)
+                executions.append(usage_execution)
+            if request.analysis_domain == "shooting":
+                shot_evidence, shot_execution, shot_chart = self._shot_profile_analysis(request, datasets, supplemental, all_manifests)
+                aggregate.extend(shot_evidence)
+                if shot_execution:
+                    executions.append(shot_execution)
+                if shot_chart:
+                    charts.append(shot_chart)
         caveats = [
             "SportsDataverse bulk releases are authoritative for this investigation; live NBA Stats data is optional.",
             "Detailed segments are shown only when schedule labels or reviewed milestone dates resolve them.",
         ]
         if request.analysis_domain in {"lineups", "impact"} and "lineups" not in supplemental:
             caveats.append("Lineup analysis was unavailable because the NBA Stats lineup package was not synced.")
-        return NBAAnalysisResult(aggregate, plays, charts, [execution, play_execution], caveats)
+        return NBAAnalysisResult(aggregate, plays, charts, executions, caveats)
 
     @staticmethod
-    def _scope_lineups(frame: pl.DataFrame, subject: Any) -> pl.DataFrame:
+    def _player_usage_analysis(
+        request: AnalysisRequest,
+        baseline: pl.DataFrame,
+        comparison: pl.DataFrame,
+        manifests: list[DatasetManifest],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord]:
+        started_at, started = datetime.now(UTC), perf_counter()
+        manifest_ids = [item.manifest_id for item in manifests]
+        parameters = {
+            "subject": request.subject.model_dump() if request.subject else None,
+            "baseline": request.scope.baseline.model_dump(),
+            "comparison": request.scope.comparison.model_dump(),
+        }
+        execution_id = stable_id("execution", {"tool": "compare_player_usage", **parameters})
+        evidence = []
+        definitions = (
+            ("minutes_per_game", "Minutes per game"),
+            ("usage_proxy", "Offensive involvement per minute"),
+            ("assists_per_game", "Assists per game"),
+            ("turnovers_per_game", "Turnovers per game"),
+        )
+        for metric, label in definitions:
+            before, after = _metric(baseline, metric, "player"), _metric(comparison, metric, "player")
+            if before is None or after is None:
+                continue
+            payload = {**parameters, "metric": metric, "baseline": before, "comparison": after}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"usage_{metric}",
+                    label=label,
+                    value=round(after - before, 4),
+                    baseline_value=round(before, 4),
+                    comparison_value=round(after, 4),
+                    unit=_metric_unit(metric),
+                    sample_size=_sample_size(comparison, metric),
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=execution_id,
+                )
+            )
+        execution = ToolExecutionRecord(
+            execution_id=execution_id,
+            tool="compare_player_usage",
+            parameters=parameters,
+            started_at=started_at,
+            duration_ms=int((perf_counter() - started) * 1000),
+            result_sha256=_sha([item.model_dump(mode="json") for item in evidence]),
+            dataset_manifest_ids=manifest_ids,
+        )
+        return evidence, execution
+
+    @staticmethod
+    def _lineup_analysis(
+        request: AnalysisRequest,
+        baseline: pl.DataFrame,
+        comparison: pl.DataFrame,
+        manifests: list[DatasetManifest],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord, ChartArtifact]:
+        started_at, started = datetime.now(UTC), perf_counter()
+        manifest_ids = [item.manifest_id for item in manifests]
+
+        def units(frame: pl.DataFrame) -> dict[str, dict[str, Any]]:
+            result: dict[str, dict[str, Any]] = {}
+            groups = frame.partition_by("group_id", maintain_order=True) if "group_id" in frame.columns else [frame]
+            for group in groups:
+                row = group.row(0, named=True)
+                group_id = str(row.get("group_id") or row.get("group_name") or "")
+                if not group_id:
+                    continue
+                result[group_id] = {
+                    "group_id": group_id,
+                    "players": str(row.get("group_name") or group_id).replace(" - ", ", "),
+                    "minutes": float(_sum(group, "min") or 0),
+                    "possessions": float(_sum(group, "poss") or 0),
+                    "off_rating": _metric(group, "lineup_off_rating", "team"),
+                    "def_rating": _metric(group, "lineup_def_rating", "team"),
+                    "net_rating": _metric(group, "lineup_net_rating", "team"),
+                }
+            return result
+
+        before, after = units(baseline), units(comparison)
+        combined: list[dict[str, Any]] = []
+        for group_id in before.keys() | after.keys():
+            old, new = before.get(group_id), after.get(group_id)
+            current = new or old or {}
+            status = "returning" if old and new else "new" if new else "departed"
+            combined.append(
+                {
+                    **current,
+                    "status": status,
+                    "baseline_net_rating": old.get("net_rating") if old else None,
+                    "comparison_net_rating": new.get("net_rating") if new else None,
+                    "net_rating_change": (
+                        new["net_rating"] - old["net_rating"]
+                        if old and new and old.get("net_rating") is not None and new.get("net_rating") is not None
+                        else None
+                    ),
+                    "estimated_net_points": (
+                        current.get("net_rating") * current.get("possessions", 0) / 100 if current.get("net_rating") is not None else None
+                    ),
+                }
+            )
+        ranked: list[dict[str, Any]] = []
+
+        def sample_key(row: dict[str, Any]) -> float:
+            return row.get("possessions", 0) or row.get("minutes", 0)
+
+        total_sample = max(sum(sample_key(row) for row in before.values()), sum(sample_key(row) for row in after.values()))
+        material_threshold = max(50.0, total_sample * 0.02)
+        credible = [row for row in combined if sample_key(row) >= material_threshold]
+        candidate_groups = [sorted(combined, key=sample_key, reverse=True)[:3]]
+        for status in ("new", "departed", "returning"):
+            candidate_groups.append(sorted((row for row in credible if row["status"] == status), key=sample_key, reverse=True)[:1])
+        candidate_groups.extend(
+            [
+                sorted(credible, key=lambda row: row.get("net_rating") if row.get("net_rating") is not None else -math.inf, reverse=True)[:2],
+                sorted(credible, key=lambda row: row.get("net_rating") if row.get("net_rating") is not None else math.inf)[:2],
+                sorted(credible, key=lambda row: abs(row.get("net_rating_change") or 0), reverse=True)[:2],
+            ]
+        )
+        for candidates in candidate_groups:
+            for row in candidates:
+                if row["group_id"] not in {item["group_id"] for item in ranked}:
+                    ranked.append(row)
+        ranked = ranked[:8]
+        parameters = {
+            "subject": request.subject.model_dump() if request.subject else None,
+            "baseline": request.scope.baseline.model_dump(),
+            "comparison": request.scope.comparison.model_dump(),
+            "canonicalization": "advanced/preferred-per-mode/unique-group-v1",
+            "material_sample_threshold": round(material_threshold, 2),
+        }
+        execution_id = stable_id("execution", {"tool": "analyze_lineup_performance", **parameters})
+        evidence = []
+        for row in ranked:
+            payload = {**parameters, **row}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric="lineup_unit",
+                    label=f"Five-player unit: {row['players']}",
+                    value=row.get("net_rating_change") if row["status"] == "returning" else row.get("net_rating"),
+                    baseline_value=row.get("baseline_net_rating"),
+                    comparison_value=row.get("comparison_net_rating"),
+                    unit="net points per 100 possessions",
+                    sample_size=round(row.get("possessions") or row.get("minutes") or 0),
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=execution_id,
+                    context=row,
+                    caveats=["Published aggregate lineups describe association, not an isolated player effect."],
+                )
+            )
+        execution = ToolExecutionRecord(
+            execution_id=execution_id,
+            tool="analyze_lineup_performance",
+            parameters=parameters,
+            started_at=started_at,
+            duration_ms=int((perf_counter() - started) * 1000),
+            result_sha256=_sha([item.model_dump(mode="json") for item in evidence]),
+            dataset_manifest_ids=manifest_ids,
+        )
+        chart_rows = [
+            {"lineup": row["players"], "net_rating": row.get("net_rating"), "status": row["status"], "possessions": row["possessions"]}
+            for row in ranked
+            if row.get("net_rating") is not None
+        ]
+        chart = ChartArtifact(
+            chart_id=stable_id("chart", {**parameters, "view": "lineup-units"}),
+            title="Five-player lineup performance",
+            specification={
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "data": {"values": chart_rows},
+                "mark": "bar",
+                "encoding": {
+                    "y": {"field": "lineup", "type": "nominal", "sort": "-x", "axis": {"title": None, "labelLimit": 260}},
+                    "x": {"field": "net_rating", "type": "quantitative", "axis": {"title": "Net rating"}},
+                    "color": {"field": "status", "type": "nominal"},
+                    "tooltip": [
+                        {"field": "lineup", "type": "nominal", "title": "Players"},
+                        {"field": "status", "type": "nominal", "title": "Window status"},
+                        {"field": "possessions", "type": "quantitative", "title": "Possessions"},
+                        {"field": "net_rating", "type": "quantitative", "title": "Net rating"},
+                    ],
+                },
+            },
+            evidence_ids=[item.evidence_id for item in evidence],
+        )
+        return evidence, execution, chart
+
+    @staticmethod
+    def _game_and_league_analysis(
+        request: AnalysisRequest,
+        baseline: pl.DataFrame,
+        comparison: pl.DataFrame,
+        supplemental: dict[str, dict[int, pl.DataFrame]],
+        manifests: list[DatasetManifest],
+        metric: str,
+    ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord], list[ChartArtifact]]:
+        manifest_ids = [item.manifest_id for item in manifests]
+        subject_type = request.subject.type if request.subject else "team"
+        before_rows = _metric_game_rows(baseline, metric, subject_type)
+        after_rows = _metric_game_rows(comparison, metric, subject_type)
+        before = [row["value"] for row in before_rows]
+        after = [row["value"] for row in after_rows]
+        evidence: list[AggregateEvidence] = []
+        executions: list[ToolExecutionRecord] = []
+        charts: list[ChartArtifact] = []
+        started_at, started = datetime.now(UTC), perf_counter()
+        params = {"metric": metric, "windows": [request.scope.baseline.model_dump(), request.scope.comparison.model_dump()]}
+        execution_id = stable_id("execution", {"tool": "analyze_game_trends", **params})
+        if before and after:
+            rows = [
+                {**row, "window": window, "game": index + 1}
+                for window, values in (("Baseline", before_rows), ("Comparison", after_rows))
+                for index, row in enumerate(values)
+            ]
+            payload = {**params, "baseline_stdev": statistics.pstdev(before), "comparison_stdev": statistics.pstdev(after)}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"{metric}_game_variability",
+                    label=f"Game-to-game variability in {METRICS[metric][0]}",
+                    value=round(payload["comparison_stdev"], 4),
+                    baseline_value=round(payload["baseline_stdev"], 4),
+                    comparison_value=round(payload["comparison_stdev"], 4),
+                    unit=_metric_unit(metric),
+                    sample_size=len(after),
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=execution_id,
+                    context={"baseline_games": len(before), "comparison_games": len(after)},
+                )
+            )
+            charts.append(
+                ChartArtifact(
+                    chart_id=stable_id("chart", {**params, "view": "games"}),
+                    title=f"Game-by-game {METRICS[metric][0]}",
+                    specification={
+                        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                        "data": {"values": rows},
+                        "mark": {"type": "line", "point": True},
+                        "encoding": {
+                            "x": {"field": "game", "type": "quantitative", "title": "Game in window"},
+                            "y": {"field": "value", "type": "quantitative", "title": METRICS[metric][0]},
+                            "color": {"field": "window", "type": "nominal"},
+                            "tooltip": [
+                                {"field": "window", "type": "nominal"},
+                                {"field": "game_id", "type": "nominal", "title": "Game"},
+                                {"field": "opponent", "type": "nominal", "title": "Opponent"},
+                                {"field": "game", "type": "quantitative"},
+                                {"field": "value", "type": "quantitative", "title": METRICS[metric][0]},
+                            ],
+                        },
+                    },
+                    evidence_ids=[evidence[-1].evidence_id],
+                )
+            )
+        executions.append(
+            ToolExecutionRecord(
+                execution_id=execution_id,
+                tool="analyze_game_trends",
+                parameters=params,
+                started_at=started_at,
+                duration_ms=int((perf_counter() - started) * 1000),
+                result_sha256=_sha(after),
+                dataset_manifest_ids=manifest_ids,
+            )
+        )
+        if after:
+            higher_is_better = METRICS[metric][5] is not False
+            best_selector = max if higher_is_better else min
+            worst_selector = min if higher_is_better else max
+            best = best_selector(after_rows, key=lambda row: row["value"])
+            worst = worst_selector(after_rows, key=lambda row: row["value"])
+            outlier_params = {**params, "worst_game": worst, "best_game": best}
+            outlier_id = stable_id("execution", {"tool": "rank_game_outliers", **outlier_params})
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", outlier_params),
+                    metric=f"{metric}_game_range",
+                    label=f"Best and worst game: {METRICS[metric][0]}",
+                    value=round(max(after) - min(after), 4),
+                    baseline_value=round(min(after), 4),
+                    comparison_value=round(max(after), 4),
+                    unit=_metric_unit(metric),
+                    sample_size=len(after),
+                    row_set_sha256=_sha(outlier_params),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=outlier_id,
+                    context={"worst_game": worst, "best_game": best},
+                )
+            )
+            executions.append(
+                ToolExecutionRecord(
+                    execution_id=outlier_id,
+                    tool="rank_game_outliers",
+                    parameters=outlier_params,
+                    started_at=started_at,
+                    duration_ms=0,
+                    result_sha256=_sha(outlier_params),
+                    dataset_manifest_ids=manifest_ids,
+                )
+            )
+        if subject_type == "team":
+            season = request.scope.comparison.season
+            league = supplemental.get("team_boxscores", {}).get(season, pl.DataFrame())
+            schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())
+            segment = _effective_segment(request.scope.comparison.segment or "full_season", request.scope.season_type)
+            game_ids = segment_game_ids(schedule, season, segment)
+            if game_ids and "game_id" in league.columns:
+                league = league.filter(pl.col("game_id").cast(pl.String).is_in(game_ids))
+            team_col = "team_abbreviation" if "team_abbreviation" in league.columns else None
+            if team_col:
+                results = [(str(team[0, team_col]), _metric(team, metric, "team")) for team in league.partition_by(team_col)]
+                results = [(name, value) for name, value in results if value is not None]
+                target = str(request.subject.id).upper() if request.subject else ""
+                target_value = next((value for name, value in results if name.upper() == target), None)
+                if target_value is not None and results:
+                    higher = METRICS[metric][5] is not False
+                    ordered = sorted(results, key=lambda item: item[1], reverse=higher)
+                    rank = next(index for index, item in enumerate(ordered, 1) if item[0].upper() == target)
+                    benchmark_params = {"metric": metric, "season": season, "rank": rank, "teams": len(ordered)}
+                    benchmark_id = stable_id("execution", {"tool": "benchmark_against_league", **benchmark_params})
+                    evidence.append(
+                        AggregateEvidence(
+                            evidence_id=stable_id("evidence", benchmark_params),
+                            metric=f"{metric}_league_rank",
+                            label=f"League rank: {METRICS[metric][0]}",
+                            value=rank,
+                            comparison_value=target_value,
+                            unit=f"rank of {len(ordered)}",
+                            sample_size=len(ordered),
+                            row_set_sha256=_sha(benchmark_params),
+                            dataset_manifest_ids=manifest_ids,
+                            tool_execution_id=benchmark_id,
+                            context={
+                                "rank": rank,
+                                "teams": len(ordered),
+                                "percentile": round(100 * (len(ordered) - rank) / max(1, len(ordered) - 1), 1),
+                            },
+                        )
+                    )
+                    executions.append(
+                        ToolExecutionRecord(
+                            execution_id=benchmark_id,
+                            tool="benchmark_against_league",
+                            parameters=benchmark_params,
+                            started_at=started_at,
+                            duration_ms=0,
+                            result_sha256=_sha(benchmark_params),
+                            dataset_manifest_ids=manifest_ids,
+                        )
+                    )
+                opponent_col = next(
+                    (column for column in ("opponent_team_abbreviation", "opponent_abbreviation") if column in comparison.columns), None
+                )
+                if opponent_col and "team_abbreviation" in league.columns:
+                    opponent_codes = [str(value).upper() for value in comparison.get_column(opponent_col).drop_nulls().to_list()]
+                    context_metric = (
+                        "defensive_rating" if request.analysis_domain in {"offense", "shooting", "playmaking"} else "offensive_rating"
+                    )
+                    opponent_values = []
+                    for opponent in opponent_codes:
+                        opponent_frame = league.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == opponent)
+                        value = _metric(opponent_frame, context_metric, "team")
+                        if value is not None:
+                            opponent_values.append(value)
+                    if opponent_values:
+                        league_values = [
+                            value
+                            for team in league.partition_by("team_abbreviation")
+                            if (value := _metric(team, context_metric, "team")) is not None
+                        ]
+                        schedule_strength = statistics.mean(opponent_values)
+                        league_average = statistics.mean(league_values) if league_values else schedule_strength
+                        opponent_params = {"context_metric": context_metric, "opponents": opponent_codes}
+                        opponent_id = stable_id("execution", {"tool": "adjust_for_opponents", **opponent_params})
+                        evidence.append(
+                            AggregateEvidence(
+                                evidence_id=stable_id("evidence", opponent_params),
+                                metric="opponent_context",
+                                label=f"Opponent {METRICS[context_metric][0]}",
+                                value=round(schedule_strength - league_average, 4),
+                                baseline_value=round(league_average, 4),
+                                comparison_value=round(schedule_strength, 4),
+                                unit="points per 100 possessions versus league average",
+                                sample_size=len(opponent_values),
+                                row_set_sha256=_sha(opponent_params),
+                                dataset_manifest_ids=manifest_ids,
+                                tool_execution_id=opponent_id,
+                                context={
+                                    "opponents": opponent_codes,
+                                    "league_average": league_average,
+                                    "weighted_opponent_average": schedule_strength,
+                                },
+                                caveats=["This is descriptive schedule context, not a causal opponent adjustment."],
+                            )
+                        )
+                        executions.append(
+                            ToolExecutionRecord(
+                                execution_id=opponent_id,
+                                tool="adjust_for_opponents",
+                                parameters=opponent_params,
+                                started_at=started_at,
+                                duration_ms=0,
+                                result_sha256=_sha(opponent_params),
+                                dataset_manifest_ids=manifest_ids,
+                            )
+                        )
+        return evidence, executions, charts
+
+    @staticmethod
+    def _shot_profile_analysis(
+        request: AnalysisRequest,
+        datasets: dict[int, pl.DataFrame],
+        supplemental: dict[str, dict[int, pl.DataFrame]],
+        manifests: list[DatasetManifest],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord | None, ChartArtifact | None]:
+        subject = request.subject
+        if subject is None:
+            return [], None, None
+
+        def profile(window: Any) -> dict[str, dict[str, float]]:
+            frame = datasets.get(window.season, pl.DataFrame())
+            schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
+            ids = segment_game_ids(schedule, window.season, _effective_segment(window.segment or "full_season", request.scope.season_type))
+            if ids and "game_id" in frame.columns:
+                frame = frame.filter(pl.col("game_id").cast(pl.String).is_in(ids))
+            if subject.type == "team" and "team_abbreviation" in frame.columns:
+                frame = frame.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == str(subject.id).upper())
+            elif subject.type == "player":
+                columns = [column for column in ("athlete_id_1", "athlete_id_2", "athlete_id_3", "player_id") if column in frame.columns]
+                if columns:
+                    predicate = pl.col(columns[0]).cast(pl.String) == str(subject.id)
+                    for column in columns[1:]:
+                        predicate |= pl.col(column).cast(pl.String) == str(subject.id)
+                    frame = frame.filter(predicate)
+            result = {zone: {"attempts": 0.0, "makes": 0.0} for zone in ("Rim", "Short midrange", "Long midrange", "Three")}
+            for row in frame.iter_rows(named=True):
+                description = str(row.get("description") or row.get("text") or "").lower()
+                if not (row.get("shooting_play") or "make" in description or "miss" in description):
+                    continue
+                value = _shot_value(description, row)
+                distance = _shot_distance(description, row, _shot_point(row))
+                zone = (
+                    "Three"
+                    if value == 3
+                    else "Rim"
+                    if distance is not None and distance <= 4
+                    else "Short midrange"
+                    if distance is not None and distance <= 14
+                    else "Long midrange"
+                )
+                result[zone]["attempts"] += 1
+                result[zone]["makes"] += int(bool(row.get("scoring_play")) or "make" in description)
+            return result
+
+        before, after = profile(request.scope.baseline), profile(request.scope.comparison)
+        total_before = sum(item["attempts"] for item in before.values())
+        total_after = sum(item["attempts"] for item in after.values())
+        if not total_before or not total_after:
+            return [], None, None
+        manifest_ids = [item.manifest_id for item in manifests]
+        params = {"subject": subject.model_dump(), "zones": list(after)}
+        execution_id = stable_id("execution", {"tool": "compare_shot_profiles", **params})
+        evidence, rows = [], []
+        for zone in after:
+            before_share, after_share = before[zone]["attempts"] / total_before, after[zone]["attempts"] / total_after
+            payload = {**params, "zone": zone, "baseline_share": before_share, "comparison_share": after_share}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric="shot_zone_share",
+                    label=f"{zone} attempt share",
+                    value=round(after_share - before_share, 4),
+                    baseline_value=round(before_share, 4),
+                    comparison_value=round(after_share, 4),
+                    unit="rate",
+                    sample_size=round(after[zone]["attempts"]),
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=execution_id,
+                    context={"zone": zone, "baseline_makes": before[zone]["makes"], "comparison_makes": after[zone]["makes"]},
+                )
+            )
+            rows.extend(
+                [{"zone": zone, "window": "Baseline", "share": before_share}, {"zone": zone, "window": "Comparison", "share": after_share}]
+            )
+        now = datetime.now(UTC)
+        execution = ToolExecutionRecord(
+            execution_id=execution_id,
+            tool="compare_shot_profiles",
+            parameters=params,
+            started_at=now,
+            duration_ms=0,
+            result_sha256=_sha(rows),
+            dataset_manifest_ids=manifest_ids,
+        )
+        chart = ChartArtifact(
+            chart_id=stable_id("chart", {**params, "view": "shot-profile"}),
+            title="Shot profile by zone",
+            specification={
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "data": {"values": rows},
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "zone", "type": "nominal"},
+                    "y": {"field": "share", "type": "quantitative", "axis": {"format": ".0%"}},
+                    "xOffset": {"field": "window"},
+                    "color": {"field": "window", "type": "nominal"},
+                    "tooltip": [
+                        {"field": "zone", "type": "nominal"},
+                        {"field": "window", "type": "nominal"},
+                        {"field": "share", "type": "quantitative", "format": ".1%"},
+                    ],
+                },
+            },
+            evidence_ids=[item.evidence_id for item in evidence],
+        )
+        return evidence, execution, chart
+
+    @staticmethod
+    def _scope_lineups(
+        frame: pl.DataFrame,
+        subject: Any,
+        season_type: str = "ALL",
+        segment: str = "full_season",
+    ) -> pl.DataFrame:
+        """Canonicalize the published aggregate lineup table before measuring it.
+
+        SportsDataverse may include the same unit once for every measure type and
+        per-mode. Ratings belong to the advanced table and must be counted once.
+        Aggregate releases can support regular season/playoffs, but not arbitrary
+        date-bounded segments; those require possession-level lineup data.
+        """
         scoped = frame
+        segment = _effective_segment(segment, season_type)
+        if segment not in {"full_season", "regular_season", "playoffs"}:
+            raise ValueError(
+                f"the aggregate lineup package cannot validate the {segment.replace('_', ' ')} segment; "
+                "sync possession-level lineup data or choose regular season/playoffs"
+            )
         if subject.type == "team":
             if "team_abbreviation" in scoped.columns:
                 scoped = scoped.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == str(subject.id).upper())
@@ -978,18 +1727,38 @@ class NBAPlugin:
                 scoped = scoped.filter(pl.col("group_id").cast(pl.String).str.contains(token, literal=True))
             elif "group_name" in scoped.columns:
                 scoped = scoped.filter(pl.col("group_name").cast(pl.String).str.contains(token, literal=True))
+        if "group_set" in scoped.columns:
+            values = {str(value).casefold() for value in scoped.get_column("group_set").drop_nulls().unique().to_list()}
+            if "lineups" in values:
+                scoped = scoped.filter(pl.col("group_set").cast(pl.String).str.to_lowercase() == "lineups")
+        if "measure_type" in scoped.columns:
+            values = {str(value).casefold() for value in scoped.get_column("measure_type").drop_nulls().unique().to_list()}
+            if "advanced" in values:
+                scoped = scoped.filter(pl.col("measure_type").cast(pl.String).str.to_lowercase() == "advanced")
+        if "season_type" in scoped.columns and segment != "full_season":
+            normalized = pl.col("season_type").cast(pl.String).str.to_lowercase().str.replace_all(r"[ _]", "-")
+            accepted = ["2", "reg", "regular", "regular-season"] if segment == "regular_season" else ["3", "post", "postseason", "playoffs"]
+            scoped = scoped.filter(normalized.is_in(accepted))
+        if "per_mode" in scoped.columns:
+            modes = {str(value).casefold() for value in scoped.get_column("per_mode").drop_nulls().unique().to_list()}
+            preferred = next((mode for mode in ("totals", "pergame", "per-game") if mode in modes), None)
+            if preferred:
+                scoped = scoped.filter(pl.col("per_mode").cast(pl.String).str.to_lowercase() == preferred)
+        keys = [column for column in ("team_abbreviation", "team_id", "group_id", "season_type") if column in scoped.columns]
+        if keys:
+            scoped = scoped.unique(subset=keys, keep="first", maintain_order=True)
         return scoped
 
     @staticmethod
     def _representative_plays(
-            request: AnalysisRequest,
-            frame: pl.DataFrame,
-            supplemental: dict[str, dict[int, pl.DataFrame]],
-            manifest: DatasetManifest,
-            baseline_frame: pl.DataFrame | None = None,
-            baseline_manifest: DatasetManifest | None = None,
-            metric_label: str | None = None,
-            execution_id: str | None = None,
+        request: AnalysisRequest,
+        frame: pl.DataFrame,
+        supplemental: dict[str, dict[int, pl.DataFrame]],
+        manifest: DatasetManifest,
+        baseline_frame: pl.DataFrame | None = None,
+        baseline_manifest: DatasetManifest | None = None,
+        metric_label: str | None = None,
+        execution_id: str | None = None,
     ) -> list[PlayEvidence]:
         subject = request.subject
         if subject is None or frame.is_empty():
@@ -1001,8 +1770,11 @@ class NBAPlugin:
         for window_name, window, source_frame, source_manifest in sources:
             schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
             game_ids = segment_game_ids(schedule, window.season, window.segment or "full_season")
-            scoped = source_frame.filter(
-                pl.col("game_id").cast(pl.String).is_in(game_ids)) if game_ids and "game_id" in source_frame.columns else source_frame
+            scoped = (
+                source_frame.filter(pl.col("game_id").cast(pl.String).is_in(game_ids))
+                if game_ids and "game_id" in source_frame.columns
+                else source_frame
+            )
             if subject.type == "team":
                 team = str(subject.id).upper()
                 if "team_abbreviation" in scoped.columns:
@@ -1032,8 +1804,9 @@ class NBAPlugin:
                     outcome = score_value if score_value else -1.0 if any(token in description for token in ("miss", "turnover")) else 0.0
                 event_type = str(row.get("type_text") or row.get("type_abbreviation") or "").strip().lower()
                 if not event_type:
-                    event_type = next((token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description),
-                                      "event")
+                    event_type = next(
+                        (token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description), "event"
+                    )
                 event_team = str(row.get("team_abbreviation") or subject.team_id or subject.id).upper()
                 home, away = str(row.get("home_team_abbrev") or "").upper(), str(row.get("away_team_abbrev") or "").upper()
                 opponent = away if event_team == home else home
@@ -1054,6 +1827,7 @@ class NBAPlugin:
                     )
                 )
         selected = select_diverse_evidence(candidates, metric_label=metric_label, per_window=4)
+        directories: dict[int, tuple[dict[str, tuple[str, str]], list[str]]] = {}
         evidence = []
         for selection in selected:
             row, source_manifest = selection.candidate.payload
@@ -1124,6 +1898,21 @@ class NBAPlugin:
             shot_result = _shot_result(description, scoring_play, shooting_play)
             shot_point = _shot_point(row) if shooting_play or shot_result else None
             shot_distance = _shot_distance(description, row, shot_point) if shooting_play or shot_result else None
+            if season not in directories:
+                directories[season] = _player_directory(supplemental, season)
+            directory, directory_packages = directories[season]
+            offense_names: list[str] = []
+            offense_positions: list[str] = []
+            defense_names: list[str] = []
+            defense_positions: list[str] = []
+            if directory and any(player in directory for player in (*offense_players, *defense_players)):
+                offense_names = [directory.get(player, (player, ""))[0] for player in offense_players]
+                offense_positions = [directory.get(player, ("", ""))[1] for player in offense_players]
+                defense_names = [directory.get(player, (player, ""))[0] for player in defense_players]
+                defense_positions = [directory.get(player, ("", ""))[1] for player in defense_players]
+                source_packages.extend(name for name in directory_packages if name not in source_packages)
+            secondary_player = str(row.get("athlete_name_2") or "") or None
+            tertiary_player = str(row.get("athlete_name_3") or "") or None
             evidence.append(
                 PlayEvidence(
                     evidence_id=stable_id("play", payload),
@@ -1169,6 +1958,19 @@ class NBAPlugin:
                         possession_number=int(possession_number) if possession_number is not None else None,
                         offense_player_ids=offense_players,
                         defense_player_ids=defense_players,
+                        offense_names=offense_names,
+                        offense_positions=offense_positions,
+                        defense_names=defense_names,
+                        defense_positions=defense_positions,
+                        game_date=str(row.get("game_date") or "") or None,
+                        home_team_name=str(row.get("home_team_name") or "") or None,
+                        away_team_name=str(row.get("away_team_name") or "") or None,
+                        quarter_seconds_remaining=_maybe_float(row.get("start_quarter_seconds_remaining")),
+                        game_seconds_remaining=_maybe_float(row.get("start_game_seconds_remaining")),
+                        secondary_player_name=secondary_player,
+                        secondary_player_role=_related_player_role(description, secondary_player),
+                        tertiary_player_name=tertiary_player,
+                        tertiary_player_role=_related_player_role(description, tertiary_player),
                     ),
                 )
             )

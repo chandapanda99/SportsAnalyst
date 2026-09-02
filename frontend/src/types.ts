@@ -54,6 +54,7 @@ export type Evidence = {
   play_id?: number; season?: number; team?: string; description?: string; epa?: number; metric_value?: number; supporting?: boolean;
   window?: 'baseline' | 'comparison'; evidence_role?: 'typical' | 'metric_example' | 'supports_change' | 'counterexample';
   selection_reason?: string; selection_metric?: string; candidate_pool_size?: number; selector_version?: string;
+  context?: Record<string, string | number | boolean | null | string[]>;
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {
@@ -79,6 +80,9 @@ export type PlayVisualization = {
   team_abbreviation?: string; home_team_abbreviation?: string; away_team_abbreviation?: string; home_score?: number; away_score?: number;
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
   shot_x?: number; shot_y?: number; shot_coordinate_system?: string; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
+  game_date?: string; home_team_name?: string; away_team_name?: string;
+  quarter_seconds_remaining?: number; game_seconds_remaining?: number;
+  secondary_player_name?: string; secondary_player_role?: string; tertiary_player_name?: string; tertiary_player_role?: string;
 };
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };
