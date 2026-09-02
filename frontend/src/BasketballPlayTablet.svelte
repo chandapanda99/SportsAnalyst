@@ -91,7 +91,7 @@
     function playCredits(secondaryName?: string, secondaryRole?: string, tertiaryName?: string, tertiaryRole?: string) {
         const labels: Record<string, string> = {assist: 'Assist', steal: 'Steal', block: 'Block', 'foul drawn': 'Foul drawn'};
         return [{name: secondaryName, role: secondaryRole}, {name: tertiaryName, role: tertiaryRole}]
-            .filter((credit): credit is {name: string; role?: string} => Boolean(credit.name))
+            .filter((credit): credit is {name: string; role: string | undefined} => Boolean(credit.name))
             .map(credit => ({name: credit.name, label: labels[credit.role ?? ''] ?? 'Also involved'}));
     }
 

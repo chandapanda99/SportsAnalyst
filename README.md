@@ -401,6 +401,10 @@ flowchart TD
 - **Altair and vl-convert-python** — chart specifications and offline report rendering.
 - **Pydantic** — versioned public contracts and validation.
 
+Model responsibilities are separated when `CHAT_MODEL` is configured. `MODEL` runs the evidence-bound analytical agent, specialist review, and citation validation.
+`CHAT_MODEL` receives only that completed draft and performs a constrained wording pass for the initial summary and follow-up response; it has no analytical tools or raw
+dataset access. If `CHAT_MODEL` is empty or its wording pass fails, the validated `MODEL` summary is used unchanged.
+
 Performance-sensitive paths use selective column loading, a bounded dataset cache, vectorized bootstrap calculations, compact history payloads, batch evidence retrieval,
 immutable follow-up reuse, and bounded event histories.
 
@@ -422,6 +426,7 @@ All settings use the following environment variables and may be placed in `.env`
 |             `DATA_DIR`             |   Platform user-data directory    | Local catalog, Parquet, and investigation root        |
 |          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`          |
 |              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                   |
+|           `CHAT_MODEL`             |               Empty               | Optional summary/follow-up wording model; falls back to `MODEL` |
 |         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                |
 |         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential` |
 |         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                            |

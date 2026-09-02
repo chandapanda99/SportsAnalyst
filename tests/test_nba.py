@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -63,6 +64,7 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
                 "game_id": [game_id],
                 "team_id": ["2"],
                 "team_abbreviation": ["BOS"],
+                "game_date": [date(season - 1, 11, 1)],
                 "team_score": [points],
                 "opponent_team_score": [points - 4],
                 "team_winner": [True],

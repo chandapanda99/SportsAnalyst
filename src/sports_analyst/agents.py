@@ -96,8 +96,64 @@ class SynthesisDraft(BaseModel):
     claims: list[Claim] = Field(min_length=1, max_length=12)
 
 
+class UserMessageDraft(BaseModel):
+    message: str = Field(min_length=1, max_length=2_500)
+
+
+def _formulate_user_message(
+    chat_model: Any,
+    question: str,
+    draft: SynthesisDraft,
+    sport: str,
+    follow_up: bool,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Turn a completed analytical draft into user-facing prose without changing its substance."""
+    formatter = chat_model.with_structured_output(UserMessageDraft)
+    mode_instruction = (
+        "Answer the follow-up directly and naturally in the context of an ongoing analyst conversation."
+        if follow_up
+        else "Write a concise opening summary for the completed investigation."
+    )
+    response = formatter.invoke(
+        [
+            {
+                "role": "system",
+                "content": (
+                    f"You are the conversational voice of an experienced {sport.upper()} analyst. {mode_instruction} "
+                    "You are editing an already completed, evidence-bound analysis—not performing analysis. Preserve every number, "
+                    "direction, qualification, and uncertainty in the supplied draft. Do not add facts, explanations, players, "
+                    "causal claims, or conclusions. Do not mention models, tools, evidence IDs, or this editing instruction."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": question,
+                        "analytical_summary": draft.summary,
+                        "validated_claims": [
+                            {
+                                "type": claim.claim_type,
+                                "statement": claim.statement,
+                                "confidence": claim.confidence,
+                            }
+                            for claim in draft.claims
+                        ],
+                    },
+                    default=str,
+                ),
+            },
+        ],
+        config=config,
+    )
+    if isinstance(response, UserMessageDraft):
+        return response.message
+    return UserMessageDraft.model_validate(response).message
+
+
 def _synthesis_mode(
-    question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None
+        question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None
 ) -> Literal["direct", "reviewed", "full"]:
     if conversation_context:
         return "direct"
@@ -109,7 +165,7 @@ def _synthesis_mode(
 
 
 def _citation_ledger(
-    aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
+        aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     ledger: dict[str, str] = {}
     aggregate_payload: list[dict[str, Any]] = []
@@ -180,15 +236,15 @@ def _is_citation_error(error: Exception) -> bool:
 
 
 def _fallback_synthesis(
-    question: str,
-    team: str,
-    baseline: AnalysisWindow,
-    comparison: AnalysisWindow,
-    aggregate: list[AggregateEvidence],
-    analysis_seasons: list[int] | None = None,
-    conversation_context: list[dict[str, str]] | None = None,
-    analysis_domain: str = "passing",
-    sport: str = "nfl",
+        question: str,
+        team: str,
+        baseline: AnalysisWindow,
+        comparison: AnalysisWindow,
+        aggregate: list[AggregateEvidence],
+        analysis_seasons: list[int] | None = None,
+        conversation_context: list[dict[str, str]] | None = None,
+        analysis_domain: str = "passing",
+        sport: str = "nfl",
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     preferred_metric = {
@@ -318,19 +374,19 @@ class EvidenceBoundAgent:
         self.settings = settings or get_settings()
 
     def synthesize(
-        self,
-        question: str,
-        team: str,
-        baseline: AnalysisWindow,
-        comparison: AnalysisWindow,
-        aggregate: list[AggregateEvidence],
-        plays: list[PlayEvidence],
-        analysis_seasons: list[int] | None = None,
-        conversation_context: list[dict[str, str]] | None = None,
-        analysis_domain: str = "passing",
-        sport: str = "nfl",
-        progress_callback: Callable[[str, float], None] | None = None,
-        trace_metadata: dict[str, Any] | None = None,
+            self,
+            question: str,
+            team: str,
+            baseline: AnalysisWindow,
+            comparison: AnalysisWindow,
+            aggregate: list[AggregateEvidence],
+            plays: list[PlayEvidence],
+            analysis_seasons: list[int] | None = None,
+            conversation_context: list[dict[str, str]] | None = None,
+            analysis_domain: str = "passing",
+            sport: str = "nfl",
+            progress_callback: Callable[[str, float], None] | None = None,
+            trace_metadata: dict[str, Any] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -363,7 +419,13 @@ class EvidenceBoundAgent:
             from langchain.tools import tool
             from langchain_core.callbacks import BaseCallbackHandler
 
-            resolved = get_provider(self.settings.model_provider).build(self.settings)
+            provider = get_provider(self.settings.model_provider)
+            resolved = provider.build(self.settings)
+            conversational = (
+                provider.build(self.settings, self.settings.chat_model, include_reasoning=False)
+                if self.settings.chat_model
+                else None
+            )
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
             synthesis_mode = _synthesis_mode(question, len(aggregate), conversation_context)
             logger.debug(
@@ -410,7 +472,7 @@ class EvidenceBoundAgent:
                     item
                     for item in aggregate_payload
                     if (not metric or metric.lower() in str(item.get("metric", "")).lower())
-                    and (not requested or item["citation_key"] in requested)
+                       and (not requested or item["citation_key"] in requested)
                 ]
                 return json.dumps(filtered[: max(1, min(limit, 100))], indent=2, default=str)
 
@@ -430,10 +492,11 @@ class EvidenceBoundAgent:
             sport_noun = "basketball" if sport == "nba" else "football"
             voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else ANALYST_VOICE_GUIDE
             common = (
-                "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
-                f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
-                f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
-                "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" + voice_guide
+                    "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
+                    f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
+                    f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
+                    "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" +
+                    voice_guide
             )
             if analysis_seasons:
                 common += (
@@ -451,9 +514,9 @@ class EvidenceBoundAgent:
                     "name": "efficiency-analyst",
                     "description": f"Diagnoses {analysis_domain} efficiency and production changes.",
                     "system_prompt": (
-                        "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
-                        "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
-                        "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
+                            "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
+                            "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
+                            "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -462,10 +525,10 @@ class EvidenceBoundAgent:
                     "name": "situational-analyst",
                     "description": "Examines contextual split contributions.",
                     "system_prompt": (
-                        f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage "
-                        f"mix or "
-                        "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
-                        "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
+                            f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage "
+                            f"mix or "
+                            "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
+                            "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -474,37 +537,33 @@ class EvidenceBoundAgent:
                     "name": "evidence-reviewer",
                     "description": "Challenges claims and verifies citations.",
                     "system_prompt": (
-                        f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
-                        f"evidence "
-                        "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
-                        "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
+                            f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
+                            f"evidence "
+                            "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
+                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
                 },
             ]
             subagents = (
-                []
-                if synthesis_mode == "direct"
-                else [available_subagents[0], available_subagents[2]]
-                if synthesis_mode == "reviewed"
-                else available_subagents
+                [] if synthesis_mode == "direct" else [available_subagents[0], available_subagents[2]]
+                if synthesis_mode == "reviewed" else available_subagents
             )
             coordinator_instruction = (
-                "Answer directly from the evidence tools and produce the final report."
-                if synthesis_mode == "direct"
+                "Answer directly from the evidence tools and produce the final report." if synthesis_mode == "direct"
                 else "Delegate diagnosis and review as useful, then write the final report."
             )
             agent_arguments: dict[str, Any] = dict(
                 model=resolved.chat_model,
                 tools=tools,
                 system_prompt=(
-                    f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
-                    f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
-                    f"knowleadgable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
-                    f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
-                    f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
-                    + common
+                        f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
+                        f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
+                        f"knowleadgable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
+                        f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
+                        f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
+                        + common
                 ),
                 response_format=response_model,
                 backend=StateBackend(),
@@ -519,6 +578,8 @@ class EvidenceBoundAgent:
                 "analysis_domain": analysis_domain,
                 "provider": self.settings.model_provider,
                 "model_id": resolved.model_id,
+                "analysis_model_id": resolved.model_id,
+                "chat_model_id": conversational.model_id if conversational else resolved.model_id,
                 "synthesis_mode": synthesis_mode,
             }
             invocation_tags = [
@@ -564,6 +625,39 @@ class EvidenceBoundAgent:
                 )
             report_progress("Validating every finding and citation", 0.94)
             resolved_draft = _resolve_citation_draft(aliased_draft, ledger)
+            if conversational:
+                report_progress("Polishing the analyst's response", 0.955)
+                try:
+                    message = _formulate_user_message(
+                        conversational.chat_model,
+                        question,
+                        resolved_draft,
+                        sport,
+                        bool(conversation_context),
+                        config={
+                            "callbacks": [progress_handler],
+                            "run_name": "open-sports-analyst.conversation-message",
+                            "metadata": {
+                                **invocation_metadata,
+                                "model_id": conversational.model_id,
+                                "model_role": "conversation",
+                            },
+                            "tags": [*invocation_tags, "role:conversation"],
+                        },
+                    )
+                    resolved_draft = resolved_draft.model_copy(update={"summary": message})
+                    logger.info(
+                        "conversation_message_completed analysis_model_id=%s chat_model_id=%s follow_up=%s",
+                        resolved.model_id,
+                        conversational.model_id,
+                        bool(conversation_context),
+                    )
+                except Exception as message_error:
+                    logger.warning(
+                        "conversation_message_fallback chat_model_id=%s error_type=%s",
+                        conversational.model_id,
+                        type(message_error).__name__,
+                    )
             report_progress("Finalizing the evidence-linked report", 0.97)
             logger.info("model_synthesis_completed model_id=%s claims=%d", resolved.model_id, len(resolved_draft.claims))
             return resolved_draft, resolved.model_id, False

@@ -9,7 +9,6 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from sports_analyst.models import (
@@ -122,10 +121,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
         return {"job_id": job_id, "timeout_seconds": timeout_seconds}
 
     @api.get("/api/dataset-jobs/{job_id}/events")
-    async def dataset_events(
-        job_id: str,
-        timeout_seconds: int | None = Query(default=None, ge=30, le=3_600),
-    ) -> StreamingResponse:
+    async def dataset_events(job_id: str, timeout_seconds: int | None = Query(default=None, ge=30, le=3_600)) -> StreamingResponse:
         return StreamingResponse(
             _event_stream(service, job_id, timeout_seconds=timeout_seconds),
             media_type="text/event-stream",
@@ -140,11 +136,7 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
             try:
                 service.investigate(request, investigation_id)
             except Exception as error:
-                logger.error(
-                    "investigation_failed investigation_id=%s error_type=%s",
-                    investigation_id,
-                    type(error).__name__,
-                )
+                logger.error("investigation_failed investigation_id=%s error_type=%s", investigation_id, type(error).__name__)
                 logger.debug("investigation_failed_details investigation_id=%s", investigation_id, exc_info=True)
                 service.events.emit(investigation_id, "failed", str(error), 1.0)
 

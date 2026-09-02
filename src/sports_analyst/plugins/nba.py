@@ -143,7 +143,7 @@ def _related_player_role(description: str, name: str | None) -> str | None:
         return None
     text, token = description.casefold(), name.casefold()
     index = text.find(token)
-    window = text[index + len(token) : index + len(token) + 32] if index >= 0 else text
+    window = text[index + len(token): index + len(token) + 32] if index >= 0 else text
     for role, keyword in (("assist", "assist"), ("steal", "steal"), ("block", "block"), ("foul drawn", "draws the foul")):
         if keyword in window:
             return role
@@ -151,7 +151,7 @@ def _related_player_role(description: str, name: str | None) -> str | None:
 
 
 def _player_directory(
-    supplemental: dict[str, dict[int, pl.DataFrame]], season: int
+        supplemental: dict[str, dict[int, pl.DataFrame]], season: int
 ) -> tuple[dict[str, tuple[str, str]], list[str]]:
     """Map recorded player ids to display names and positions; no identities are inferred."""
     directory: dict[str, tuple[str, str]] = {}
@@ -445,10 +445,10 @@ def _possessions(frame: pl.DataFrame) -> float | None:
         return None
     value = frame.select(
         (
-            _numeric(frame, "field_goals_attempted")
-            - _numeric(frame, "offensive_rebounds")
-            + _numeric(frame, "turnovers")
-            + 0.44 * _numeric(frame, "free_throws_attempted")
+                _numeric(frame, "field_goals_attempted")
+                - _numeric(frame, "offensive_rebounds")
+                + _numeric(frame, "turnovers")
+                + 0.44 * _numeric(frame, "free_throws_attempted")
         ).sum()
     ).item()
     return float(value) if value is not None else None
@@ -517,7 +517,8 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
             return None
         minutes = _sum(frame, "minutes") or 0
         events = (
-            (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (_sum(frame, turnover_col) or 0)
+                (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (
+                    _sum(frame, turnover_col) or 0)
         )
         return float(events / minutes) if minutes else None
     if name == "plus_minus_per_game":
@@ -581,11 +582,13 @@ def _metric_game_rows(frame: pl.DataFrame, metric: str, subject_type: str) -> li
         if value is None or not math.isfinite(value):
             continue
         row = game.row(0, named=True)
+        raw_game_date = row.get("game_date") or row.get("date")
+        game_date = raw_game_date.isoformat() if hasattr(raw_game_date, "isoformat") else raw_game_date
         result.append(
             {
                 "game_id": str(row.get("game_id")),
                 "opponent": row.get("opponent_team_abbreviation") or row.get("opponent_abbreviation"),
-                "game_date": row.get("game_date") or row.get("date"),
+                "game_date": game_date,
                 "value": value,
             }
         )
@@ -714,7 +717,8 @@ class NBAPlugin:
             sport=self.sport_id,
             teams=teams,
             available_seasons=available,
-            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons}, reverse=True),
+            syncable_seasons=sorted({season for definition in NBA_DATASETS.values() for season in definition.available_seasons},
+                                    reverse=True),
             metrics=metric_options,
             default_metrics=DEFAULTS["offense"],
             analysis_domains=DOMAINS,
@@ -800,15 +804,15 @@ class NBAPlugin:
                 (
                     name
                     for name in (
-                        "display_name",
-                        "athlete_display_name",
-                        "espn_full_name",
-                        "player_name",
-                        "player",
-                        "full_name",
-                        "nba_player_name",
-                        "name",
-                    )
+                    "display_name",
+                    "athlete_display_name",
+                    "espn_full_name",
+                    "player_name",
+                    "player",
+                    "full_name",
+                    "nba_player_name",
+                    "name",
+                )
                     if name in frame.columns
                 ),
                 None,
@@ -901,10 +905,10 @@ class NBAPlugin:
 
     @staticmethod
     def _window_frame(
-        request: AnalysisRequest,
-        season: int,
-        segment: str,
-        supplemental: dict[str, dict[int, pl.DataFrame]],
+            request: AnalysisRequest,
+            season: int,
+            segment: str,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
     ) -> pl.DataFrame:
         subject = request.subject
         dataset = "team_boxscores" if subject is None or subject.type == "team" else "player_boxscores"
@@ -948,12 +952,12 @@ class NBAPlugin:
         return frame
 
     def analyze(
-        self,
-        request: AnalysisRequest,
-        datasets: dict[int, pl.DataFrame],
-        manifests: dict[int, DatasetManifest],
-        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+            self,
+            request: AnalysisRequest,
+            datasets: dict[int, pl.DataFrame],
+            manifests: dict[int, DatasetManifest],
+            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NBAAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
@@ -1173,10 +1177,10 @@ class NBAPlugin:
 
     @staticmethod
     def _player_usage_analysis(
-        request: AnalysisRequest,
-        baseline: pl.DataFrame,
-        comparison: pl.DataFrame,
-        manifests: list[DatasetManifest],
+            request: AnalysisRequest,
+            baseline: pl.DataFrame,
+            comparison: pl.DataFrame,
+            manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord]:
         started_at, started = datetime.now(UTC), perf_counter()
         manifest_ids = [item.manifest_id for item in manifests]
@@ -1226,10 +1230,10 @@ class NBAPlugin:
 
     @staticmethod
     def _lineup_analysis(
-        request: AnalysisRequest,
-        baseline: pl.DataFrame,
-        comparison: pl.DataFrame,
-        manifests: list[DatasetManifest],
+            request: AnalysisRequest,
+            baseline: pl.DataFrame,
+            comparison: pl.DataFrame,
+            manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord, ChartArtifact]:
         started_at, started = datetime.now(UTC), perf_counter()
         manifest_ids = [item.manifest_id for item in manifests]
@@ -1365,12 +1369,12 @@ class NBAPlugin:
 
     @staticmethod
     def _game_and_league_analysis(
-        request: AnalysisRequest,
-        baseline: pl.DataFrame,
-        comparison: pl.DataFrame,
-        supplemental: dict[str, dict[int, pl.DataFrame]],
-        manifests: list[DatasetManifest],
-        metric: str,
+            request: AnalysisRequest,
+            baseline: pl.DataFrame,
+            comparison: pl.DataFrame,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifests: list[DatasetManifest],
+            metric: str,
     ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord], list[ChartArtifact]]:
         manifest_ids = [item.manifest_id for item in manifests]
         subject_type = request.subject.type if request.subject else "team"
@@ -1587,10 +1591,10 @@ class NBAPlugin:
 
     @staticmethod
     def _shot_profile_analysis(
-        request: AnalysisRequest,
-        datasets: dict[int, pl.DataFrame],
-        supplemental: dict[str, dict[int, pl.DataFrame]],
-        manifests: list[DatasetManifest],
+            request: AnalysisRequest,
+            datasets: dict[int, pl.DataFrame],
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifests: list[DatasetManifest],
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord | None, ChartArtifact | None]:
         subject = request.subject
         if subject is None:
@@ -1697,10 +1701,10 @@ class NBAPlugin:
 
     @staticmethod
     def _scope_lineups(
-        frame: pl.DataFrame,
-        subject: Any,
-        season_type: str = "ALL",
-        segment: str = "full_season",
+            frame: pl.DataFrame,
+            subject: Any,
+            season_type: str = "ALL",
+            segment: str = "full_season",
     ) -> pl.DataFrame:
         """Canonicalize the published aggregate lineup table before measuring it.
 
@@ -1751,14 +1755,14 @@ class NBAPlugin:
 
     @staticmethod
     def _representative_plays(
-        request: AnalysisRequest,
-        frame: pl.DataFrame,
-        supplemental: dict[str, dict[int, pl.DataFrame]],
-        manifest: DatasetManifest,
-        baseline_frame: pl.DataFrame | None = None,
-        baseline_manifest: DatasetManifest | None = None,
-        metric_label: str | None = None,
-        execution_id: str | None = None,
+            request: AnalysisRequest,
+            frame: pl.DataFrame,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifest: DatasetManifest,
+            baseline_frame: pl.DataFrame | None = None,
+            baseline_manifest: DatasetManifest | None = None,
+            metric_label: str | None = None,
+            execution_id: str | None = None,
     ) -> list[PlayEvidence]:
         subject = request.subject
         if subject is None or frame.is_empty():

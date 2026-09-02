@@ -845,6 +845,11 @@ class NFLPlayerAnalysisMixin:
                     window_plays,
                     supplemental.get("participation", {}).get(window.season),
                     supplemental.get("ftn_charting", {}).get(window.season),
+                    {
+                        "players": supplemental.get("players", {}).get(0),
+                        "weekly_rosters": supplemental.get("weekly_rosters", {}).get(window.season),
+                        "rosters": supplemental.get("rosters", {}).get(window.season),
+                    },
                 ):
                     enriched_plays[play.evidence_id] = play
             plays = [enriched_plays.get(play.evidence_id, play) for play in plays]

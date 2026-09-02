@@ -412,6 +412,12 @@ function coverageDepth(visualization: PlayVisualization) {
   return 2;
 }
 
+function coverageShell(visualization: PlayVisualization) {
+  const value = `${visualization.coverage_type ?? ''} ${visualization.man_zone ?? ''}`.toUpperCase();
+  const match = value.match(/COVER[_ -]?([0-6])/);
+  return match ? Number(match[1]) : null;
+}
+
 function symmetricOffsets(count: number, outer: number) {
   if (count <= 0) return [];
   if (count === 1) return [0];
@@ -445,6 +451,7 @@ function defensiveLateralPreferences(
   linebackers: PlayerRecord[],
   backs: PlayerRecord[],
   centerY: number,
+  offensePlayers: SchematicPlayer[],
 ) {
   const preferred = new Map<PlayerRecord, number>();
   const frontEdges = fronts.filter(record => ['DE', 'EDGE'].includes(record.position));
@@ -467,10 +474,56 @@ function defensiveLateralPreferences(
   const corners = backs.filter(record => record.position === 'CB');
   const nickels = backs.filter(record => ['NB', 'DB'].includes(record.position));
   const safeties = backs.filter(record => ['S', 'FS', 'SS'].includes(record.position));
-  assignEdgeOffsets(preferred, corners, centerY, FIELD_MIDDLE - 5.4);
-  assignEdgeOffsets(preferred, nickels, centerY, 11);
+  const receiverAlignments = offensePlayers
+    .filter(player => ['WR', 'TE'].includes(player.position))
+    .map(player => player.y)
+    .filter((value, index, values) => values.findIndex(other => Math.abs(other - value) < .2) === index)
+    .sort((left, right) => left - right);
+  const wideReceiverAlignments = receiverAlignments.length >= 2
+    ? [receiverAlignments[0], receiverAlignments.at(-1)!]
+    : receiverAlignments;
+  corners.forEach((record, index) => {
+    const fallback = centerY + (index % 2 === 0 ? -1 : 1) * (FIELD_MIDDLE - 5.4);
+    if (corners.length <= 2) preferred.set(record, wideReceiverAlignments[index] ?? fallback);
+    else preferred.set(record, receiverAlignments[index] ?? fallback);
+  });
+  const slotAlignments = receiverAlignments
+    .filter(value => !wideReceiverAlignments.some(wide => Math.abs(wide - value) < .2))
+    .sort((left, right) => Math.abs(left - centerY) - Math.abs(right - centerY));
+  nickels.forEach((record, index) => preferred.set(record,
+    slotAlignments[index] ?? centerY + (index % 2 === 0 ? -11 : 11)));
   assignOffsets(preferred, safeties, centerY, safeties.length > 1 ? 10 : 0);
   return preferred;
+}
+
+function deepDefenders(backs: PlayerRecord[], visualization: PlayVisualization) {
+  const count = Math.min(backs.length, coverageDepth(visualization));
+  const corners = backs.filter(record => record.position === 'CB');
+  const safeties = backs.filter(record => ['S', 'FS', 'SS'].includes(record.position));
+  const remaining = backs.filter(record => !corners.includes(record) && !safeties.includes(record));
+  const shell = coverageShell(visualization);
+  const ordered = shell === 3
+    ? [...corners.slice(0, 2), ...safeties, ...corners.slice(2), ...remaining]
+    : shell === 4
+      ? [...corners.slice(0, 2), ...safeties.slice(0, 2), ...corners.slice(2), ...safeties.slice(2), ...remaining]
+      : shell === 6
+        ? [...safeties.slice(0, 2), ...corners, ...safeties.slice(2), ...remaining]
+        : [...safeties, ...corners, ...remaining];
+  return ordered.slice(0, count);
+}
+
+function deepLateralPreferences(
+  records: PlayerRecord[],
+  preferred: Map<PlayerRecord, number>,
+  centerY: number,
+) {
+  const result = new Map<PlayerRecord, number>();
+  const safeties = records.filter(record => ['S', 'FS', 'SS'].includes(record.position));
+  const other = records.filter(record => !safeties.includes(record));
+  assignOffsets(result, safeties, centerY, safeties.length > 1 ? 9.5 : 0);
+  other.forEach((record, index) => result.set(record,
+    preferred.get(record) ?? centerY + symmetricOffsets(other.length, 16)[index]));
+  return result;
 }
 
 function constrainedRushLanes(records: PlayerRecord[], preferred: Map<PlayerRecord, number>, centerY: number) {
@@ -494,6 +547,7 @@ function placeDefense(
   startX: number,
   centerY: number,
   visualization: PlayVisualization,
+  offensePlayers: SchematicPlayer[],
 ): SchematicPlayer[] {
   const fronts = records.filter(record => ['DT', 'NT', 'DE', 'DL', 'EDGE'].includes(record.position));
   const linebackers = records.filter(record => ['LB', 'ILB', 'OLB', 'MLB'].includes(record.position));
@@ -509,12 +563,8 @@ function placeDefense(
   const nonLineRushers = [...rushers].filter(record => !fronts.includes(record));
   const blitzerPool = nonLineRushers.length >= blitzerCount ? nonLineRushers : [...rushers];
   const blitzers = new Set(blitzerCount ? blitzerPool.slice(-blitzerCount) : []);
-  const deepCount = Math.min(backs.length, coverageDepth(visualization));
-  const safetyFirst = [...backs].sort((left, right) => {
-    const safety = (record: PlayerRecord) => ['S', 'FS', 'SS'].includes(record.position) ? 0 : 1;
-    return safety(left) - safety(right);
-  });
-  const deep = new Set(safetyFirst.slice(0, deepCount));
+  const deepRecords = deepDefenders(backs, visualization);
+  const deep = new Set(deepRecords);
   const boxCandidates = [
     ...rushers,
     ...fronts,
@@ -529,7 +579,8 @@ function placeDefense(
     if (box.size >= boxCount) break;
     box.add(record);
   }
-  const preferredY = defensiveLateralPreferences(fronts, linebackers, backs, centerY);
+  const preferredY = defensiveLateralPreferences(fronts, linebackers, backs, centerY, offensePlayers);
+  const deepY = deepLateralPreferences(deepRecords, preferredY, centerY);
   const slots: Array<{record: PlayerRecord; x: number; y: number; inBox: boolean; rushRole?: 'rusher' | 'blitzer'; basis: string}> = [];
   const rushing = [...rushers];
   const boxRushers = rushing.filter(record => box.has(record));
@@ -567,7 +618,7 @@ function placeDefense(
   deepPlayers.forEach((record, index) => slots.push({
     record,
     x: startX + 14,
-    y: deepPlayers.length === 1 ? centerY : distribute(index, deepPlayers.length, 10, FOOTBALL_FIELD_WIDTH - 10),
+    y: deepY.get(record) ?? (deepPlayers.length === 1 ? centerY : distribute(index, deepPlayers.length, 10, FOOTBALL_FIELD_WIDTH - 10)),
     inBox: false,
     basis: `Deep alignment inferred from ${visualization.coverage_type ?? 'unrecorded coverage shell'}`,
   }));
@@ -637,9 +688,10 @@ export function buildPlaySchematic(visualization: PlayVisualization = {}): PlayS
   const offense = completeLineup(offenseRecorded, genericOffense(visualization), 'offense');
   const defense = completeLineup(defenseRecorded, genericDefense(visualization), 'defense');
   const {paths, markers} = buildPaths(visualization, startX, centerY);
+  const offensePlayers = placeOffense(offense, startX, centerY, visualization);
   const players = [
-    ...placeOffense(offense, startX, centerY, visualization),
-    ...placeDefense(defense, startX, centerY, visualization),
+    ...offensePlayers,
+    ...placeDefense(defense, startX, centerY, visualization, offensePlayers),
   ];
   const recordedCount = players.filter(player => player.recorded).length;
   const boxCount = Math.max(0, Math.min(11, visualization.defenders_in_box ?? visualization.defense_box_count ?? 7));

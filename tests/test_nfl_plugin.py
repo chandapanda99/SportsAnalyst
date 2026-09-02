@@ -2,7 +2,15 @@ from datetime import UTC, datetime
 
 import polars as pl
 
-from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisSubject, AnalysisWindow, DatasetManifest
+from sports_analyst.models import (
+    AnalysisRequest,
+    AnalysisScope,
+    AnalysisSubject,
+    AnalysisWindow,
+    DatasetManifest,
+    PlayEvidence,
+    PlayVisualization,
+)
 from sports_analyst.plugins.nfl import NFLPlugin
 
 
@@ -75,6 +83,53 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
         "league_average_delta_epa_per_dropback",
     } <= benchmark_metrics
     assert "analyze_situational_split" in {item.tool for item in first.executions}
+
+
+def test_legacy_participation_ids_resolve_through_player_directory() -> None:
+    plugin = NFLPlugin()
+    play = PlayEvidence(
+        evidence_id="play-legacy",
+        season=2022,
+        game_id="2022_13_GB_CHI",
+        play_id=1317,
+        team="CHI",
+        description="Pass to Equanimeous St. Brown.",
+        dataset_manifest_id="dataset-pbp-2022",
+        visualization=PlayVisualization(source_packages=["play_by_play"]),
+    )
+    participation = pl.DataFrame(
+        {
+            "nflverse_game_id": ["2022_13_GB_CHI"],
+            "play_id": [1317.0],
+            "offense_players": ["00-qb;00-wr"],
+            "defense_players": ["00-cb"],
+            "defenders_in_box": [6],
+        }
+    )
+    players = pl.DataFrame(
+        {
+            "gsis_id": ["00-qb", "00-wr", "00-cb"],
+            "display_name": ["Justin Fields", "Equanimeous St. Brown", "Jaire Alexander"],
+            "position": ["QB", "WR", "CB"],
+        }
+    )
+
+    enriched = plugin._enrich_representative_plays(
+        [play], participation, None, {"players": players}
+    )[0]
+
+    assert enriched.visualization is not None
+    assert enriched.visualization.offense_names == ["Justin Fields", "Equanimeous St. Brown"]
+    assert enriched.visualization.offense_positions == ["QB", "WR"]
+    assert enriched.visualization.defense_names == ["Jaire Alexander"]
+    assert enriched.visualization.defense_positions == ["CB"]
+    assert enriched.visualization.source_packages == ["play_by_play", "participation", "players"]
+    assert "players" in plugin.required_supplemental_datasets(
+        AnalysisRequest(
+            question="Why did passing efficiency change?",
+            scope=AnalysisScope(team="CHI", baseline_season=2022, comparison_season=2025),
+        )
+    )
 
 
 def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair) -> None:

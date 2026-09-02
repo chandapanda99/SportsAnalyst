@@ -9,12 +9,13 @@
         OFFENSIVE_LINE_HALF_WIDTH,
         type SchematicPlayer
     } from './playSchematic';
-    import {colorContrastRatio, NFL_TEAM_NAMES, teamChartDisplayPalette, teamChartPalette, teamLogoUrl} from './teamPalettes';
+    import {colorContrastRatio, NFL_TEAM_NAMES, teamChartPalette, teamLogoUrl} from './teamPalettes';
 
     export let play: Evidence;
     export let onclose: () => void;
 
     let focusedPlayerId: string | null = null;
+    let focusedMarkerIndex: number | null = null;
     const fieldMidpoint = FOOTBALL_FIELD_WIDTH / 2;
     const fiveYardLines = Array.from({length: 19}, (_, index) => 15 + index * 5);
     const numberedYardLines = Array.from({length: 9}, (_, index) => 20 + index * 10);
@@ -24,8 +25,8 @@
     $: offenseTeam = play.visualization?.possession_team ?? play.team ?? '';
     $: defenseTeam = play.visualization?.defensive_team ?? '';
     $: homeTeam = play.visualization?.home_team_abbreviation ?? inferredHomeTeam(play.game_id) ?? offenseTeam;
-    $: offensePalette = teamChartDisplayPalette(offenseTeam);
-    $: defensePalette = teamChartDisplayPalette(defenseTeam);
+    $: offensePalette = teamChartPalette(offenseTeam);
+    $: defensePalette = teamChartPalette(defenseTeam);
     $: homePalette = teamChartPalette(homeTeam);
     $: homeTeamName = NFL_TEAM_NAMES[homeTeam.toUpperCase()] ?? homeTeam.toUpperCase();
     $: endzoneTextColor = colorContrastRatio(homePalette[0], homePalette[1]) >= 3
@@ -38,6 +39,7 @@
     $: offensePlayers = playerRows(play.visualization?.offense_names, play.visualization?.offense_positions);
     $: defensePlayers = playerRows(play.visualization?.defense_names, play.visualization?.defense_positions);
     $: focusedPlayer = schematic.players.find(player => player.id === focusedPlayerId) ?? null;
+    $: focusedMarker = focusedMarkerIndex == null ? null : schematic.markers[focusedMarkerIndex] ?? null;
 
     function sourceLabel(source: string) {
         return source === 'play_by_play' ? 'PBP' : source === 'participation' ? 'PARTICIPATION' : source === 'ftn_charting' ? 'FTN' : source.toUpperCase();
@@ -90,12 +92,21 @@
     }
 
     function tooltipWidth(player: SchematicPlayer) {
-        return Math.min(52, Math.max(12, tooltipLabel(player).length * .64));
+        return Math.min(48, Math.max(11, tooltipLabel(player).length * .6 + 1.4));
     }
 
     function tooltipX(player: SchematicPlayer) {
         const halfWidth = tooltipWidth(player) / 2;
         return Math.max(halfWidth + .8, Math.min(120 - halfWidth - .8, player.x));
+    }
+
+    function eventTooltipWidth(label: string) {
+        return Math.min(44, Math.max(10, label.length * .62 + 1.6));
+    }
+
+    function eventTooltipX(marker: {label: string; x: number}) {
+        const halfWidth = eventTooltipWidth(marker.label) / 2;
+        return Math.max(halfWidth + .8, Math.min(120 - halfWidth - .8, marker.x));
     }
 </script>
 
@@ -188,22 +199,29 @@
             {/each}
             {#each schematic.players as player}
                 <g class={`field-player ${player.side} ${player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} transform={`translate(${player.x} ${player.y})`} role="img" aria-label={tooltipLabel(player)} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
-                    {#if player.rushRole}<circle class={`rush-ring ${player.rushRole}`} r="2.12"/>{/if}
-                    <circle r="1.65" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
+                    {#if player.rushRole}<circle class={`rush-ring ${player.rushRole}`} r="1.86"/>{/if}
+                    <circle r="1.42" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
                     <text class="position-label" y=".12" style={`fill:${markerTextColor(player.side)}`}>{player.position.slice(0, 3)}</text>
                 </g>
             {/each}
-            {#each schematic.markers as marker}
-                <g class={`event-marker ${marker.kind}`} transform={`translate(${marker.x} ${marker.y})`}>
-                    <circle r="1.05"/>
-                    <rect x={-Math.max(4.2, marker.label.length * .62)} y="1.65" width={Math.max(8.4, marker.label.length * 1.24)} height="3.1" rx=".6"/>
-                    <text y="3.82">{marker.label}</text>
+            {#each schematic.markers as marker, markerIndex}
+                <g class={`event-marker ${marker.kind}`} transform={`translate(${marker.x} ${marker.y})`}
+                   role="button" tabindex="0" aria-label={marker.label}
+                   on:mouseenter={() => focusedMarkerIndex = markerIndex} on:mouseleave={() => focusedMarkerIndex = null}
+                   on:focus={() => focusedMarkerIndex = markerIndex} on:blur={() => focusedMarkerIndex = null}>
+                    <circle r=".9"/>
                 </g>
             {/each}
             {#if focusedPlayer}
                 <g class="player-tooltip visible" transform={`translate(${tooltipX(focusedPlayer)} ${focusedPlayer.y})`} aria-hidden="true">
-                    <rect x={-tooltipWidth(focusedPlayer) / 2} y={focusedPlayer.y < 7 ? 2.5 : -6.2} width={tooltipWidth(focusedPlayer)} height="3.8" rx=".65"/>
-                    <text class="name-label" y={focusedPlayer.y < 7 ? 5.05 : -3.65}>{tooltipLabel(focusedPlayer)}</text>
+                    <rect x={-tooltipWidth(focusedPlayer) / 2} y={focusedPlayer.y < 7 ? 2.25 : -5.45} width={tooltipWidth(focusedPlayer)} height="3.2" rx=".55"/>
+                    <text class="name-label" y={focusedPlayer.y < 7 ? 4.42 : -3.28}>{tooltipLabel(focusedPlayer)}</text>
+                </g>
+            {/if}
+            {#if focusedMarker}
+                <g class="event-tooltip visible" transform={`translate(${eventTooltipX(focusedMarker)} ${focusedMarker.y})`} aria-hidden="true">
+                    <rect x={-eventTooltipWidth(focusedMarker.label) / 2} y={focusedMarker.y < 7 ? 2.1 : -5.25} width={eventTooltipWidth(focusedMarker.label)} height="3.05" rx=".52"/>
+                    <text y={focusedMarker.y < 7 ? 4.18 : -3.18}>{focusedMarker.label}</text>
                 </g>
             {/if}
         </svg>
@@ -573,7 +591,7 @@
 
     .position-label {
         fill: #07121d;
-        font: 1.15px var(--font-mono);
+        font: 1.02px var(--font-mono);
         font-weight: 800;
         text-anchor: middle;
         dominant-baseline: middle;
@@ -599,7 +617,7 @@
 
     .name-label {
         fill: #f4f8fa;
-        font: 1.25px var(--font-sans);
+        font: 1.05px var(--font-sans);
         font-weight: 650;
         text-anchor: middle;
         pointer-events: none
@@ -612,21 +630,44 @@
         vector-effect: non-scaling-stroke
     }
 
+    .event-marker {
+        cursor: help;
+        outline: none
+    }
+
+    .event-marker:focus circle {
+        stroke: var(--mint);
+        stroke-width: .55
+    }
+
     .event-marker.turnover circle { fill: #ff754f }
     .event-marker.recovery circle { fill: #ffb35c }
     .event-marker.touchdown circle { fill: var(--mint) }
     .event-marker.catch circle { fill: #ecf3f6 }
 
-    .event-marker rect {
+    .event-tooltip {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .14s ease-out
+    }
+
+    .event-tooltip.visible {
+        opacity: 1;
+        filter: drop-shadow(0 .7px 1.35px rgb(0 0 0 / 72%))
+    }
+
+    .event-tooltip rect {
         fill: rgb(4 19 30 / 92%);
         stroke: rgb(218 233 240 / 25%);
         stroke-width: .2
     }
 
-    .event-marker text {
+    .event-tooltip text {
         fill: #f2f7f9;
-        font: 1.15px var(--font-mono);
-        text-anchor: middle
+        font: 1px var(--font-mono);
+        font-weight: 600;
+        text-anchor: middle;
+        pointer-events: none
     }
 
     .field-legend {

@@ -130,7 +130,7 @@ class AnalystApplication:
         return plugin.resolve_players(query, sources)
 
     def sync(
-        self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl"
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl"
     ) -> list[DatasetManifest]:
         connector, _plugin = self._sport(sport)
         selected_datasets = datasets or (["play_by_play"] if sport == "nfl" else None)
@@ -186,7 +186,7 @@ class AnalystApplication:
         return manifests
 
     def dataset_sync_timeout_seconds(
-        self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
+            self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
     ) -> int:
         """Size the inactivity timeout to the selected bulk-download workload."""
         baseline = self.settings.event_stream_timeout_seconds
@@ -247,10 +247,10 @@ class AnalystApplication:
         metadata = self._investigation_metadata(request, identifier, thread_id)
         tags = ["open-sports-analyst", f"sport:{request.sport}", f"domain:{request.analysis_domain}"]
         with self.telemetry.span(
-            "sports-analyst.investigation",
-            inputs={"question": request.question, "scope": request.scope.model_dump(mode="json")},
-            metadata=metadata,
-            tags=tags,
+                "sports-analyst.investigation",
+                inputs={"question": request.question, "scope": request.scope.model_dump(mode="json")},
+                metadata=metadata,
+                tags=tags,
         ) as root_span:
             bundle = self._investigate(request, identifier, metadata, root_span)
             self.telemetry.add_outputs(
@@ -267,11 +267,11 @@ class AnalystApplication:
             return bundle
 
     def _investigate(
-        self,
-        request: AnalysisRequest,
-        identifier: str,
-        trace_metadata: dict[str, Any],
-        root_span: Any,
+            self,
+            request: AnalysisRequest,
+            identifier: str,
+            trace_metadata: dict[str, Any],
+            root_span: Any,
     ) -> InvestigationBundle:
         connector, plugin = self._sport(request.sport)
         started_at = perf_counter()
@@ -327,10 +327,10 @@ class AnalystApplication:
         self.events.emit(identifier, "analyzing", "Comparing efficiency and situational splits", 0.4)
         analysis_started_at = perf_counter()
         with self.telemetry.span(
-            "sports-analyst.execute-deterministic-analysis",
-            metadata=trace_metadata,
-            parent=root_span,
-            run_type="tool",
+                "sports-analyst.execute-deterministic-analysis",
+                metadata=trace_metadata,
+                parent=root_span,
+                run_type="tool",
         ) as analysis_span:
             result = plugin.analyze(request, datasets, manifests, supplemental, supplemental_manifests)
             self.telemetry.add_outputs(
@@ -387,7 +387,7 @@ class AnalystApplication:
             round((perf_counter() - synthesis_started_at) * 1000),
         )
         with self.telemetry.span(
-            "sports-analyst.validate-and-persist", metadata=trace_metadata, parent=root_span, run_type="tool"
+                "sports-analyst.validate-and-persist", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as persist_span:
             run = InvestigationRun(
                 sport=request.sport,
@@ -454,10 +454,10 @@ class AnalystApplication:
         }
         tags = ["open-sports-analyst", "follow-up", f"sport:{root.run.sport}", f"domain:{root.run.analysis_domain}"]
         with self.telemetry.span(
-            "sports-analyst.follow-up",
-            inputs={"question": question, "parent_investigation_id": root.run.investigation_id},
-            metadata=metadata,
-            tags=tags,
+                "sports-analyst.follow-up",
+                inputs={"question": question, "parent_investigation_id": root.run.investigation_id},
+                metadata=metadata,
+                tags=tags,
         ) as root_span:
             bundle = self._follow_up(root, question, identifier, metadata, root_span)
             self.telemetry.add_outputs(
@@ -473,22 +473,23 @@ class AnalystApplication:
             return bundle
 
     def _follow_up(
-        self,
-        root: InvestigationBundle,
-        question: str,
-        identifier: str,
-        trace_metadata: dict[str, Any],
-        root_span: Any,
+            self,
+            root: InvestigationBundle,
+            question: str,
+            identifier: str,
+            trace_metadata: dict[str, Any],
+            root_span: Any,
     ) -> InvestigationBundle:
         started_at = perf_counter()
         logger.info("follow_up_started investigation_id=%s parent_id=%s mode=reuse", identifier, root.run.investigation_id)
         with self.telemetry.span(
-            "sports-analyst.reuse-parent-evidence", metadata=trace_metadata, parent=root_span, run_type="tool"
+                "sports-analyst.reuse-parent-evidence", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as reuse_span:
             self.events.emit(identifier, "planning", "Reviewing the existing investigation", 0.1)
             self.events.emit(identifier, "analyzing", "Reusing validated evidence from the parent investigation", 0.55)
             conversation_context = [
-                {"question": item.run.question, "summary": item.summary} for item in self.store.investigation_thread(root.run.investigation_id)
+                {"question": item.run.question, "summary": item.summary} for item in
+                self.store.investigation_thread(root.run.investigation_id)
             ]
             self.telemetry.add_outputs(
                 reuse_span,
@@ -519,7 +520,7 @@ class AnalystApplication:
                 {"claim_count": len(draft.claims), "model_id": model_id or "deterministic", "fallback_used": fallback},
             )
         with self.telemetry.span(
-            "sports-analyst.persist-follow-up", metadata=trace_metadata, parent=root_span, run_type="tool"
+                "sports-analyst.persist-follow-up", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as persist_span:
             plan_payload = {
                 "question": question,

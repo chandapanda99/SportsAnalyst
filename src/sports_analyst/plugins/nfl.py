@@ -161,7 +161,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
 
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
         question = request.question.lower()
-        selected = {"schedules", "participation", "ftn_charting", *DOMAIN_DATASETS[request.analysis_domain]}
+        selected = {"schedules", "participation", "ftn_charting", "players", *DOMAIN_DATASETS[request.analysis_domain]}
         if request.subject and request.subject.type == "player":
             selected.update(ROSTER_DATASETS)
         roster_terms = {
@@ -269,16 +269,16 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             )
 
         metrics = [
-            MetricOption(
-                value=value,
-                label=METRICS[value][1],
-                category=METRIC_METADATA[value][0],
-                description=METRIC_METADATA[value][1],
-                analysis_domain=METRIC_DOMAINS[value],
-                available_seasons=seasons_with(METRIC_METADATA[value][2]),
-            )
-            for value in METRICS
-        ] + player_metric_options(seasons_with)
+                      MetricOption(
+                          value=value,
+                          label=METRICS[value][1],
+                          category=METRIC_METADATA[value][0],
+                          description=METRIC_METADATA[value][1],
+                          analysis_domain=METRIC_DOMAINS[value],
+                          available_seasons=seasons_with(METRIC_METADATA[value][2]),
+                      )
+                      for value in METRICS
+                  ] + player_metric_options(seasons_with)
         splits = [
             SplitDimensionOption(
                 value=value,
@@ -468,8 +468,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             )
             for record in players.values()
             if not token
-            or token in record["player_id"].lower()
-            or any(token in alias.lower() for alias in record["aliases"])
+               or token in record["player_id"].lower()
+               or any(token in alias.lower() for alias in record["aliases"])
         ]
         return sorted(matches, key=lambda item: (item.name, item.player_id))[:10000]
 
@@ -677,12 +677,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
 
     def analyze(
-        self,
-        request: AnalysisRequest,
-        datasets: dict[int, pl.DataFrame],
-        manifests: dict[int, DatasetManifest],
-        supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
-        supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
+            self,
+            request: AnalysisRequest,
+            datasets: dict[int, pl.DataFrame],
+            manifests: dict[int, DatasetManifest],
+            supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
+            supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NFLAnalysisResult:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
@@ -1153,7 +1153,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             else:
                 missing_supplemental.append(dataset_name)
 
-        schedule_result = self._schedule_context(team, windows, supplemental.get("schedules", {}), supplemental_manifests.get("schedules", {}))
+        schedule_result = self._schedule_context(team, windows, supplemental.get("schedules", {}),
+                                                 supplemental_manifests.get("schedules", {}))
         if schedule_result:
             schedule_evidence, schedule_execution = schedule_result
             aggregate.extend(schedule_evidence)
@@ -1187,9 +1188,14 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         for window in windows:
             window_plays = [play for play in plays if play.season == window.season]
             for play in self._enrich_representative_plays(
-                window_plays,
-                supplemental.get("participation", {}).get(window.season),
-                supplemental.get("ftn_charting", {}).get(window.season),
+                    window_plays,
+                    supplemental.get("participation", {}).get(window.season),
+                    supplemental.get("ftn_charting", {}).get(window.season),
+                    {
+                        "players": supplemental.get("players", {}).get(0),
+                        "weekly_rosters": supplemental.get("weekly_rosters", {}).get(window.season),
+                        "rosters": supplemental.get("rosters", {}).get(window.season),
+                    },
             ):
                 enriched_plays[play.evidence_id] = play
         plays = [enriched_plays.get(play.evidence_id, play) for play in plays]

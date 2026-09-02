@@ -808,7 +808,7 @@
   }
 
   function chartGuidance(specification: Record<string, unknown>) {
-    const usermeta = specification.usermeta as {chartKind?: string} | undefined;
+    const usermeta = specification.usermeta as { chartKind?: string } | undefined;
     if (usermeta?.chartKind === 'metric-rows') {
       return 'Each metric uses its own vertical scale; labels show exact values while seasons run left to right.';
     }
@@ -825,7 +825,7 @@
 
   function orderedCharts(charts: Investigation['charts']) {
     const isMetricComparison = (chart: Investigation['charts'][number]) =>
-      (chart.specification.usermeta as {chartKind?: string} | undefined)?.chartKind === 'metric-rows';
+        (chart.specification.usermeta as { chartKind?: string } | undefined)?.chartKind === 'metric-rows';
     return [...charts].sort((left, right) => Number(isMetricComparison(left)) - Number(isMetricComparison(right)));
   }
 
@@ -929,7 +929,7 @@
   function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons) {
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => item.dataset === dataset)
-          ? { state: 'installed', label: 'Installed' }
+          ? {state: 'installed', label: 'Installed'}
           : null;
     }
     const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
@@ -937,8 +937,8 @@
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
     return local === eligibleSeasons.length
-        ? { state: 'installed', label: 'Installed' }
-        : { state: 'partial', label: `Local ${local}/${eligibleSeasons.length}` };
+        ? {state: 'installed', label: 'Installed'}
+        : {state: 'partial', label: `Local ${local}/${eligibleSeasons.length}`};
   }
 
   function packageEligible(dataset: string, selectedSeasons = syncSeasons) {
@@ -1190,7 +1190,9 @@
       const timeout = Math.max(30, Math.min(3_600, Number(timeout_seconds) || 120));
       stream(
           `/api/dataset-jobs/${job_id}/events?timeout_seconds=${timeout}`,
-          async () => { await refresh(); },
+          async () => {
+            await refresh();
+          },
           undefined,
           undefined,
           'The data sync is still running after its extended progress window. Refresh the data catalog to check completed packages.',
@@ -1873,7 +1875,8 @@
               <span class="chat-avatar user-avatar">You</span>
               <div class="chat-bubble user-bubble">
                 <div class="chat-message-meta"><small>{index === 0 ? 'Initial question' : `Follow-up ${index}`}</small>
-                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time></div>
+                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time>
+                </div>
                 <p>{turn.run.question}</p></div>
             </article>
             <div class="chat-row analyst-row">
@@ -1881,7 +1884,8 @@
               <button class="chat-bubble analyst-bubble" class:selected={active.run.investigation_id === turn.run.investigation_id}
                       type="button" on:click={() => openInvestigation(turn)}>
                 <div class="chat-message-meta"><small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
-                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time></div>
+                  <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time>
+                </div>
                 <p>{turn.summary}</p>
                 <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'}
                   <Icon name="arrow-right" size={15}/></span>

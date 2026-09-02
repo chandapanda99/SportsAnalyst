@@ -1,4 +1,4 @@
-import {cleanup, render} from '@testing-library/svelte';
+import {cleanup, fireEvent, render} from '@testing-library/svelte';
 import {afterEach, describe, expect, it} from 'vitest';
 import PlayTablet from './PlayTablet.svelte';
 
@@ -36,14 +36,49 @@ describe('football evidence tablet venue styling', () => {
     expect(container.querySelectorAll('.sideline-tick')).toHaveLength(160);
     expect(container.querySelectorAll('.yard-direction')).toHaveLength(16);
     expect(container.querySelector('.yard-direction.top[data-yard-number="10"]')?.getAttribute('d')).toContain('11.8');
-    expect(container.querySelector('.field-player.offense circle')?.getAttribute('style')).not.toBe(
-      container.querySelector('.field-player.defense circle')?.getAttribute('style')
+    expect(container.querySelector('.field-player.offense > circle:not(.rush-ring)')?.getAttribute('style')).not.toBe(
+      container.querySelector('.field-player.defense > circle:not(.rush-ring)')?.getAttribute('style')
     );
+    expect(container.querySelector('.field-player.offense > circle:not(.rush-ring)')?.getAttribute('style')).toContain('fill: #E31837');
+    expect(container.querySelector('.field-player.defense > circle:not(.rush-ring)')?.getAttribute('style')).toContain('fill: #00338D');
     expect(container.querySelectorAll('.rush-ring')).toHaveLength(4);
     expect(container.querySelectorAll('.rush-ring.blitzer')).toHaveLength(1);
+    expect(container.querySelector('.field-player > circle:not(.rush-ring)')?.getAttribute('r')).toBe('1.42');
     expect(container.querySelector('[aria-label="Reconstructed tackle box containing 6 defenders"]')).toBeTruthy();
     expect(container.textContent).toContain('11 personnel · 1 RB, 1 TE, 3 WR');
     expect(container.textContent).toContain('2 DL, 4 LB, 5 DB');
     expect(container.textContent).toContain('Cover 1 · Man');
+  });
+
+  it('reveals compact event details only when an action marker is hovered or focused', async () => {
+    const {container} = render(PlayTablet, {
+      props: {
+        play: {
+          evidence_id: 'fumble-play', game_id: '2025_01_KC_BUF', play_id: 13, team: 'KC',
+          description: 'Runner fumbled and the defense recovered.', epa: -2.1,
+          visualization: {
+            possession_team: 'KC', defensive_team: 'BUF', home_team_abbreviation: 'BUF',
+            yardline_100: 45, play_type: 'run', fumble: true, fumble_lost: true,
+            recovery_player: 'J. Campbell', offense_positions: ['QB', 'RB', 'T', 'G', 'C', 'G', 'T'],
+          },
+        },
+        onclose: () => undefined,
+      },
+    });
+
+    const marker = container.querySelector<SVGGElement>('.event-marker');
+    expect(marker).toBeTruthy();
+    expect(container.querySelector('.event-tooltip')).toBeNull();
+
+    await fireEvent.mouseEnter(marker!);
+    expect(container.querySelector('.event-tooltip')?.textContent).toBe(marker?.getAttribute('aria-label'));
+    const tooltipWidth = Number(container.querySelector('.event-tooltip rect')?.getAttribute('width'));
+    expect(tooltipWidth).toBeGreaterThan((marker?.getAttribute('aria-label')?.length ?? 0) * 0.62);
+
+    await fireEvent.mouseLeave(marker!);
+    expect(container.querySelector('.event-tooltip')).toBeNull();
+
+    await fireEvent.focus(marker!);
+    expect(container.querySelector('.event-tooltip')?.textContent).toBe(marker?.getAttribute('aria-label'));
   });
 });

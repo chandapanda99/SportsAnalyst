@@ -96,12 +96,16 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
 
 def _chart_svg(specification: dict, team: str, sport: str = "nfl") -> str:
     themed = _themed_chart_specification(specification, team, sport)
+    # Vega-Lite specs must be JSON data. Polars can surface Python date/datetime
+    # values in chart rows, so normalize the complete spec before conversion and
+    # before the diagnostic fallback below.
+    json_safe = json.loads(json.dumps(themed, default=str))
     try:
         import vl_convert as vlc
 
-        return vlc.vegalite_to_svg(themed)
+        return vlc.vegalite_to_svg(json_safe)
     except Exception:
-        return f"<pre>{html.escape(json.dumps(themed, indent=2))}</pre>"
+        return f"<pre>{html.escape(json.dumps(json_safe, indent=2))}</pre>"
 
 
 def render_html(bundle: InvestigationBundle) -> str:

@@ -452,6 +452,7 @@ class NFLSupplementalMixin:
         plays: list[PlayEvidence],
         participation: pl.DataFrame | None,
         ftn: pl.DataFrame | None,
+        identity_frames: dict[str, pl.DataFrame | None] | None = None,
     ) -> list[PlayEvidence]:
         participation_fields = {
             "defenders_in_box": ("defenders_in_box", _row_integer),
@@ -508,8 +509,33 @@ class NFLSupplementalMixin:
                 if row.get(game_column) is not None and row.get(play_column) is not None
             }
 
-        participation_rows = index(participation, [source for source, _ in participation_fields.values()])
+        participation_rows = index(
+            participation,
+            [source for source, _ in participation_fields.values()] + ["offense_players", "defense_players"],
+        )
         ftn_rows = index(ftn, [source for source, _ in ftn_fields.values()])
+        player_directory: dict[str, tuple[str, str, str]] = {}
+        for source_name, frame in (identity_frames or {}).items():
+            if frame is None or frame.is_empty():
+                continue
+            id_column = _first_column(frame, "gsis_id", "player_id")
+            name_column = _first_column(frame, "full_name", "display_name", "player_name", "football_name")
+            position_column = _first_column(frame, "position", "position_group", "depth_chart_position")
+            if not id_column or not name_column:
+                continue
+            selected = [id_column, name_column, *([position_column] if position_column else [])]
+            for row in frame.select(selected).drop_nulls(subset=[id_column]).iter_rows(named=True):
+                player_id = str(row[id_column])
+                name = str(row.get(name_column) or "").strip()
+                if not name:
+                    continue
+                position = str(row.get(position_column) or "").strip() if position_column else ""
+                previous = player_directory.get(player_id)
+                player_directory[player_id] = (
+                    name or (previous[0] if previous else ""),
+                    position or (previous[1] if previous else ""),
+                    source_name,
+                )
         enriched: list[PlayEvidence] = []
         for play in plays:
             visualization = play.visualization or PlayVisualization()
@@ -525,10 +551,27 @@ class NFLSupplementalMixin:
                 value = converter(participation_row, source)
                 if value is not None:
                     updates[target] = value
+            identity_sources: set[str] = set()
+            for side in ("offense", "defense"):
+                player_ids = _row_text_list(participation_row, f"{side}_players")
+                names = updates.get(f"{side}_names", [])
+                positions = updates.get(f"{side}_positions", [])
+                if player_ids and (len(names) != len(player_ids) or len(positions) != len(player_ids)):
+                    resolved = [player_directory.get(player_id) for player_id in player_ids]
+                    if len(names) != len(player_ids):
+                        updates[f"{side}_names"] = [
+                            identity[0] if identity else player_id for player_id, identity in zip(player_ids, resolved, strict=True)
+                        ]
+                    if len(positions) != len(player_ids):
+                        updates[f"{side}_positions"] = [identity[1] if identity else "" for identity in resolved]
+                    identity_sources.update(identity[2] for identity in resolved if identity)
             for target, (source, converter) in ftn_fields.items():
                 value = converter(ftn_row, source)
                 if value is not None and target not in updates:
                     updates[target] = value
             updates["source_packages"] = list(dict.fromkeys(source_packages))
+            updates["source_packages"].extend(
+                source for source in identity_frames or {} if source in identity_sources and source not in updates["source_packages"]
+            )
             enriched.append(play.model_copy(update={"visualization": visualization.model_copy(update=updates)}))
         return enriched

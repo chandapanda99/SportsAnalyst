@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: user_data_path("open-sports-analyst", ensure_exists=True))
     model_provider: str = "azure_foundry"
     model: str = "gpt-5.6-luna"
+    chat_model: str | None = None
     foundry_endpoint: str = ""
     foundry_api_key: SecretStr | None = Field(default=None, repr=False)
     reasoning_effort: str | None = "medium"

@@ -9,8 +9,10 @@ class OllamaProvider:
     provider_id = "ollama"
     display_name = "Ollama"
 
-    def build(self, settings: Any) -> ProviderModel:
+    def build(self, settings: Any, model_name: str | None = None, include_reasoning: bool = True) -> ProviderModel:
         from langchain_ollama import ChatOllama
 
-        model = ChatOllama(model=settings.ollama_model, base_url=settings.ollama_base_url)
-        return ProviderModel(model, f"ollama:{settings.ollama_model}", "local")
+        del include_reasoning
+        resolved_name = model_name or settings.ollama_model
+        model = ChatOllama(model=resolved_name, base_url=settings.ollama_base_url)
+        return ProviderModel(model, f"ollama:{resolved_name}", "local")

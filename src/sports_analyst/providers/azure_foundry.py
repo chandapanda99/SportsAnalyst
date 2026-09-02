@@ -10,7 +10,7 @@ class AzureFoundryProvider:
     provider_id = "azure_foundry"
     display_name = "Azure Foundry"
 
-    def build(self, settings: Any) -> ProviderModel:
+    def build(self, settings: Any, model_name: str | None = None, include_reasoning: bool = True) -> ProviderModel:
         from langchain_openai import ChatOpenAI
 
         parsed = urlparse(settings.foundry_endpoint)
@@ -24,13 +24,14 @@ class AzureFoundryProvider:
             credential = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
             authentication = "default_azure_credential"
         options: dict[str, Any] = {}
-        if settings.reasoning_effort:
+        if include_reasoning and settings.reasoning_effort:
             options["reasoning"] = {"effort": settings.reasoning_effort}
+        resolved_name = model_name or settings.model
         model = ChatOpenAI(
-            model=settings.model,
+            model=resolved_name,
             base_url=settings.foundry_endpoint,
             api_key=credential,
             use_responses_api=True,
             **options,
         )
-        return ProviderModel(model, f"azure_foundry:{settings.model}", authentication)
+        return ProviderModel(model, f"azure_foundry:{resolved_name}", authentication)

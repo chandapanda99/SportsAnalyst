@@ -133,7 +133,7 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert exported.status_code == 200
     assert "--team-primary:#E31837" in exported.text
     assert "--team-secondary:#FFB81C" in exported.text
-    assert 'filename="report.html"' in exported.headers["content-disposition"]
+    assert f'filename="{bundle.run.investigation_id}_analysis_report.html"' in exported.headers["content-disposition"]
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
     batch = client.post(

@@ -149,13 +149,18 @@ describe('play schematic reconstruction', () => {
     const interior = defense.find(player => player.position === 'NT')!;
     const corners = defense.filter(player => player.position === 'CB');
     const safeties = defense.filter(player => ['FS', 'SS'].includes(player.position));
+    const receiverAlignments = schematic.players
+      .filter(player => player.side === 'offense' && player.position === 'WR')
+      .map(player => player.y);
 
     expect(box).toHaveLength(6);
     expect(box.every(player => Math.abs(player.y - schematic.hashY) <= 7.2)).toBe(true);
     expect(Math.abs(middle.y - schematic.hashY)).toBeLessThanOrEqual(1.8);
     expect(Math.abs(outside.y - schematic.hashY)).toBeGreaterThan(Math.abs(interior.y - schematic.hashY));
-    expect(corners.every(player => Math.abs(player.y - schematic.hashY) > 15)).toBe(true);
+    expect(corners.every(player => receiverAlignments.some(receiverY => Math.abs(receiverY - player.y) < .2))).toBe(true);
+    expect(corners.every(player => player.y >= 4 && player.y <= 49.3)).toBe(true);
     expect(safeties.every(player => player.x - schematic.startX >= 14)).toBe(true);
+    expect(safeties.map(player => Math.round((player.y - schematic.hashY) * 10) / 10).sort((a, b) => a - b)).toEqual([-9.5, 9.5]);
   });
 
 });

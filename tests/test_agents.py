@@ -2,12 +2,15 @@ import pytest
 from pydantic import ValidationError
 
 from sports_analyst.agents import (
+    SynthesisDraft,
     _citation_ledger,
     _citation_response_model,
+    _formulate_user_message,
     _is_citation_error,
     _resolve_citation_draft,
 )
-from sports_analyst.models import AggregateEvidence, PlayEvidence
+from sports_analyst.config import Settings
+from sports_analyst.models import AggregateEvidence, Claim, ClaimType, PlayEvidence
 
 
 def aggregate_evidence() -> AggregateEvidence:
@@ -80,3 +83,49 @@ def test_citation_schema_rejects_unavailable_aliases() -> None:
             }
         )
     assert _is_citation_error(caught.value)
+
+
+def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:
+    class Formatter:
+        def __init__(self) -> None:
+            self.messages = None
+            self.config = None
+
+        def invoke(self, messages, config=None):
+            self.messages = messages
+            self.config = config
+            return {"message": "KC's efficiency improved, though the evidence remains descriptive."}
+
+    class ChatModel:
+        def __init__(self) -> None:
+            self.formatter = Formatter()
+
+        def with_structured_output(self, _schema):
+            return self.formatter
+
+    claim = Claim(
+        claim_id="claim-1",
+        claim_type=ClaimType.MEASURED,
+        statement="EPA per dropback improved from 0.01 to 0.08.",
+        evidence_ids=["evidence-1"],
+        confidence="high",
+    )
+    draft = SynthesisDraft(summary="Analytical draft.", claims=[claim])
+    model = ChatModel()
+
+    message = _formulate_user_message(
+        model,
+        "Why did efficiency improve?",
+        draft,
+        "nfl",
+        False,
+        config={"run_name": "conversation-message"},
+    )
+
+    assert message.startswith("KC's efficiency improved")
+    assert model.formatter.config == {"run_name": "conversation-message"}
+    payload = model.formatter.messages[1]["content"]
+    assert "Analytical draft." in payload
+    assert "EPA per dropback improved from 0.01 to 0.08." in payload
+    assert "evidence-1" not in payload
+    assert Settings(_env_file=None, chat_model="writer-model").chat_model == "writer-model"
