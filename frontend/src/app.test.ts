@@ -7,6 +7,7 @@ describe('Open Sports Analyst workbench', () => {
 
   beforeEach(() => {
     mockInvestigations = [];
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (init?.method === 'DELETE' && url.includes('/api/investigations/')) {
@@ -255,6 +256,7 @@ describe('Open Sports Analyst workbench', () => {
     expect((await screen.findAllByText('The completed analysis response is now visible.')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
     expect(resultAttempts).toBe(2);
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
   });
 
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {

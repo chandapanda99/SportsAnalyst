@@ -80,7 +80,13 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             "field": series_field,
             "type": "ordinal",
             "sort": list(series_order),
-            "axis": {"title": None, "ticks": False, "domain": False, "grid": False, "labelLimit": 125},
+            "axis": {
+                "title": None,
+                "ticks": False,
+                "domain": False,
+                "grid": False,
+                "labels": False,
+            },
         }
         color_encoding = {
             "field": series_field,
@@ -105,7 +111,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
                 "title": {"text": metric, "anchor": "start", "fontSize": 12, "offset": 6},
                 "data": {"values": metric_values},
                 "width": "container",
-                "height": 130,
+                "height": 72,
                 "layer": [
                     {
                         "mark": {"type": "line", "strokeWidth": 1.5, "color": "#52697A", "opacity": 0.8},
@@ -138,11 +144,12 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             "metricRowCount": len(metric_order),
             "seriesCount": len({row[series_field] for row in values}),
             "seriesField": series_field,
+            "seriesLabels": list(series_order),
         },
         "data": {"values": values},
         "vconcat": metric_specs,
         "resolve": {"scale": {"x": "independent", "y": "independent"}},
-        "spacing": 32,
+        "spacing": 14,
         "bounds": "full",
         "autosize": {"type": "pad", "contains": "padding", "resize": True},
     }

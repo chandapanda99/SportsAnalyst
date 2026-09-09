@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {onMount} from 'svelte';
+  import {onMount, tick} from 'svelte';
   import {api} from './api';
   import Chart from './Chart.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
@@ -993,6 +993,28 @@
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
+  function isMetricRowChart(specification: Record<string, unknown>) {
+    return (specification.usermeta as { chartKind?: string } | undefined)?.chartKind === 'metric-rows';
+  }
+
+  function isTrendChart(specification: Record<string, unknown>) {
+    if (isMetricRowChart(specification)) return false;
+    const encoding = specification.encoding as Record<string, unknown> | undefined;
+    const x = encoding?.x as { field?: string } | undefined;
+    return x?.field === 'season' || x?.field === 'week';
+  }
+
+  function chartSeriesLabels(specification: Record<string, unknown>) {
+    const labels = (specification.usermeta as { seriesLabels?: unknown[] } | undefined)?.seriesLabels;
+    return Array.isArray(labels) ? labels.map(String) : [];
+  }
+
+  async function scrollToPageTop() {
+    await tick();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    window.scrollTo({top: 0, left: 0, behavior: reduceMotion ? 'auto' : 'smooth'});
+  }
+
   function isCompleteInvestigation(result: Investigation | null | undefined, investigationId: string) {
     return result?.run?.investigation_id === investigationId
         && result.summary != null
@@ -1021,6 +1043,7 @@
         active = result;
         conversationThread = thread;
         await refresh();
+        await scrollToPageTop();
         return true;
       } catch (problem) {
         lastError = problem;
@@ -1251,6 +1274,7 @@
           ? investigation
           : await api.investigation(investigation.run.investigation_id);
       conversationThread = await api.investigationThread(active.run.investigation_id);
+      await scrollToPageTop();
     } catch (problem) {
       error = String(problem);
     } finally {
@@ -2032,8 +2056,19 @@
         <div class="section-title"><span>THE SHAPE OF THE CHANGE</span></div>
         <div class="chart-grid">
           {#each orderedCharts(active.charts) as chart}
-            <article><h3>{chart.title}</h3>
+            <article class:chart-trend={isTrendChart(chart.specification)}
+                     class:chart-metric-group={isMetricRowChart(chart.specification)}><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
+              {#if chartSeriesLabels(chart.specification).length}
+                <div class="chart-series-key" aria-label="Comparison windows">
+                  {#each chartSeriesLabels(chart.specification) as label, index}
+                    <span class:comparison-series={index === chartSeriesLabels(chart.specification).length - 1}>
+                      <i aria-hidden="true"></i><small>{index === 0 ? 'Baseline' : index === chartSeriesLabels(chart.specification).length - 1 ? 'Comparison' : 'Season'}</small>
+                      <strong>{label}</strong>
+                    </span>
+                  {/each}
+                </div>
+              {/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
                      sport={active.run.sport ?? 'nfl'}/>
             </article>

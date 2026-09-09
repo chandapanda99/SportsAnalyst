@@ -63,6 +63,9 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert first.charts
     assert first.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
     assert first.charts[0].specification["vconcat"]
+    assert first.charts[0].specification["usermeta"]["seriesLabels"]
+    assert first.charts[0].specification["vconcat"][0]["height"] == 72
+    assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["axis"]["labels"] is False
     assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["field"] == "window"
     assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".2f"
     assert first.charts[0].specification["vconcat"][1]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".0%"
