@@ -278,6 +278,21 @@ main {
     min-width: 0
 }
 
+main.sport-background {
+    background-color: var(--color-canvas);
+    background-position: center top;
+    background-repeat: repeat-y;
+    background-size: max(100%, 1440px) auto
+}
+
+main.nfl-background {
+    background-image: url("/NFL/Background/Desktop.svg")
+}
+
+main.nba-background {
+    background-image: url("/NBA/Background/Desktop.svg")
+}
+
 .sport-tabs {
     display: flex;
     gap: 8px;

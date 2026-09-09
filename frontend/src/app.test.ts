@@ -259,11 +259,15 @@ describe('Open Sports Analyst workbench', () => {
 
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {
     render(App);
+    expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
+    expect(document.querySelector('main')?.classList.contains('nfl-background')).toBe(true);
     const nflTeam = await screen.findByRole('combobox', { name: 'NFL team' });
     await fireEvent.focus(nflTeam);
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
 
     await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
+    expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nba');
+    expect(document.querySelector('main')?.classList.contains('nba-background')).toBe(true);
     expect(await screen.findByText('Analyze and Discuss Basketball Play-by-Play Data!')).toBeTruthy();
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
@@ -290,6 +294,8 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('1 player seasons available')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'NFL' }));
+    expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
+    expect(document.querySelector('main')?.classList.contains('nfl-background')).toBe(true);
     const restored = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
     await waitFor(() => expect(restored.value).toBe('Kansas City Chiefs (KC)'));
   });

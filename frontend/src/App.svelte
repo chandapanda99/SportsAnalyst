@@ -1390,7 +1390,7 @@
     </div>
   </aside>
 
-  <main>
+  <main class={`sport-background ${activeSport}-background`} data-sport-background={activeSport}>
     <nav class="sport-tabs" aria-label="Sports">
       {#each sports as sport}
         <button type="button" class:active={activeSport === sport.value} aria-pressed={activeSport === sport.value}
