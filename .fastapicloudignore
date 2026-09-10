@@ -1,0 +1,7 @@
+# .fastapicloudignore
+!frontend/dist/
+!frontend/dist/**
+
+# Un-ignore files that are in .gitignore
+!dist/
+tests/
