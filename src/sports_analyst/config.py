@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     dataset_cache_mb: int = Field(default=384, ge=0, le=4_096)
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
+    persistence_backend: str = "local"
+    object_storage_bucket: str = ""
+    object_storage_prefix: str = "open-sports-analyst"
+    object_storage_endpoint_url: str = ""
+    object_storage_region: str = ""
     log_level: str = "INFO"
     langsmith_tracing: bool = False
     langsmith_endpoint: str = "https://api.smith.langchain.com"
@@ -32,7 +37,7 @@ class Settings(BaseSettings):
     langsmith_project: str = "open-sports-analyst-local"
     langsmith_workspace_id: str = ""
 
-    @field_validator("model_provider", "log_level", mode="before")
+    @field_validator("model_provider", "log_level", "persistence_backend", mode="before")
     @classmethod
     def normalize_token(cls, value: object) -> str:
         return str(value).strip().lower()

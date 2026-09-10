@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,13 @@ from sports_analyst.service import AnalystApplication
 logger = logging.getLogger("sports_analyst.api")
 
 
+def bundled_frontend_directory() -> Path:
+    """Resolve the production frontend in source and frozen desktop builds."""
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    root = Path(bundle_root) if bundle_root else Path(__file__).resolve().parents[2]
+    return root / "frontend" / "dist"
+
+
 class SyncRequest(BaseModel):
     # NBA currently exposes 32 reviewed seasons and 31 bulk packages. Keep a
     # bounded payload without rejecting a valid full-catalog selection.
@@ -48,7 +56,7 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
-def create_app(application: AnalystApplication | None = None) -> FastAPI:
+def create_app(application: AnalystApplication | None = None, frontend_dir: Path | None = None) -> FastAPI:
     service = application or AnalystApplication()
     api = FastAPI(title="Open Sports Analyst", version="1.0.0")
 
@@ -242,10 +250,9 @@ def create_app(application: AnalystApplication | None = None) -> FastAPI:
         media_type = "text/html; charset=utf-8" if is_html else "text/markdown; charset=utf-8"
         return FileResponse(path, media_type=media_type, filename=filename)
 
-    frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    frontend = frontend_dir or bundled_frontend_directory()
     if frontend.exists():
-        # api.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")
-        api.frontend("/", directory="frontend/dist")
+        api.frontend("/", directory=str(frontend))
     return api
 
 

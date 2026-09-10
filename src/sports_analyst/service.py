@@ -29,6 +29,7 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
+from sports_analyst.persistence import PersistenceBackend
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
 from sports_analyst.providers import provider_ids
 from sports_analyst.sql import execute_read_only_sql
@@ -39,10 +40,10 @@ logger = logging.getLogger("sports_analyst.service")
 
 
 class AnalystApplication:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, persistence: PersistenceBackend | None = None) -> None:
         self.settings = settings or get_settings()
         configure_logging(self.settings.log_level)
-        self.store = LocalStore(self.settings)
+        self.store = LocalStore(self.settings, persistence)
         nfl_connector = NFLVerseConnector(self.settings)
         nfl_plugin = NFLPlugin()
         self.connectors: dict[str, Any] = {
@@ -87,15 +88,24 @@ class AnalystApplication:
             raise ValueError(f"unsupported sport {sport!r}")
         return self.connectors[normalized], self.plugins[normalized]
 
+    def _load_dataset(
+        self,
+        connector: Any,
+        manifest: DatasetManifest,
+        columns: set[str] | list[str] | tuple[str, ...] | None = None,
+    ) -> pl.DataFrame:
+        materialized = self.store.materialize_manifest(manifest)
+        return connector.load(materialized, columns)
+
     def analysis_options(self, sport: str = "nfl") -> AnalysisOptions:
         connector, plugin = self._sport(sport)
         manifests = self.store.manifests(sport=sport)
         if sport == "nfl":
             team_manifests = self.store.manifests("teams", sport)
-            context = connector.load(team_manifests[0]) if team_manifests else None
+            context = self._load_dataset(connector, team_manifests[0]) if team_manifests else None
         else:
-            team_frames = [connector.load(item) for item in self.store.manifests("team_boxscores", sport)]
-            schedule_frames = {item.season: connector.load(item) for item in self.store.manifests("schedules", sport)}
+            team_frames = [self._load_dataset(connector, item) for item in self.store.manifests("team_boxscores", sport)]
+            schedule_frames = {item.season: self._load_dataset(connector, item) for item in self.store.manifests("schedules", sport)}
             context = {
                 "teams": pl.concat(team_frames, how="diagonal_relaxed") if team_frames else pl.DataFrame(),
                 "schedules": schedule_frames,
@@ -126,7 +136,7 @@ class AnalystApplication:
             }
         )
         manifests = [manifest for manifest in self.store.manifests(sport=sport) if manifest.dataset in allowed]
-        sources = [(manifest.season, connector.load(manifest)) for manifest in manifests]
+        sources = [(manifest.season, self._load_dataset(connector, manifest)) for manifest in manifests]
         return plugin.resolve_players(query, sources)
 
     def sync(
@@ -301,7 +311,7 @@ class AnalystApplication:
                 season: self.store.manifest_for_season(season, "play_by_play", request.sport) for season in request.scope.included_seasons
             }
             pbp_columns = plugin.required_play_by_play_columns(request)
-            datasets = {season: connector.load(manifest, pbp_columns) for season, manifest in manifests.items()}
+            datasets = {season: self._load_dataset(connector, manifest, pbp_columns) for season, manifest in manifests.items()}
             required_supplemental = plugin.required_supplemental_datasets(request)
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
             for manifest in self.store.manifests(sport=request.sport):
@@ -313,7 +323,7 @@ class AnalystApplication:
                     continue
                 supplemental_manifests.setdefault(manifest.dataset, {})[manifest.season] = manifest
             supplemental = {
-                dataset: {season: connector.load(manifest) for season, manifest in season_manifests.items()}
+                dataset: {season: self._load_dataset(connector, manifest) for season, manifest in season_manifests.items()}
                 for dataset, season_manifests in supplemental_manifests.items()
             }
             self.telemetry.add_outputs(

@@ -1,0 +1,59 @@
+name: Windows desktop installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version
+        required: true
+        default: 1.0.0
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+      - name: Import optional signing certificate
+        shell: powershell
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+        run: |
+          if (-not $env:PFX_BASE64) {
+            Write-Host "No signing certificate configured; producing an unsigned installer."
+            exit 0
+          }
+          $path = Join-Path $env:RUNNER_TEMP "open-sports-analyst.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
+          "WINDOWS_SIGNING_PFX_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build installer
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          $version = "${{ inputs.version }}"
+          if (-not $version) { $version = "${{ github.ref_name }}".TrimStart("v") }
+          ./packaging/windows/build.ps1 -Version $version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSportsAnalyst-windows-x64
+          path: dist/installer/*.exe
+          if-no-files-found: error

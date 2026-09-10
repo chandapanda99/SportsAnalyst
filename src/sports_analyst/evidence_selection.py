@@ -1,10 +1,8 @@
 """Deterministic, diversity-aware selection of representative sport evidence."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Literal
-
 
 EvidenceWindow = Literal["baseline", "comparison"]
 EvidenceRole = Literal["typical", "metric_example", "supports_change", "counterexample"]
@@ -73,11 +71,11 @@ def _observed_direction(candidates: list[EvidenceCandidate]) -> float:
 
 
 def _slot_score(
-    candidate: EvidenceCandidate,
-    role: EvidenceRole,
-    percentile: float,
-    direction: float,
-    selected: list[EvidenceCandidate],
+        candidate: EvidenceCandidate,
+        role: EvidenceRole,
+        percentile: float,
+        direction: float,
+        selected: list[EvidenceCandidate],
 ) -> float:
     centered = (percentile - 0.5) * 2
     window_sign = 1.0 if candidate.window == "comparison" else -1.0
@@ -108,12 +106,8 @@ def _reason(role: EvidenceRole, window: EvidenceWindow, metric_label: str | None
     return f"{prefix} counterexample that runs against the measured change."
 
 
-def select_diverse_evidence(
-    candidates: list[EvidenceCandidate],
-    metric_label: str | None = None,
-    per_window: int = 4,
-    max_per_game: int = 1,
-) -> list[SelectedEvidence]:
+def select_diverse_evidence(candidates: list[EvidenceCandidate], metric_label: str | None = None, per_window: int = 4,
+                            max_per_game: int = 1) -> list[SelectedEvidence]:
     """Fill stable evidence roles while preferring different games and contexts."""
     if not candidates:
         return []

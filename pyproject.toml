@@ -4,11 +4,12 @@ version = "1.0.0"
 description = "A local-first, evidence-bound sports analysis agent"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.13,<3.15"
+requires-python = "==3.13.*"
 authors = [{ name = "Aayush Chanda" }]
 dependencies = [
     "altair>=5.5,<6",
     "azure-identity>=1.25,<2",
+    "boto3>=1.42,<2",
     "deepagents>=0.7",
     "duckdb>=1.4,<2",
     "fastapi[standard]>=0.141.1",
@@ -32,9 +33,12 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["httpx>=0.28,<1", "pytest>=8.4,<9", "pytest-asyncio>=1.2,<2", "respx>=0.22,<1", "ruff>=0.14,<1", "curl-cffi>=0.13,<1"]
+desktop = ["keyring>=25,<26", "pywebview>=6,<7"]
+desktop-build = ["pillow>=11,<13", "pyinstaller>=6.18,<7"]
 
 [project.scripts]
 sports-analyst = "sports_analyst.cli:app"
+sports-analyst-desktop = "sports_analyst.desktop:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

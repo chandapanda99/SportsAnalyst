@@ -1,7 +1,11 @@
 # .fastapicloudignore
+# Desktop packaging and generated Windows artifacts are never part of a cloud deploy.
+/build/
+/dist/
+/packaging/
+/.github/
+/tests/
+
+# FastAPI serves the prebuilt Svelte app. These exceptions must follow ignore rules.
 !frontend/dist/
 !frontend/dist/**
-
-# Un-ignore files that are in .gitignore
-!dist/
-tests/

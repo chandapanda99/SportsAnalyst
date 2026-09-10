@@ -49,7 +49,7 @@ The Svelte workbench provides:
 ### Install
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/chandapanda99/SportsAnalyst.git
 Set-Location SportsAnalyst
 
 Copy-Item .env.example .env
@@ -80,6 +80,73 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` request
 You do **not** need to run a data-sync command before launching the application. Open the data manager for the selected sport, choose seasons and packages, and select **Sync
 Selected Data**. NBA defaults to play-by-play, schedules, team box scores, and player box scores. The application reports whether the optional live transport is installed, but
 current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
+
+## Windows desktop application
+
+The desktop edition runs the same FastAPI service and compiled Svelte application inside a native WebView2 window. It binds the API to a random loopback-only port for the
+life of the window. Synced datasets and investigation history stay in the normal per-user data directory, so upgrades and uninstallations do not remove them.
+
+On first launch, the application asks for the model provider, analysis model, optional chat model, and credentials. API keys are stored in Windows Credential Manager; the
+remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.json`. Select **Use deterministic mode** to run without an LLM. To reopen model setup from a
+development installation, run `uv run sports-analyst-desktop --configure`.
+
+### Build the installer
+
+Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:
+
+```powershell
+./packaging/windows/build.ps1 -Version 1.0.0
+```
+
+The script builds the frontend, synchronizes the `desktop` and `desktop-build` dependency groups, creates a PyInstaller one-directory application, downloads Microsoft's
+WebView2 evergreen bootstrapper, and writes the installer to `dist/installer/`. Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop
+after producing the unpackaged desktop application.
+
+For Authenticode signing, set either `WINDOWS_SIGNING_PFX_PATH` (and optionally `WINDOWS_SIGNING_PFX_PASSWORD`) or `WINDOWS_SIGNING_CERT_THUMBPRINT` before building. The build
+signs and verifies both the executable and installer. Unsigned local builds work, but Windows may display a SmartScreen warning when they are distributed.
+
+The `Windows desktop installer` GitHub Actions workflow produces the same installer for version tags and manual runs. Add repository secrets
+`WINDOWS_SIGNING_PFX_BASE64` and `WINDOWS_SIGNING_PFX_PASSWORD` to sign CI artifacts; without them, the workflow intentionally produces an unsigned artifact.
+
+## FastAPI Cloud deployment
+
+The cloud and desktop editions share the API, analysis engine, and compiled Svelte frontend without sharing deployment artifacts or storage defaults. Desktop installations
+continue to use `PERSISTENCE_BACKEND=local`. A cloud deployment should use an S3-compatible object store so synced datasets and investigation history survive restarts and
+scale-out instances; DuckDB and materialized files remain a disposable per-instance cache.
+
+Create a private bucket, then add these environment variables to the FastAPI Cloud application. Mark credentials and model API keys as secrets:
+
+```dotenv
+PERSISTENCE_BACKEND=s3
+OBJECT_STORAGE_BUCKET=open-sports-analyst
+OBJECT_STORAGE_PREFIX=production
+OBJECT_STORAGE_REGION=us-east-1
+# Set this only for a non-AWS S3-compatible provider.
+# OBJECT_STORAGE_ENDPOINT_URL=https://...
+
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+# AWS_SESSION_TOKEN=...
+```
+
+`OBJECT_STORAGE_PREFIX` lets multiple environments safely share a bucket. Dataset and investigation metadata are stored as independent objects so concurrent instances do
+not compete to update one remote catalog. On startup, each instance rebuilds its local DuckDB index from those metadata objects and downloads Parquet datasets or report
+artifacts only when requested.
+
+The repository pins Python 3.13 in both `pyproject.toml` and `.python-version`. Before each deployment, update the lockfile when dependencies change, build the frontend, and
+deploy from the repository root:
+
+```powershell
+uv lock --check
+Set-Location frontend
+npm ci
+npm run build
+Set-Location ..
+uv run fastapi deploy
+```
+
+`.fastapicloudignore` includes `frontend/dist/` in the upload while excluding Windows packaging sources and generated `build/` and root `dist/` artifacts. FastAPI Cloud does
+not run the frontend build command, so `npm run build` must complete before deployment.
 
 ## Model providers
 
@@ -201,7 +268,8 @@ Team domains cover offense, defense, shooting, playmaking, rebounding, turnovers
 and compatible lineup context. Subject mode controls which domains and metrics are offered, so team-only measurements are not presented as player statistics. NBA analysis
 calculates selected box-score or canonical five-player lineup metrics for the two comparison windows. Full-season ranges also chart each included season. Reports now execute
 game-level trend and outlier analysis, team league benchmarks, available opponent context, shooting-zone profiles, and unit-level lineup analysis with player names, minutes,
-possessions, ratings, and new/returning/departed status. Representative NBA evidence is selected from both windows and includes period, clock, score, event, player/team context, a half-court shot marker when
+possessions, ratings, and new/returning/departed status. Representative NBA evidence is selected from both windows and includes period, clock, score, event, player/team
+context, a half-court shot marker when
 coordinates exist, and lineup cards when recorded on-court identities are available. Missing coordinates or players fall back to textual evidence rather than inferred
 positions.
 
@@ -241,7 +309,8 @@ windows. Results are observational and do not establish causality.
 
 NBA team metrics include points per game, estimated offensive and defensive rating, estimated pace, win percentage, field-goal and three-point percentage, effective and true
 shooting percentage, three-point rate, assists, assist-to-turnover ratio, rebounds, offensive rebounds, turnovers, and turnover rate. Player metrics include scoring and
-shooting measures, assists, rebounds, turnovers, minutes, an involvement-per-minute usage proxy, and recorded box-score plus/minus. Synced lineup releases add possession-weighted
+shooting measures, assists, rebounds, turnovers, minutes, an involvement-per-minute usage proxy, and recorded box-score plus/minus. Synced lineup releases add
+possession-weighted
 offensive, defensive, and net rating (minutes are used only when possessions are unavailable). Lineup rows are restricted to advanced measures, one published per-mode, the
 requested regular-season/playoff phase, and one row per five-player group before aggregation.
 
@@ -421,28 +490,28 @@ protocol; core currently ships only `DisabledCustomAnalysisRunner` and reports `
 
 All settings use the following environment variables and may be placed in `.env`.
 
-|              Variable              |              Default              | Purpose                                               |
-|:----------------------------------:|:---------------------------------:|-------------------------------------------------------|
-|             `DATA_DIR`             |   Platform user-data directory    | Local catalog, Parquet, and investigation root        |
-|          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`          |
-|              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                   |
-|           `CHAT_MODEL`             |               Empty               | Optional summary/follow-up wording model; falls back to `MODEL` |
-|         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                |
-|         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential` |
-|         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                            |
-|         `OLLAMA_BASE_URL`          |     `http://127.0.0.1:11434`      | Ollama server                                         |
-|           `OLLAMA_MODEL`           |            `qwen3:8b`             | Ollama model                                          |
-|          `SQL_ROW_LIMIT`           |              `10000`              | Maximum constrained-SQL result rows                   |
-|   `EVENT_STREAM_TIMEOUT_SECONDS`   |               `120`               | SSE inactivity timeout before frontend recovery       |
-|         `DATASET_CACHE_MB`         |               `384`               | In-memory analytical dataset cache; `0` disables it   |
-| `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |              `false`              | Recalculate SHA-256 whenever a manifest is loaded     |
-|   `INVESTIGATION_HISTORY_LIMIT`    |               `50`                | Default compact history page size                     |
-|            `LOG_LEVEL`             |              `INFO`               | Backend logging level                                 |
-|        `LANGSMITH_TRACING`         |              `false`              | Enable LangSmith tracing                              |
-|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                                |
-|        `LANGSMITH_API_KEY`         |               Empty               | LangSmith API key                                     |
-|        `LANGSMITH_PROJECT`         |    `open-sports-analyst-local`    | Destination LangSmith project                         |
-|      `LANGSMITH_WORKSPACE_ID`      |               Empty               | Optional workspace for scoped API keys                |
+|              Variable              |              Default              | Purpose                                                         |
+|:----------------------------------:|:---------------------------------:|-----------------------------------------------------------------|
+|             `DATA_DIR`             |   Platform user-data directory    | Local catalog, Parquet, and investigation root                  |
+|          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`                    |
+|              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                             |
+|            `CHAT_MODEL`            |               Empty               | Optional summary/follow-up wording model; falls back to `MODEL` |
+|         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                          |
+|         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential`           |
+|         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                                      |
+|         `OLLAMA_BASE_URL`          |     `http://127.0.0.1:11434`      | Ollama server                                                   |
+|           `OLLAMA_MODEL`           |            `qwen3:8b`             | Ollama model                                                    |
+|          `SQL_ROW_LIMIT`           |              `10000`              | Maximum constrained-SQL result rows                             |
+|   `EVENT_STREAM_TIMEOUT_SECONDS`   |               `120`               | SSE inactivity timeout before frontend recovery                 |
+|         `DATASET_CACHE_MB`         |               `384`               | In-memory analytical dataset cache; `0` disables it             |
+| `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |              `false`              | Recalculate SHA-256 whenever a manifest is loaded               |
+|   `INVESTIGATION_HISTORY_LIMIT`    |               `50`                | Default compact history page size                               |
+|            `LOG_LEVEL`             |              `INFO`               | Backend logging level                                           |
+|        `LANGSMITH_TRACING`         |              `false`              | Enable LangSmith tracing                                        |
+|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                                          |
+|        `LANGSMITH_API_KEY`         |               Empty               | LangSmith API key                                               |
+|        `LANGSMITH_PROJECT`         |    `open-sports-analyst-local`    | Destination LangSmith project                                   |
+|      `LANGSMITH_WORKSPACE_ID`      |               Empty               | Optional workspace for scoped API keys                          |
 
 Set `LOG_LEVEL=DEBUG` for lightweight diagnostics. Logs include IDs, lifecycle stages, timings, result counts, model/fallback outcomes, citation repair, and event timeouts.
 They intentionally exclude prompts, questions, evidence contents, SQL text, managed paths, credentials, and raw model responses.
