@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    data_dir: Path = Field(default_factory=lambda: user_data_path("open-sports-analyst", ensure_exists=True))
+    data_dir: Path = Field(default_factory=lambda: user_data_path("open-sports-analyst", appauthor=False, ensure_exists=True))
     model_provider: str = "azure_foundry"
     model: str = "gpt-5.6-luna"
     chat_model: str | None = None
