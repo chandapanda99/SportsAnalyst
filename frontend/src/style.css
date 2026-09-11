@@ -249,8 +249,7 @@ button, input, textarea, select {
 .nav-label, .eyebrow {
     font: 500 12px var(--font-mono);
     letter-spacing: .14em;
-    color: var(--mint);
-    text-transform: uppercase
+    color: var(--mint)
 }
 
 .nav-label {
@@ -258,7 +257,8 @@ button, input, textarea, select {
     align-items: center;
     gap: 8px;
     padding: 24px 10px 8px;
-    color: var(--color-text-tertiary)
+    color: var(--color-text-tertiary);
+    text-transform: uppercase
 }
 
 .runtime {

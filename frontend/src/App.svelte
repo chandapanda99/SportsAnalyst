@@ -1860,7 +1860,7 @@
       {/each}
     </nav>
     <header class="topbar">
-      <div><span class="eyebrow">{activeSport.toUpperCase()} · EVIDENCE WORKBENCH</span>
+      <div><span class="eyebrow">{activeSport.toUpperCase()} · Evidence Workbench</span>
         <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : 'Football'} analysis`}</h1>
       </div>
       <div class="status-chip">
@@ -1880,7 +1880,7 @@
     {:else if !active && !busy}
       <section class="ask-panel">
         <div class="intro-grid">
-          <div class="ask-copy"><span class="eyebrow">YOUR NEXT QUESTION, ANSWERED</span>
+          <div class="ask-copy"><span class="eyebrow">Your Next Question, Answered</span>
             <h2>See what changed. Understand why.</h2>
             <p>Compare a team or player across time, then explore the numbers and plays behind the answer.</p>
           </div>
@@ -1888,7 +1888,7 @@
             <section class="getting-started" id="getting-started" tabindex="-1" aria-label="How it works">
               <div class="section-heading">
                 <div>
-                  <span class="eyebrow">QUICK START</span>
+                  <span class="eyebrow">Quick Start</span>
                   <h3>Build an evidence-backed investigation</h3>
                   <p>Start with a focused comparison. You can refine it or ask follow-up questions after the first answer.</p>
                 </div>
@@ -1897,7 +1897,7 @@
               <ol class="guide-steps">
                 <li>
                   <span class="guide-icon"><Icon name="database" size={22}/></span>
-                  <div><small>STEP 1</small><b>Prepare the Right Data</b>
+                  <div><small>Step 1</small><b>Prepare the Right Data</b>
                     <p>Download both seasons and the recommended sources. Required sources unlock the analysis; recommended sources add player names and context.</p>
                     <button type="button" class="guide-step-action" on:click={() => focusSection('data-setup')}>
                       Open Data Setup
@@ -1907,7 +1907,7 @@
                 </li>
                 <li>
                   <span class="guide-icon"><Icon name="clipboard-plus" size={22}/></span>
-                  <div><small>STEP 2</small><b>Define a focused comparison</b>
+                  <div><small>Step 2</small><b>Define a Focused Comparison</b>
                     <p>Choose one team or player, two distinct periods, and the metrics that best match what you want to understand.</p>
                     <button type="button" class="guide-step-action" on:click={() => focusSection('scope-heading')}>
                       Choose a subject
@@ -1917,7 +1917,7 @@
                 </li>
                 <li>
                   <span class="guide-icon"><Icon name="search" size={22}/></span>
-                  <div><small>STEP 3</small><b>Ask, run, and inspect</b>
+                  <div><small>Step 3</small><b>Ask, Run, and Inspect</b>
                     <p>Ask what changed or why. Then open any finding to inspect its calculations, representative plays, and limitations.</p>
                     <button type="button" class="guide-step-action" on:click={() => focusSection('investigation-question')}>
                       Write your question
@@ -1936,7 +1936,7 @@
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
-              <span><strong>{dataReady ? 'Data READY · Manage Data' : 'Prepare Data'}</strong><small>{dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${datasets.length} local files`}
+              <span><strong>{dataReady ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
               </i></b></summary>
@@ -2032,7 +2032,7 @@
           <div class="configuration">
             <section class="scope-card" aria-labelledby="scope-heading">
               <div class="scope-heading">
-                <div><span class="eyebrow">01 · SUBJECT</span>
+                <div><span class="eyebrow">01 · Subject</span>
                   <h3 id="scope-heading" tabindex="-1">Who do you want to understand?</h3></div>
                 <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
               <div class="scope-controls">
@@ -2134,7 +2134,7 @@
             </section>
             <section class="scope-card" aria-labelledby="comparison-heading">
               <div class="scope-heading">
-                <div><span class="eyebrow">02 · COMPARISON</span>
+                <div><span class="eyebrow">02 · Comparison</span>
                   <h3 id="comparison-heading" tabindex="-1">Choose the periods to compare</h3></div>
               </div>
               <p>Your reference period is the starting point. The comparison period shows what changed.</p>
@@ -2285,7 +2285,7 @@
 
             <section class="metric-card" aria-labelledby="metric-heading">
               <div class="scope-heading">
-                <div><span class="eyebrow">03 · FOCUS</span>
+                <div><span class="eyebrow">03 · Focus</span>
                   <h3 id="metric-heading" tabindex="-1">Choose {subjectType === 'player' ? 'player metrics' : 'what to measure'}</h3></div>
                 <div class="metric-actions">
                   <button type="button" aria-expanded={customizeMetrics} on:click={() => customizeMetrics = !customizeMetrics}>Customize metrics</button>
@@ -2384,7 +2384,7 @@
             </section>
 
             <div class="question-field">
-              <span class="eyebrow">04 · QUESTION</span>
+              <span class="eyebrow">04 · Question</span>
               <div class="question-heading">
                 <label for="investigation-question">Your Question:</label>
 
@@ -2404,7 +2404,7 @@
             </div>
           </div>
           <aside class="analysis-brief" aria-label="Analysis brief">
-            <span class="eyebrow">YOUR ANALYSIS</span>
+            <span class="eyebrow">Your Analysis</span>
             <h3>Analysis brief</h3>
             <dl>
               <dt>Subject</dt>
@@ -2440,7 +2440,7 @@
         <div class="field-lines" aria-hidden="true"></div>
         <div class="working-layout">
           <div class="working-copy">
-            <span class="eyebrow">{syncing ? 'DOWNLOADING DATA' : 'ANALYSIS IN PROGRESS'}</span>
+            <span class="eyebrow">{syncing ? 'Downloading Data' : 'Analysis in Progress'}</span>
             <h2>{stage}</h2>
             <div class="progress" role="progressbar" aria-label={syncing ? 'Download progress' : 'Investigation progress'} aria-valuemin="0" aria-valuemax="100"
                  aria-valuenow={Math.round(progress * 100)}><i style={`width:${Math.max(4, progress * 100)}%`}></i></div>
@@ -2461,7 +2461,7 @@
     {:else if active}
       <section class="report-hero">
         <div class="report-summary">
-          <span class="eyebrow">FINAL READ · {active.fallback_used ? 'DETERMINISTIC' : active.model_id}</span>
+          <span class="eyebrow">Final Read · {active.fallback_used ? 'Deterministic' : active.model_id}</span>
           <h2>The answer</h2>
           <p>{active.summary}</p>
           <div class="report-meta" aria-label="Investigation scope">
@@ -2485,7 +2485,7 @@
       </section>
       <div class="report-grid">
         <section class="findings">
-          <div class="section-title"><span>CORE FINDINGS</span><small>{active.claims.length} evidence-bound claims</small></div>
+          <div class="section-title"><span>Core Findings</span><small>{active.claims.length} evidence-bound claims</small></div>
           <details class="reading-guide">
             <summary>How to read these findings</summary>
             <p>Measured findings are calculated from recorded data. Interpretations describe possible explanations, not proof of cause. Confidence describes how
@@ -2554,7 +2554,7 @@
         </div>
       </section>
       <section class="plays">
-        <div class="section-title"><span>REPRESENTATIVE {activeSport === 'nba' ? 'POSSESSIONS' : 'PLAYS'}</span><small>Examples from both periods—not the entire
+        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : 'Plays'}</span><small>Examples from both periods—not the entire
           sample</small>
         </div>
         <p class="section-help">Select a play to inspect it. Counterexamples show outcomes that run against the overall trend.</p>
@@ -2614,7 +2614,7 @@
       </details>
       <section class="conversation" aria-label="Investigation conversation">
         <div class="conversation-header">
-          <div><span class="eyebrow">INVESTIGATION THREAD</span>
+          <div><span class="eyebrow">Investigation Thread</span>
             <h2>{investigationSubject(active, playerNamesById)} Film Room</h2>
             <p>The initial analysis and every follow-up are saved together. Select any analyst response to inspect its report and evidence.</p>
           </div>
