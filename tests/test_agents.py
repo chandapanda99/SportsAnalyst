@@ -8,6 +8,7 @@ from sports_analyst.agents import (
     _formulate_user_message,
     _is_citation_error,
     _resolve_citation_draft,
+    _synthesis_mode,
 )
 from sports_analyst.config import Settings
 from sports_analyst.models import AggregateEvidence, Claim, ClaimType, PlayEvidence
@@ -83,6 +84,10 @@ def test_citation_schema_rejects_unavailable_aliases() -> None:
             }
         )
     assert _is_citation_error(caught.value)
+
+
+def test_growth_questions_receive_full_analytical_review() -> None:
+    assert _synthesis_mode("How did Caleb Williams grow from 2024 to 2025?", 8) == "full"
 
 
 def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:

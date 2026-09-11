@@ -210,6 +210,14 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 description="Compare compatible synced weekly player, Next Gen, and PFR statistics for one selected player.",
             ),
             ToolDefinition(name="analyze_player_trends", description="Measure a selected player's season-by-season performance trajectory."),
+            ToolDefinition(
+                name="analyze_player_weekly_trends",
+                description="Measure a selected player's weekly stability within each window.",
+            ),
+            ToolDefinition(
+                name="rank_player_game_outliers",
+                description="Identify games that most strongly shaped a player's comparison window.",
+            ),
             ToolDefinition(name="find_player_representative_plays", description="Return source plays attributed to the selected player."),
             ToolDefinition(
                 name="build_player_week_dataset",
@@ -298,6 +306,14 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 if loaded:
                     team_options = loaded
         return AnalysisOptions(
+            data_setup={
+                "label": "Football essentials",
+                "description": "Compare teams and players with recorded plays, game context, and player statistics.",
+                "required_datasets": ["play_by_play"],
+                "recommended_datasets": ["schedules", "player_stats", "rosters"],
+                "descriptions": {"play_by_play": "Recorded plays and their outcomes.", "schedules": "Dates, opponents, and game context.",
+                                 "player_stats": "Player season and weekly production.", "rosters": "Player names, positions, and teams."},
+            },
             sport=self.sport_id,
             teams=team_options,
             available_seasons=available_seasons,
@@ -497,6 +513,16 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     tool="analyze_player_trends",
                     arguments={"domain": request.analysis_domain},
                     purpose="Measure whether the player's change was sustained across seasons.",
+                ),
+                PlannedToolCall(
+                    tool="analyze_player_weekly_trends",
+                    arguments={"domain": request.analysis_domain, "metric": request.metrics[0] if request.metrics else None},
+                    purpose="Determine whether the player's full-season change was sustained across weeks.",
+                ),
+                PlannedToolCall(
+                    tool="rank_player_game_outliers",
+                    arguments={"domain": request.analysis_domain, "metric": request.metrics[0] if request.metrics else None},
+                    purpose="Identify games that most strongly shaped the comparison-season result.",
                 ),
                 PlannedToolCall(
                     tool="find_player_representative_plays",
@@ -1220,8 +1246,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         if missing_supplemental:
             caveats.append(
                 "Supplemental tools were skipped because these datasets were not selected for this run or were not synced for both windows: "
-                + ", ".join(missing_supplemental)
-                + "."
+                + ", ".join(missing_supplemental) + "."
             )
         if season_frames:
             caveats.append(

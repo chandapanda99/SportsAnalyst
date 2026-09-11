@@ -9,3 +9,17 @@
 # FastAPI serves the prebuilt Svelte app. These exceptions must follow ignore rules.
 !frontend/dist/
 !frontend/dist/**
+
+# Never upload installers, certificates, or signing material
+*.exe
+*.msi
+*.msix
+*.pfx
+*.p12
+*.cer
+
+# Local development metadata
+/.idea/
+/.junie/
+/.pytest_cache/
+/.ruff_cache/

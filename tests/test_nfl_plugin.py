@@ -155,7 +155,16 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
     assert {execution.tool for execution in result.executions} >= {
         "compare_player_windows",
         "analyze_player_trends",
+        "analyze_player_weekly_trends",
+        "rank_player_game_outliers",
         "find_player_representative_plays",
+    }
+    consistency = next(item for item in result.aggregate_evidence if item.metric == "player_weekly_consistency_qb_epa_per_dropback")
+    assert consistency.context["classification"] == "sustained"
+    assert consistency.context["weeks_observed"] == 4
+    assert len([item for item in result.aggregate_evidence if item.metric == "player_game_outlier_qb_epa_per_dropback"]) == 4
+    assert next(item for item in result.aggregate_evidence if item.metric == "qb_sack_rate").context["analytical_role"] in {
+        "supporting_signal", "counter_signal"
     }
     assert result.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
 

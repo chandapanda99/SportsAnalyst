@@ -400,6 +400,11 @@ def _value(frame: pl.DataFrame, source: str) -> float | None:
     return _metric_value(frame, source)
 
 
+def _metric_improved(metric: str, change: float | int | str | None) -> bool:
+    numeric_change = float(change or 0)
+    return numeric_change > 0 if PLAYER_METRICS[metric][7] else numeric_change < 0
+
+
 def _player_identity(subject_id: str, directory: pl.DataFrame | None) -> tuple[set[str], set[str]]:
     identifiers = {subject_id}
     names: set[str] = set()
@@ -513,6 +518,138 @@ def _published_summary(dataset: str, frame: pl.DataFrame) -> dict[str, tuple[str
 
 class NFLPlayerAnalysisMixin:
     """Analyze a selected NFL player without routing through team diagnostics."""
+
+    def _player_weekly_trends(
+        self,
+        frames: list[pl.DataFrame],
+        windows: list[AnalysisWindow],
+        metric: str,
+        manifests: list[DatasetManifest],
+    ):
+        source, label = PLAYER_METRICS[metric][0:2]
+        parameters = {"metric": metric, "windows": [window.model_dump() for window in windows]}
+        execution_id = stable_id("execution", {"tool": "analyze_player_weekly_trends", **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        evidence: list[AggregateEvidence] = []
+        weekly_series: list[list[tuple[int, float, int]]] = []
+        for window, frame in zip(windows, frames, strict=True):
+            if "week" not in frame.columns:
+                weekly_series.append([])
+                continue
+            rows: list[tuple[int, float, int]] = []
+            for week in sorted(int(value) for value in frame["week"].drop_nulls().unique().to_list()):
+                week_frame = frame.filter(pl.col("week") == week)
+                value = _value(week_frame, source)
+                if value is None:
+                    continue
+                rows.append((week, value, week_frame.height))
+                payload = {"tool": "analyze_player_weekly_trends", "metric": metric, "season": window.season, "week": week}
+                evidence.append(
+                    AggregateEvidence(
+                        evidence_id=stable_id("evidence", payload),
+                        metric=f"weekly_player_{metric}",
+                        label=f"{window.season} week {week} · {label}",
+                        value=round(value, 4),
+                        unit=label,
+                        sample_size=week_frame.height,
+                        row_set_sha256=_sha(payload),
+                        dataset_manifest_ids=[item.manifest_id for item in manifests if item.season == window.season],
+                        tool_execution_id=execution_id,
+                        caveats=["Weekly subgroup has fewer than 10 attributed plays."] if week_frame.height < 10 else [],
+                        context={"season": window.season, "week": week, "temporal_grain": "week"},
+                    )
+                )
+            weekly_series.append(rows)
+
+        baseline_value = _value(frames[0], source)
+        comparison_value = _value(frames[1], source)
+        comparison_weeks = weekly_series[1] if len(weekly_series) > 1 else []
+        if baseline_value is not None and comparison_value is not None and comparison_weeks:
+            overall_change = comparison_value - baseline_value
+            matches = [
+                (value - baseline_value) * overall_change > 0 or (value == baseline_value and overall_change == 0)
+                for _week, value, _sample in comparison_weeks
+            ]
+            agreement_rate = sum(matches) / len(matches)
+            classification = "sustained" if agreement_rate >= 2 / 3 else "mixed" if agreement_rate >= 0.4 else "outlier-concentrated"
+            payload = {**parameters, "kind": "consistency", "agreement_rate": agreement_rate, "classification": classification}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"player_weekly_consistency_{metric}",
+                    label=f"Comparison-season weekly pattern: {classification}",
+                    value=round(agreement_rate, 4),
+                    baseline_value=round(baseline_value, 4),
+                    comparison_value=round(comparison_value, 4),
+                    unit="share of comparison-season weeks matching the full-season change",
+                    sample_size=sum(sample for _week, _value, sample in comparison_weeks),
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=[item.manifest_id for item in manifests],
+                    tool_execution_id=execution_id,
+                    caveats=["This is a descriptive weekly stability check, not a causal trend or change-point estimate."],
+                    context={
+                        "classification": classification,
+                        "weeks_matching_overall_direction": sum(matches),
+                        "weeks_observed": len(matches),
+                        "temporal_grain": "week",
+                    },
+                )
+            )
+        return evidence, _execution_record(
+            "analyze_player_weekly_trends", execution_id, parameters, evidence, manifests, started_at, started
+        )
+
+    def _player_game_outliers(
+        self,
+        baseline: pl.DataFrame,
+        comparison: pl.DataFrame,
+        window: AnalysisWindow,
+        metric: str,
+        manifests: list[DatasetManifest],
+    ):
+        source, label = PLAYER_METRICS[metric][0:2]
+        parameters = {"metric": metric, "comparison": window.model_dump(), "limit": 6}
+        execution_id = stable_id("execution", {"tool": "rank_player_game_outliers", **parameters})
+        started_at, started = datetime.now(UTC), perf_counter()
+        baseline_value = _value(baseline, source)
+        comparison_value = _value(comparison, source)
+        rows: list[tuple[str, float, int, int | None]] = []
+        if baseline_value is not None and "game_id" in comparison.columns:
+            for game_id in comparison["game_id"].drop_nulls().unique().to_list():
+                game = comparison.filter(pl.col("game_id") == game_id)
+                value = _value(game, source)
+                if value is None:
+                    continue
+                week = int(game["week"][0]) if "week" in game.columns and game["week"][0] is not None else None
+                rows.append((str(game_id), value, game.height, week))
+        rows.sort(key=lambda row: (-abs(row[1] - float(baseline_value or 0)), row[0]))
+        evidence: list[AggregateEvidence] = []
+        overall_change = None if baseline_value is None or comparison_value is None else comparison_value - baseline_value
+        for game_id, value, sample_size, week in rows[:6]:
+            payload = {"tool": "rank_player_game_outliers", "metric": metric, "game_id": game_id, "window": window.model_dump()}
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"player_game_outlier_{metric}",
+                    label=f"{game_id} · {label}",
+                    value=round(value - float(baseline_value or 0), 4),
+                    baseline_value=round(float(baseline_value or 0), 4),
+                    comparison_value=round(value, 4),
+                    unit=f"difference from baseline-season {label}",
+                    sample_size=sample_size,
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=[item.manifest_id for item in manifests if item.season == window.season],
+                    tool_execution_id=execution_id,
+                    caveats=["Game sample has fewer than 10 attributed plays."] if sample_size < 10 else [],
+                    context={
+                        "week": week,
+                        "supports_overall_direction": bool(overall_change is not None and (value - baseline_value) * overall_change > 0),
+                    },
+                )
+            )
+        return evidence, _execution_record(
+            "rank_player_game_outliers", execution_id, parameters, evidence, manifests, started_at, started
+        )
 
     def _published_player_context(
         self,
@@ -711,6 +848,27 @@ class NFLPlayerAnalysisMixin:
             )
 
         primary = next((metric for metric in selected_metrics if any(item.metric == metric for item in evidence)), selected_metrics[0])
+        primary_item = next((item for item in evidence if item.metric == primary), None)
+        if primary_item is not None:
+            primary_improved = _metric_improved(primary, primary_item.value)
+            evidence = [
+                item.model_copy(update={
+                    "context": {
+                        **item.context,
+                        "change_direction": (
+                            "improved" if _metric_improved(item.metric, item.value)
+                            else "declined" if item.value != 0 else "unchanged"
+                        ),
+                        "analytical_role": (
+                            "primary_outcome" if item.metric == primary
+                            else "supporting_signal"
+                            if _metric_improved(item.metric, item.value) == primary_improved
+                            else "counter_signal"
+                        ),
+                    }
+                }) if item.metric in PLAYER_METRICS else item
+                for item in evidence
+            ]
         trend_values: list[dict[str, Any]] = []
         trend_evidence: list[AggregateEvidence] = []
         frames = season_frames or {windows[0].season: baseline, windows[1].season: comparison}
@@ -837,6 +995,17 @@ class NFLPlayerAnalysisMixin:
             metric_label=PLAYER_METRICS[primary][1],
             per_window=int(play_parameters["per_window"]),
         )
+
+        weekly_evidence, weekly_execution = self._player_weekly_trends(
+            [baseline, comparison], windows, primary, selected_manifests
+        )
+        evidence.extend(weekly_evidence)
+        executions.append(weekly_execution)
+        outlier_evidence, outlier_execution = self._player_game_outliers(
+            baseline, comparison, windows[1], primary, selected_manifests
+        )
+        evidence.extend(outlier_evidence)
+        executions.append(outlier_execution)
         if hasattr(self, "_enrich_representative_plays"):
             enriched_plays = {}
             for window in windows:

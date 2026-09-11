@@ -518,7 +518,7 @@ def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
         minutes = _sum(frame, "minutes") or 0
         events = (
                 (_sum(frame, "field_goals_attempted") or 0) + 0.44 * (_sum(frame, "free_throws_attempted") or 0) + (
-                    _sum(frame, turnover_col) or 0)
+                _sum(frame, turnover_col) or 0)
         )
         return float(events / minutes) if minutes else None
     if name == "plus_minus_per_game":
@@ -714,6 +714,14 @@ class NBAPlugin:
             for value, metadata in METRICS.items()
         ]
         return AnalysisOptions(
+            data_setup={
+                "label": "Basketball essentials",
+                "description": "Compare team efficiency and player production, then inspect the plays behind the numbers.",
+                "required_datasets": ["play_by_play", "schedules", "team_boxscores", "player_boxscores"],
+                "recommended_datasets": [],
+                "descriptions": {"play_by_play": "Recorded events for play evidence.", "schedules": "Game dates and season phases.",
+                                 "team_boxscores": "Team scoring and efficiency.", "player_boxscores": "Player scoring and contributions."},
+            },
             sport=self.sport_id,
             teams=teams,
             available_seasons=available,

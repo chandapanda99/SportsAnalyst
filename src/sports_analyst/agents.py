@@ -30,6 +30,12 @@ POSITIVE_IS_BETTER = {
     "overall_yards_per_play",
 }
 LOWER_IS_BETTER = {"sack_rate", "interception_rate", "stuff_rate", "turnover_rate"}
+POSITIVE_IS_BETTER.update({
+    "qb_epa_per_dropback", "qb_success_rate", "qb_cpoe", "qb_yards_per_dropback", "qb_explosive_pass_rate",
+    "receiver_epa_per_target", "receiver_success_rate", "receiver_yards_per_target", "receiver_explosive_rate",
+    "rusher_epa_per_carry", "rusher_success_rate", "rusher_yards_per_carry", "rusher_explosive_rate",
+})
+LOWER_IS_BETTER.update({"qb_sack_rate", "qb_interception_rate"})
 POSITIVE_IS_BETTER.update(
     {
         "points_per_game",
@@ -65,7 +71,7 @@ Write like an experienced, knowledgeable, expert NFL analyst briefing an informe
   counterevidence instead of reciting every available result.
 - Connect related measurements in natural prose and explain their football meaning. For example, distinguish changes in play mix from
   changes in execution, and separate sustained movement from a result driven by a few games.
-- Use precise football language where the evidence supports it, but translate specialized metrics into practical implicat   ions. Avoid
+- Use precise football language where the evidence supports it, but translate specialized metrics into practical implications. Avoid
   buzzwords, empty intensifiers, canned phrases, and repetitive sentence templates.
 - Vary sentence length and transitions so the writing reads naturally. Prefer direct sentences and active voice. Do not refer to
   yourself, the model, tools, prompts, evidence keys, or the process of generating the report.
@@ -74,6 +80,11 @@ Write like an experienced, knowledgeable, expert NFL analyst briefing an informe
 - State measured results plainly. Use interpretation claims to explain what the pattern is consistent with, while making uncertainty
   proportional to sample size and evidence quality. Never turn observational evidence into proven causality.
 - Mention counterexamples, noisy samples, endpoint-only comparisons, or conflicting indicators when they materially change the read.
+- A full-season aggregate includes all qualifying plays and supports conclusions about the player's overall season-level performance.
+  Do not describe it as incomplete merely because it does not preserve weekly sequence. Use weekly evidence specifically to discuss
+  stability, timing, and whether a few games concentrated the result.
+- Treat evidence marked primary_outcome, supporting_signal, and counter_signal as an analytical hierarchy. Explain how the supporting
+  outcomes fit together, then use counter-signals to rule out weaker explanations. Association is not proof of causation.
 """.strip()
 
 NBA_ANALYST_VOICE_GUIDE = """
@@ -101,12 +112,12 @@ class UserMessageDraft(BaseModel):
 
 
 def _formulate_user_message(
-    chat_model: Any,
-    question: str,
-    draft: SynthesisDraft,
-    sport: str,
-    follow_up: bool,
-    config: dict[str, Any] | None = None,
+        chat_model: Any,
+        question: str,
+        draft: SynthesisDraft,
+        sport: str,
+        follow_up: bool,
+        config: dict[str, Any] | None = None,
 ) -> str:
     """Turn a completed analytical draft into user-facing prose without changing its substance."""
     formatter = chat_model.with_structured_output(UserMessageDraft)
@@ -158,7 +169,10 @@ def _synthesis_mode(
     if conversation_context:
         return "direct"
     normalized = question.lower()
-    complex_terms = {"why", "explain", "personnel", "lineup", "injur", "formation", "opponent", "decompos", "context", "pressure"}
+    complex_terms = {
+        "why", "explain", "personnel", "lineup", "injur", "formation", "opponent", "decompos", "context", "pressure",
+        "grow", "growth", "improve", "development", "progress", "trajectory",
+    }
     if aggregate_count >= 28 or any(term in normalized for term in complex_terms):
         return "full"
     return "reviewed"
@@ -315,8 +329,10 @@ def _fallback_synthesis(
                 confidence=_sample_confidence(min(item.sample_size for item in seasonal)),
             )
         )
+    role_priority = {"supporting_signal": 0, "counter_signal": 1, "primary_outcome": 2}
     supporting = sorted(
-        [item for item in metrics if item.evidence_id != primary.evidence_id], key=lambda item: abs(float(item.value or 0)), reverse=True
+        [item for item in metrics if item.evidence_id != primary.evidence_id],
+        key=lambda item: role_priority.get(str(item.context.get("analytical_role")), 3),
     )[:3]
 
     for item in supporting:
@@ -501,7 +517,9 @@ class EvidenceBoundAgent:
             if analysis_seasons:
                 common += (
                     f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
-                    "not only the first and final seasons. Endpoint diagnostics should be identified as endpoint comparisons."
+                    "not only the first and final seasons. Full-season endpoints summarize every qualifying play and support an overall "
+                    "season-level conclusion. Distinguish that conclusion from the separate weekly question of stability or timing, and "
+                    "only raise a temporal limitation when it materially affects the answer."
                 )
             if conversation_context:
                 common += (
@@ -560,9 +578,12 @@ class EvidenceBoundAgent:
                 system_prompt=(
                         f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
                         f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
-                        f"knowleadgable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
+                        f"knowledgeable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
                         f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
                         f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
+                        "For a growth or change question, synthesize the result as: season-level conclusion; primary drivers; counterevidence"
+                        " that rules out weaker explanations; weekly/outlier stability; and one narrowly scoped limitation. Do not turn this "
+                        "structure into headings or a metric-by-metric recital.\n\n"
                         + common
                 ),
                 response_format=response_model,

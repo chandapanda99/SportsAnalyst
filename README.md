@@ -28,13 +28,12 @@ metrics, datasets, and evidence renderer.
 
 The Svelte workbench provides:
 
-1. **Local Data Library** — select seasons and sport-specific packages, inspect local coverage, and sync data without using the CLI.
-2. **Scope** — choose an NFL or NBA team/player, analysis domain, season period, and comparison design using searchable, data-driven controls. Team and player searches filter
-   the options already loaded in the browser.
-3. **Metrics and diagnostic cuts** — use the recommended defaults, select all available metrics, or constrain the analysis to specific measurements and situations.
-4. **Investigation question** — ask a free-text analytical question or cycle through valid examples.
-5. **Live analysis** — follow backend stage progress while evidence is produced and reviewed.
-6. **Report and evidence inspector** — inspect every finding, all evidence attached to it, charts, baseline/comparison evidence groups, selection rationale, and provenance.
+1. **Getting started** — a dismissible inline guide explains data, comparisons, and evidence. Completion is remembered in browser storage; **Getting started** restores it.
+2. **Prepare your data** — quick setup uses the sport plugin's required and recommended sources. Choose seasons, then explicitly download. **Customize data sources** exposes individual packages, availability, and downloaded badges. Ready data collapses into a status strip.
+3. **Subject → Comparison → Focus → Question** — searchable team/player controls, reference and comparison periods, recommended metrics, and selectable example questions form one continuous workbench. **Customize metrics** and **Optional breakdowns** reveal advanced choices; **About** opens each metric's formula, interpretation, sample, and limitations.
+4. **Analysis brief** — a live summary and actionable readiness checklist explain what will run and what still needs attention. NFL/NBA drafts remain independent, including custom metric selections.
+5. **Progress** — downloads show source-level stages; completed syncs offer **Continue building analysis**. Investigation stages describe the work as evidence is produced and reviewed.
+6. **Results** — the direct answer leads into key metric changes, findings, supporting evidence, charts, and representative plays. The first finding opens automatically. On narrow screens, evidence appears directly below its finding. Sources, caveats, and tool records are grouped under **How this analysis was calculated**.
 7. **Film Room** — reopen, continue, export, or delete saved investigation threads.
 
 ## Quick start
@@ -77,8 +76,7 @@ npm run dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` requests to the FastAPI server at `http://127.0.0.1:8767`.
 
-You do **not** need to run a data-sync command before launching the application. Open the data manager for the selected sport, choose seasons and packages, and select **Sync
-Selected Data**. NBA defaults to play-by-play, schedules, team box scores, and player box scores. The application reports whether the optional live transport is installed, but
+You do **not** need to run a data-sync command before launching the application. Open **Prepare your data** (or **Manage data**), choose seasons, and use the **Download** button. NFL quick setup includes play-by-play and recommends schedules, player statistics, and rosters. NBA requires play-by-play, schedules, team box scores, and player box scores for the guided flow. The application reports whether the optional live transport is installed, but
 current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
 
 ## Windows desktop application
@@ -107,6 +105,19 @@ signs and verifies both the executable and installer. Unsigned local builds work
 
 The `Windows desktop installer` GitHub Actions workflow produces the same installer for version tags and manual runs. Add repository secrets
 `WINDOWS_SIGNING_PFX_BASE64` and `WINDOWS_SIGNING_PFX_PASSWORD` to sign CI artifacts; without them, the workflow intentionally produces an unsigned artifact.
+
+### Publish a beta with GitHub Releases
+
+Push a version tag containing `alpha`, `beta`, or `rc` to build and publish a GitHub prerelease automatically:
+
+```powershell
+git tag v1.0.0-beta.1
+git push origin v1.0.0-beta.1
+```
+
+The workflow attaches the versioned Windows x64 installer and its SHA-256 checksum to the release. Other `v*` tags publish normal releases. A manual workflow run creates a
+downloadable Actions artifact for verification but does not publish a release. Public downloads require a public repository; for a private source repository, publish from a
+separate public distribution repository instead.
 
 ## FastAPI Cloud deployment
 

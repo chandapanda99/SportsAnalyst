@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,8 +52,48 @@ jobs:
           $version = "${{ inputs.version }}"
           if (-not $version) { $version = "${{ github.ref_name }}".TrimStart("v") }
           ./packaging/windows/build.ps1 -Version $version
+      - name: Create installer checksum
+        shell: powershell
+        run: |
+          $installer = Get-ChildItem -LiteralPath dist/installer -Filter "*.exe" |
+            Select-Object -First 1
+          if (-not $installer) { throw "The Windows installer was not found." }
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath "$($installer.FullName).sha256" -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
           name: OpenSportsAnalyst-windows-x64
-          path: dist/installer/*.exe
+          path: |
+            dist/installer/*.exe
+            dist/installer/*.sha256
           if-no-files-found: error
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $installer = Get-ChildItem -LiteralPath dist/installer -Filter "*.exe" |
+            Select-Object -First 1
+          if (-not $installer) { throw "The Windows installer was not found." }
+          $checksum = "$($installer.FullName).sha256"
+          if (-not (Test-Path -LiteralPath $checksum)) { throw "The installer checksum was not found." }
+
+          & gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $tag $installer.FullName $checksum --clobber
+            if ($LASTEXITCODE -ne 0) { throw "GitHub Release asset upload failed." }
+            exit 0
+          }
+
+          $arguments = @(
+            "release", "create", $tag,
+            $installer.FullName, $checksum,
+            "--verify-tag",
+            "--title", "Open Sports Analyst $tag",
+            "--generate-notes"
+          )
+          if ($tag -match "(?i)-(alpha|beta|rc)(?:[.-]|$)") { $arguments += "--prerelease" }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed." }

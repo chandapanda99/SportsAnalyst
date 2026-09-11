@@ -1,4 +1,5 @@
 export type DatasetManifest = {
+  source_url?: string; package_version?: string; attribution?: string; license?: string;
   manifest_id: string; sport: string; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
 };
 export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string };
@@ -20,6 +21,7 @@ export type SplitDimensionOption = {
 };
 export type ComparisonWindowOption = { value: string; label: string; description: string };
 export type AnalysisOptions = {
+  data_setup?: { required_datasets: string[]; recommended_datasets: string[]; descriptions: Record<string, string>; label: string; description: string };
   sport: string;
   teams: TeamOption[];
   available_seasons: number[];
@@ -49,6 +51,7 @@ export type InvestigationRequest = {
   splits: string[];
 };
 export type Evidence = {
+  unit?: string;
   evidence_id: string; metric?: string; label?: string; value?: number; baseline_value?: number;
   comparison_value?: number; sample_size?: number; caveats?: string[]; game_id?: string;
   play_id?: number; season?: number; team?: string; description?: string; epa?: number; metric_value?: number; supporting?: boolean;
@@ -87,6 +90,8 @@ export type PlayVisualization = {
 export type Claim = { claim_id: string; claim_type: 'measured' | 'interpretation'; statement: string; evidence_ids: string[]; confidence: string };
 export type Chart = { chart_id: string; title: string; specification: Record<string, unknown>; evidence_ids: string[] };
 export type Investigation = {
+  dataset_manifests?: DatasetManifest[];
+  executions?: Array<{tool: string; version?: string; duration_ms?: number; parameters?: Record<string, unknown>; dataset_manifest_ids?: string[]; sql?: string | null}>;
   run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;

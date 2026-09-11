@@ -121,13 +121,13 @@
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
     /* Data visualization */
-    --chart-series-1: #7ce4c2;
+    --chart-series-1: #1efafa;
     --chart-series-2: #f2c86f;
-    --chart-series-3: #7fa9bf;
+    --chart-series-3: #325f7d;
     --chart-series-4: #df9c7c;
-    --chart-positive: #7ce4c2;
-    --chart-negative: #f19767;
-    --chart-neutral: #8fa2af;
+    --chart-positive: #00ff1e;
+    --chart-negative: #fa231e;
+    --chart-neutral: #a5b4be;
 
     font-family: var(--font-sans), system-ui;
     color: var(--color-text-primary);
@@ -137,6 +137,47 @@
     font-optical-sizing: auto;
     text-rendering: optimizeLegibility;
     -webkit-text-size-adjust: 100%;
+}
+
+/* Basketball uses the exported artwork's #FF8D28 orange as its visual anchor. */
+.app-shell.nba-theme {
+    --color-canvas-glow: #0a0500;
+    --color-sidebar: #0d1016;
+    --color-surface-low: #140f0e;
+    --color-surface: #140a01;
+    --color-surface-raised: #281401;
+    --color-surface-input: #202723;
+    --color-surface-panel: #1c221f;
+    --color-surface-panel-alt: #222b26;
+    --color-surface-chip: #28302c;
+    --color-surface-hover: #2a342e;
+    --color-surface-evidence: #2d3731;
+    --color-surface-accented: #303a34;
+    --color-surface-active: #23382f;
+    --color-surface-control: #29352f;
+    --color-progress-track: #37433c;
+    --color-border-subtle: #343b37;
+    --color-border-strong: #46534c;
+    --color-border-accent: #59685f;
+    --color-border-control: #52675c;
+    --color-border-interactive: #6f897a;
+    --color-text-primary: #f1f4f5;
+    --color-text-secondary: #c0c7c3;
+    --color-text-tertiary: #98a19c;
+    --color-text-soft: #d4d9d6;
+    --color-text-control: #e8eee9;
+    --color-accent-primary: #86b89a;
+    --color-accent-interpretation: #d88949;
+    --color-status-warning: #d99a5d;
+    --color-status-counter: #c8754c;
+    --color-focus-ring: #9cc8aa;
+    --mint: var(--color-accent-primary);
+    --gold: var(--color-accent-interpretation);
+    --line: var(--color-border-subtle);
+    --chart-series-1: #d77b3b;
+    --chart-series-2: #86b89a;
+    --chart-series-3: #b65f42;
+    --chart-series-4: #9aaa9f;
 }
 
 * {

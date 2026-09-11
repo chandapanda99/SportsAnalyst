@@ -18,6 +18,23 @@ The frontend reads sport-specific options instead of hard-coding one league:
 There is no public generic “execute tool” endpoint. Investigations select and run the plugin behavior supported by the current analysis service. A tool appearing in the
 catalog does not necessarily mean that it produces a separate execution record yet; the status tables below call out that distinction.
 
+### Guided workbench
+
+The options response includes `data_setup`: `required_datasets`, `recommended_datasets`, source `descriptions`, a `label`, and a summary `description`. Each plugin owns its
+quick-setup policy. Older option payloads remain supported through optional frontend metadata and a default backend model; investigation payloads and stored reports are
+unchanged.
+
+The workbench starts with recommended metrics and exposes the full catalog through **Customize metrics**. **About** loads the metric-definition endpoint for interpretation,
+qualifying sample, directionality, formula, and limitations. **Optional breakdowns** is the user-facing name for diagnostic cuts; an empty selection retains the service's
+automatic recommendations.
+
+The **Analysis brief** checks required source coverage, subject, comparison periods, metrics, and question before enabling **Run analysis**. A readiness item focuses the
+relevant section. Data downloads require an explicit click, with local installation status displayed separately from package selection.
+
+Reports display the answer and selected metric changes first, automatically load the first finding's supporting evidence, and place evidence inline on narrow screens. Raw
+source references, caveats, and executed tools remain accessible through expandable details. “Reference period” in the UI corresponds to `baseline` in existing APIs and
+evidence records.
+
 ## Shared investigation contract
 
 Every investigation identifies:
@@ -66,8 +83,8 @@ Small groups can still appear as descriptive context, but they are not promoted 
 
 ### NFL metrics
 
-| Domain  |        Metric         | Definition                                                  |
-|:-------:|:---------------------:|-------------------------------------------------------------|
+|  Domain |        Metric         | Definition                                                  |
+|--------:|:---------------------:|-------------------------------------------------------------|
 | Passing |   EPA per dropback    | Total passing EPA divided by qualifying dropbacks           |
 | Passing |     Success rate      | Share of dropbacks with positive EPA                        |
 | Passing |         CPOE          | Mean completion percentage over expected                    |
@@ -179,23 +196,23 @@ Use `GET /api/sports/nba/options` and the metric-definition endpoint for the exa
 
 ### NBA v1 execution status
 
-|                       Capability                        | Status                                                                                    |
-|:-------------------------------------------------------:|-------------------------------------------------------------------------------------------|
-|                 `compare_time_windows`                  | Implemented for team and player box-score metrics                                         |
-|                 `analyze_season_trends`                 | Implemented as a multi-season chart plus the two selected-window aggregates               |
-|               Traded-player stint filter                | Implemented                                                                               |
-|       `find_representative_possessions` behavior        | Implemented from both windows of synced play-by-play as part of the investigation         |
-|                    Lineup comparison                    | Implemented when compatible lineup seasons are synced for both windows                    |
-|   Local/live-derived V3 possession/lineup enrichment    | Implemented when matching rows are registered; no V3 bulk release is currently advertised |
-|       `analyze_game_trends`, `rank_game_outliers`       | Executed for box-score analyses, with game variability and comparison-window extremes     |
-| `benchmark_against_league`                              | Executed for team analyses when the comparison release contains league rows                |
-| `adjust_for_opponents`                                  | Executed as descriptive schedule context when opponent identities are available            |
-| `compare_shot_profiles`                                 | Executed for shooting analyses from recorded play-by-play shot value/distance              |
-| `compare_player_usage`                                  | Executed for player analyses to separate minutes/involvement from efficiency                |
-| `analyze_lineup_performance`                            | Executed with named units, minutes, possessions, ratings, contribution, and roster status  |
-| `analyze_situational_split`, `decompose_metric_change`  | Catalog surface; selected NBA diagnostic cuts are not yet executed                         |
-| `compare_possession_outcomes`                           | Catalog surface pending validated normalized possession outcomes                           |
-|                  `query_play_by_play`                   | Catalog surface                                                                           |
+|                       Capability                       | Status                                                                                    |
+|:------------------------------------------------------:|-------------------------------------------------------------------------------------------|
+|                 `compare_time_windows`                 | Implemented for team and player box-score metrics                                         |
+|                `analyze_season_trends`                 | Implemented as a multi-season chart plus the two selected-window aggregates               |
+|               Traded-player stint filter               | Implemented                                                                               |
+|       `find_representative_possessions` behavior       | Implemented from both windows of synced play-by-play as part of the investigation         |
+|                   Lineup comparison                    | Implemented when compatible lineup seasons are synced for both windows                    |
+|   Local/live-derived V3 possession/lineup enrichment   | Implemented when matching rows are registered; no V3 bulk release is currently advertised |
+|      `analyze_game_trends`, `rank_game_outliers`       | Executed for box-score analyses, with game variability and comparison-window extremes     |
+|               `benchmark_against_league`               | Executed for team analyses when the comparison release contains league rows               |
+|                 `adjust_for_opponents`                 | Executed as descriptive schedule context when opponent identities are available           |
+|                `compare_shot_profiles`                 | Executed for shooting analyses from recorded play-by-play shot value/distance             |
+|                 `compare_player_usage`                 | Executed for player analyses to separate minutes/involvement from efficiency              |
+|              `analyze_lineup_performance`              | Executed with named units, minutes, possessions, ratings, contribution, and roster status |
+| `analyze_situational_split`, `decompose_metric_change` | Catalog surface; selected NBA diagnostic cuts are not yet executed                        |
+|             `compare_possession_outcomes`              | Catalog surface pending validated normalized possession outcomes                          |
+|                  `query_play_by_play`                  | Catalog surface                                                                           |
 
 Aggregate lineup releases support full regular-season or playoff scopes. Arbitrary date-bounded lineup segments require possession-level lineup data and fail explicitly
 rather than silently applying full-season units. Box-score metric changes include a descriptive 95% game-level interval when each window contains at least two games.

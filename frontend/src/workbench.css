@@ -1,0 +1,738 @@
+/* Guided workbench: a compact, readable layer over the sports theme. */
+.ask-panel {
+    max-width: 1440px;
+    margin: 1.5rem auto 3rem;
+}
+
+.intro-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.intro-grid > * {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.ask-copy {
+    max-width: none;
+    padding: 0;
+}
+
+.ask-copy h2 {
+    font-size: clamp(1.65rem, 2.7vw, 2.6rem);
+    margin: .4rem 0 .6rem;
+}
+
+.ask-copy p {
+    max-width: 75ch;
+    font-size: 1rem;
+}
+
+.topbar h1 {
+    font-size: clamp(1.5rem, 2.4vw, 2.4rem);
+}
+
+.getting-started, .analysis-brief, .metric-info, .methodology, .key-metrics article {
+    border: 1px solid var(--line);
+    border-radius: .8rem;
+    background: var(--color-surface);
+    padding: 1.25rem;
+}
+
+.section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.section-heading h3 {
+    margin: .35rem 0 0;
+}
+
+.getting-started .section-heading {
+    align-items: flex-start;
+}
+
+.getting-started .section-heading p {
+    max-width: 72ch;
+    margin: .55rem 0 0;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+.getting-started .guide-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    padding: 0;
+    margin: 1.25rem 0 0;
+    list-style: none;
+}
+
+.getting-started .guide-steps li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: .8rem;
+    min-height: 12.5rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: .65rem;
+    background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
+}
+
+.guide-icon {
+    display: grid;
+    width: 2.35rem;
+    height: 2.35rem;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--color-border-subtle));
+    border-radius: .6rem;
+    background: color-mix(in srgb, var(--mint) 9%, var(--color-surface-panel));
+    color: var(--mint);
+}
+
+.getting-started .guide-steps small,
+.getting-started .guide-steps b {
+    display: block;
+}
+
+.getting-started .guide-steps small {
+    margin-bottom: .35rem;
+    color: var(--mint);
+    font: 600 .68rem var(--font-mono);
+    letter-spacing: .11em;
+}
+
+.getting-started .guide-steps b {
+    color: var(--color-text-primary);
+    font-size: 1rem;
+}
+
+.getting-started .guide-steps p {
+    margin: .5rem 0 .85rem;
+    line-height: 1.5;
+    font-size: .88rem;
+    color: var(--color-text-secondary);
+}
+
+.getting-started .guide-step-action {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    min-height: 0;
+    padding: .45rem .6rem;
+    color: var(--mint);
+    font-size: .8rem;
+}
+
+.guide-outcome {
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    margin-top: 1rem;
+    padding: .9rem 1rem;
+    border-left: 3px solid var(--mint);
+    background: color-mix(in srgb, var(--mint) 7%, var(--color-surface-raised));
+}
+
+.guide-outcome > .ui-icon {
+    flex: 0 0 auto;
+    margin-top: .15rem;
+    color: var(--mint);
+}
+
+.guide-outcome p,
+.guide-outcome span {
+    margin: 0;
+}
+
+.guide-outcome strong,
+.guide-outcome span {
+    display: block;
+}
+
+.guide-outcome span {
+    margin-top: .25rem;
+    color: var(--color-text-secondary);
+    font-size: .88rem;
+    line-height: 1.45;
+}
+
+.guided-workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, .38fr);
+    gap: 1.5rem;
+    align-items: start;
+    margin-top: 1.5rem;
+}
+
+.configuration {
+    min-width: 0;
+}
+
+.configuration .scope-card, .configuration .metric-card, .configuration .question-field {
+    margin: 0 0 1.25rem;
+    border-radius: .8rem;
+    padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.configuration .question-field {
+    border: 1px solid var(--line);
+    background: var(--color-surface);
+}
+
+.analysis-brief {
+    position: sticky;
+    top: 1.25rem;
+    max-height: calc(100vh - 2.5rem);
+    overflow: auto;
+}
+
+.analysis-brief h3 {
+    font-size: 1.4rem;
+    margin: .6rem 0 1.2rem;
+}
+
+.analysis-brief dl, .metric-info dl, .supporting-evidence dl {
+    margin: 0;
+}
+
+.analysis-brief dt, .metric-info dt {
+    color: var(--color-text-tertiary);
+    font-size: .8rem;
+    margin-top: 1rem;
+}
+
+.analysis-brief dd, .metric-info dd {
+    margin: .3rem 0 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.analysis-brief .primary {
+    margin: 1rem 0 0;
+    width: 100%;
+    font-size: 1rem;
+}
+
+.readiness {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.readiness button {
+    display: flex;
+    gap: .6rem;
+    text-align: left;
+    width: 100%;
+    padding: .5rem 0;
+    background: none;
+    border: 0;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.readiness button span {
+    color: var(--color-status-warning);
+}
+
+.readiness button.ready span {
+    color: var(--mint);
+}
+
+.readiness-message {
+    border-top: 1px solid var(--line);
+    padding-top: 1rem;
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+    font-size: .9rem;
+}
+
+.configuration .scope-controls {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+
+.configuration .domain-selector {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+.configuration .metric-groups {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.configuration .window-grid {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.configuration .window-grid.before-after {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.configuration .scope-heading {
+    flex-wrap: wrap;
+}
+
+.configuration .split-selector {
+    grid-template-columns: 1fr;
+}
+
+.configuration .split-options {
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+}
+
+.metric-explain {
+    margin: -.1rem 0 .8rem 1.8rem;
+}
+
+.metric-info {
+    margin: 1rem 0;
+    border-color: var(--mint);
+}
+
+.metric-info code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.breakdown-details {
+    border-top: 1px solid var(--line);
+    margin-top: 1rem;
+    padding-top: 1rem;
+}
+
+summary {
+    cursor: pointer;
+}
+
+.question-examples {
+    display: grid;
+    gap: .5rem;
+    margin: .75rem 0 1rem;
+}
+
+.question-examples button {
+    text-align: left;
+    line-height: 1.5;
+}
+
+.question-examples .question-more {
+    justify-self: start;
+    border-color: transparent;
+    background: transparent;
+    color: var(--mint);
+    padding-inline: .25rem;
+}
+
+.setup-mode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .65rem;
+    margin: 1rem 0;
+}
+
+.setup-mode button[aria-pressed="true"] {
+    border-color: var(--mint);
+    color: var(--mint);
+}
+
+.data-manager .sync-fields {
+    grid-template-columns: minmax(12rem, .3fr) minmax(0, 1fr);
+}
+
+.data-manager .dataset-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.data-manager .dataset-options label {
+    align-items: start;
+}
+
+.data-manager .dataset-options small {
+    white-space: normal;
+    line-height: 1.5;
+}
+
+.sync-success {
+    border-left: 3px solid var(--mint);
+    padding: 1rem;
+    margin: 1rem 0;
+    background: var(--color-surface-active);
+}
+
+.data-gaps {
+    color: var(--color-text-secondary);
+    font-size: .9rem;
+    line-height: 1.5;
+}
+
+.source-role {
+    color: var(--color-text-primary);
+}
+
+.source-role.required-source {
+    color: var(--mint);
+    font-weight: 700;
+}
+
+.metric-groups label.unavailable {
+    opacity: .78;
+}
+
+.data-manager summary {
+    padding: .9rem 1.1rem;
+}
+
+.data-manager summary small {
+    max-width: none;
+}
+
+.data-setup-header, .data-readiness-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .75rem 1.25rem;
+}
+
+.data-setup-header .sync-guidance {
+    flex: 1 1 22rem;
+    min-width: 0;
+}
+
+.data-manager .setup-mode {
+    margin: 0;
+}
+
+.data-manager .onboarding {
+    gap: .9rem;
+    padding: 1.1rem;
+}
+
+.data-readiness-row {
+    padding-block: .65rem;
+    border-block: 1px solid var(--line);
+}
+
+.data-readiness-row .data-gaps {
+    flex: 1 1 24rem;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.data-readiness-row button {
+    flex: 0 1 auto;
+    min-height: 2.75rem;
+}
+
+.data-manager .sync-fields {
+    align-items: start;
+    gap: 1.25rem;
+}
+
+.data-manager .season-options, .data-manager .dataset-options {
+    max-height: clamp(14rem, 35vh, 20rem);
+    align-content: start;
+}
+
+.data-manager.quick-setup .season-options {
+    max-height: 11rem;
+}
+
+.data-manager.quick-setup .dataset-options {
+    max-height: none;
+    overflow: visible;
+}
+
+.data-manager.nba-data-manager .season-options label {
+    grid-template-columns: .875rem max-content minmax(0, 1fr);
+}
+
+.key-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.key-metrics h3 {
+    font-size: 1rem;
+    line-height: 1.4;
+    margin: 0 0 1rem;
+}
+
+.key-metrics article > div {
+    display: flex;
+    gap: 1.5rem;
+}
+
+.key-metrics span {
+    color: var(--color-text-secondary);
+    font-size: .8rem;
+}
+
+.key-metrics b {
+    display: block;
+    color: var(--color-text-primary);
+    font-size: 1.5rem;
+    margin-top: .4rem;
+}
+
+.key-metrics small {
+    color: var(--color-text-secondary);
+}
+
+.methodology {
+    margin: 1.5rem 0;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.methodology summary {
+    font-weight: 600;
+}
+
+.methodology small {
+    display: block;
+    color: var(--color-text-secondary);
+}
+
+.execution-detail {
+    margin: .75rem 0;
+}
+
+.execution-detail pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.supporting-evidence {
+    padding: .45rem 1rem 1rem;
+    min-width: 0;
+}
+
+.evidence-panel > .supporting-evidence {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.supporting-evidence h3 {
+    margin: 0 0 .85rem;
+    font-size: 1.05rem;
+    line-height: 1.35;
+}
+
+.supporting-evidence .evidence-record {
+    padding: .8rem .85rem;
+    overflow-wrap: anywhere;
+}
+
+.supporting-evidence .evidence-record + .evidence-record {
+    margin-top: .65rem;
+}
+
+.supporting-evidence .evidence-record h4 {
+    margin: 0;
+    font-size: .95rem;
+    line-height: 1.35;
+}
+
+.supporting-evidence dl {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .35rem .8rem;
+    margin-top: .65rem;
+    padding-top: .65rem;
+    font-size: .875rem;
+    line-height: 1.35;
+}
+
+.supporting-evidence dd {
+    margin: 0;
+    max-width: 14rem;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.supporting-evidence dt {
+    color: var(--color-text-secondary);
+}
+
+.supporting-evidence .evidence-record > p {
+    margin-top: .55rem;
+}
+
+.supporting-evidence .evidence-record details {
+    margin-top: .55rem;
+    font-size: .875rem;
+}
+
+.supporting-evidence .evidence-record code {
+    display: block;
+    margin-top: .45rem;
+    color: var(--mint);
+    font-size: .75rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.selected-finding-label {
+    margin: 0;
+    padding: .9rem 1rem .3rem;
+    color: var(--mint);
+    font: .75rem var(--font-mono);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.reading-guide {
+    padding: 1rem 1.25rem;
+    font-size: .9rem;
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+}
+
+.mobile-evidence {
+    display: none;
+}
+
+.rail .mobile-history-toggle {
+    display: none;
+}
+
+.getting-started button, .setup-mode button, .metric-actions > button, .metric-explain, .metric-info > button, .question-examples button, .sync-success button, .supporting-evidence button {
+    border: 1px solid var(--color-border-strong);
+    border-radius: .45rem;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    padding: .55rem .8rem;
+    cursor: pointer;
+    min-height: 2.5rem;
+}
+
+button:focus-visible, summary:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex="-1"]:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 4px;
+}
+
+button:disabled {
+    cursor: not-allowed;
+}
+
+@media (max-width: 1100px) {
+    .guided-workbench {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .analysis-brief {
+        position: static;
+        max-height: none;
+    }
+
+    .getting-started .guide-steps {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .getting-started .guide-steps li {
+        min-height: 0;
+    }
+
+    .report-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .desktop-evidence {
+        display: none;
+    }
+
+    .mobile-evidence {
+        display: block;
+        border-left: 3px solid var(--mint);
+        margin-bottom: 1rem;
+    }
+}
+
+@media (max-width: 900px) {
+    .rail {
+        padding: 1rem;
+    }
+
+    .rail nav {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: .4rem;
+    }
+
+    .rail .nav-label, .rail .recent-report {
+        display: none;
+    }
+
+    .rail .mobile-history-toggle {
+        display: block;
+    }
+
+    .rail.mobile-history-open .nav-label, .rail.mobile-history-open .recent-report {
+        display: block;
+        width: 100%;
+    }
+
+    .brand {
+        padding-bottom: .75rem;
+    }
+
+    .brand .mark {
+        width: 2.5rem;
+        height: 2.5rem;
+    }
+
+    .brand span {
+        font-size: 1.1rem;
+    }
+}
+
+@media (max-width: 650px) {
+    .data-manager .sync-fields, .data-manager.nba-data-manager .sync-fields, .data-manager .dataset-options, .configuration .window-grid, .configuration .window-grid.before-after {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .configuration .window-grid > .arrow {
+        display: none;
+    }
+
+    .scope-heading, .section-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .section-title {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .section-title > small {
+        max-width: 100%;
+        text-align: left;
+    }
+
+    .metric-actions {
+        justify-content: flex-start;
+    }
+
+    .key-metrics {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    main {
+        padding-inline: 1rem;
+    }
+}

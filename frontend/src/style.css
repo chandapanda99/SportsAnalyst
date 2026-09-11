@@ -89,15 +89,40 @@ button, input, textarea, select {
     min-width: 25px
 }
 
-.rail button.new-investigation {
+.rail button.sidebar-action {
     align-items: center;
-    justify-content: center
+    min-height: 44px;
+    padding: 11px 14px;
+    border: 1px solid var(--color-border-subtle);
+    background: var(--color-surface-active);
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 500
 }
 
-.rail button > .new-icon {
+.rail button.sidebar-action:hover,
+.rail button.sidebar-action:focus-visible {
+    border-color: color-mix(in srgb, var(--mint) 48%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--mint) 8%, var(--color-surface-active))
+}
+
+.rail button.sidebar-action.active {
+    border-color: color-mix(in srgb, var(--mint) 38%, var(--color-border-subtle))
+}
+
+.rail button > .sidebar-action-icon {
     display: grid;
+    flex: 0 0 24px;
+    min-width: 24px;
     place-items: center;
-    text-align: center
+    color: var(--mint)
+}
+
+.rail button > .sidebar-action-label {
+    min-width: 0;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap
 }
 
 .rail button div {
@@ -280,17 +305,51 @@ main {
 
 main.sport-background {
     background-color: var(--color-canvas);
-    background-position: center top;
-    background-repeat: repeat-y;
-    background-size: max(100%, 1440px) auto
+    background-position: center top, center top;
+    background-repeat: repeat-y, no-repeat;
+    background-size: max(100%, 1440px) auto, 100% min(900px, 100vh)
 }
 
 main.nfl-background {
-    background-image: url("/NFL/Background/Desktop.svg")
+    background-image: url("/NFL/Background/Desktop.svg"),
+        radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%)
 }
 
 main.nba-background {
-    background-image: url("/NBA/Background/Desktop.svg")
+    background-image: url("/NBA/Background/Desktop.svg"),
+        radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%)
+}
+
+.nba-theme input:not([type="checkbox"]):not([type="radio"]),
+.nba-theme select,
+.nba-theme textarea,
+.nba-theme .season-options {
+    border-color: var(--color-border-control);
+    background-color: var(--color-surface-input);
+    color: var(--color-text-primary)
+}
+
+.nba-theme input::placeholder,
+.nba-theme textarea::placeholder {
+    color: var(--color-text-tertiary);
+    opacity: 1
+}
+
+.nba-theme .season-options label {
+    color: var(--color-text-secondary)
+}
+
+.nba-theme .season-options label.selected {
+    border-color: color-mix(in srgb, var(--mint) 56%, var(--color-border-control));
+    background: color-mix(in srgb, var(--mint) 15%, var(--color-surface-control));
+    color: var(--color-text-primary)
+}
+
+.nba-theme .team-options button:hover,
+.nba-theme .team-options button.active,
+.nba-theme .domain-selector button.active,
+.nba-theme .subject-toggle button.active {
+    background: color-mix(in srgb, var(--mint) 13%, var(--color-surface-active))
 }
 
 .sport-tabs {
@@ -1981,16 +2040,34 @@ button.analyst-bubble:focus-visible,
 
 .section-title {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    padding: 15px 19px;
+    gap: 12px 24px;
+    min-width: 0;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--line);
     font: 12px var(--font-mono);
     letter-spacing: .12em;
     color: var(--color-text-soft)
 }
 
-.section-title small {
-    color: var(--color-text-tertiary)
+.section-title > span {
+    flex: 0 0 auto;
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .1em
+}
+
+.section-title > small {
+    min-width: 0;
+    max-width: min(52%, 38rem);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    letter-spacing: .1em;
+    overflow-wrap: anywhere;
+    text-align: right
 }
 
 .finding {
@@ -2114,6 +2191,18 @@ button.analyst-bubble:focus-visible,
 .evidence-panel > .section-title {
     flex: 0 0 auto;
     margin-bottom: 0
+}
+
+.evidence-panel.empty-evidence-panel {
+    min-height: 240px
+}
+
+.evidence-panel-empty {
+    margin: 0;
+    padding: 22px 20px;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    line-height: 1.55
 }
 
 .evidence-collection-heading {
@@ -2454,6 +2543,19 @@ button.analyst-bubble:focus-visible,
     display: grid
 }
 
+.plays > .section-help {
+    margin: 0;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    color: var(--color-text-secondary);
+    line-height: 1.5
+}
+
+.plays > .empty-state {
+    margin: 20px;
+    line-height: 1.5
+}
+
 .evidence-window-group + .evidence-window-group {
     border-top: 1px solid var(--line)
 }
@@ -2463,7 +2565,7 @@ button.analyst-bubble:focus-visible,
     align-items: baseline;
     justify-content: space-between;
     gap: 16px;
-    padding: 12px 20px;
+    padding: 16px 20px;
     background: color-mix(in srgb, var(--color-surface-raised) 55%, transparent)
 }
 
@@ -2490,7 +2592,7 @@ button.analyst-bubble:focus-visible,
     color: var(--ink);
     border: 0;
     border-bottom: 1px solid var(--line);
-    padding: 15px clamp(16px, 1.35vw, 24px);
+    padding: 16px 20px;
     text-align: left;
     cursor: pointer
 }

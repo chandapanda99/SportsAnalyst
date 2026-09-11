@@ -77,6 +77,12 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert client.get("/api/health").json() == {"status": "ready"}
     assert client.get("/api/capabilities").json()["custom_analysis"] is False
     options = client.get("/api/sports/nfl/options").json()
+    assert options["data_setup"]["required_datasets"] == ["play_by_play"]
+    assert {"schedules", "rosters", "player_stats"} <= set(options["data_setup"]["recommended_datasets"])
+    from sports_analyst.models import AnalysisOptions
+
+    legacy_options = {key: value for key, value in options.items() if key != "data_setup"}
+    assert AnalysisOptions.model_validate(legacy_options).data_setup.required_datasets == []
     assert options["available_seasons"] == [2024, 2025]
     assert {item["value"] for item in options["teams"]} >= {"KC", "BUF"}
     assert {item["value"] for item in options["metrics"]} >= {"epa_per_dropback", "sack_rate"}

@@ -247,7 +247,16 @@ class ComparisonWindowOption(BaseModel):
     description: str
 
 
+class DataSetup(BaseModel):
+    required_datasets: list[str] = Field(default_factory=list)
+    recommended_datasets: list[str] = Field(default_factory=list)
+    descriptions: dict[str, str] = Field(default_factory=dict)
+    label: str = "Recommended data"
+    description: str = "Choose sources for your analysis."
+
+
 class AnalysisOptions(BaseModel):
+    data_setup: DataSetup = Field(default_factory=DataSetup)
     sport: str
     teams: list[TeamOption]
     available_seasons: list[int]

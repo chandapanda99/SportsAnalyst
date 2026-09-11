@@ -386,6 +386,8 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     client = TestClient(create_app(application))
     assert {item["value"] for item in client.get("/api/sports").json()} == {"nfl", "nba"}
     options = client.get("/api/sports/nba/options").json()
+    assert set(options["data_setup"]["required_datasets"]) == {"play_by_play", "schedules", "team_boxscores", "player_boxscores"}
+    assert options["data_setup"]["label"] == "Basketball essentials"
     assert options["available_seasons"] == [2024, 2025]
     assert {item["value"] for item in options["subject_types"]} == {"team", "player"}
     assert "regular_season" in options["segment_availability"]["2025"]

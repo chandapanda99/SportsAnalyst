@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 
@@ -7,6 +7,8 @@ describe('Open Sports Analyst workbench', () => {
 
   beforeEach(() => {
     mockInvestigations = [];
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value)});
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -54,6 +56,7 @@ describe('Open Sports Analyst workbench', () => {
           stage: 'pending', message: 'Investigation is still running', progress: 0.75
         }), { status: 200, headers: { 'content-type': 'application/json' } }));
       }
+      if (url.includes('/metrics/')) return Promise.resolve(new Response(JSON.stringify({label: 'EPA per dropback', interpretation: 'Average change in expected points per dropback.', qualifying_plays: 'Quarterback dropbacks with recorded EPA.', formula: 'mean(epa)', higher_is_better: true, limitations: ['Describes outcomes rather than individual responsibility.']})));
       if (url.endsWith('/thread')) {
         const identifier = url.split('/').at(-2);
         const selected = mockInvestigations.find((item: any) => item.run.investigation_id === identifier) as any;
@@ -77,7 +80,10 @@ describe('Open Sports Analyst workbench', () => {
               { value: 'nba', label: 'NBA', available: true, live_available: false }
             ]
         : url.includes('/sports/nfl/players')
-          ? [{ player_id: '00-0033873', name: 'Patrick Mahomes', teams: ['KC'], positions: ['QB'], seasons: [2024, 2025] }]
+          ? [
+              { player_id: '00-0033873', name: 'Patrick Mahomes', teams: ['KC'], positions: ['QB'], seasons: [2024, 2025] },
+              { player_id: '00-0036322', name: 'Justin Jefferson', teams: ['MIN'], positions: ['WR'], seasons: [2024, 2025] }
+            ]
         : url.includes('/sports/nba/players')
           ? [
               { player_id: '4065648', name: 'Jayson Tatum', teams: ['BOS'], positions: ['SF'], seasons: [2024] },
@@ -86,6 +92,7 @@ describe('Open Sports Analyst workbench', () => {
         : url.endsWith('/sports/nba/options')
           ? {
               sport: 'nba', teams: [{ value: 'BOS', label: 'Boston Celtics' }], available_seasons: [2024, 2025],
+              data_setup: {label: 'Basketball essentials', description: 'Team and player comparisons.', required_datasets: ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'], recommended_datasets: [], descriptions: {}},
               syncable_seasons: [2025, 2024], syncable_datasets: ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores', 'lineups', 'stats_rosters', 'stats_game_rosters', 'player_crosswalk'],
               dataset_min_seasons: { play_by_play: 2002, schedules: 2002, team_boxscores: 2002, player_boxscores: 2002, lineups: 2008, stats_rosters: 1997, stats_game_rosters: 1997, player_crosswalk: 2026 },
               dataset_available_seasons: { play_by_play: [2024, 2025], schedules: [2024, 2025], team_boxscores: [2024, 2025], player_boxscores: [2024, 2025], lineups: [2024, 2025], stats_rosters: [2024, 2025], stats_game_rosters: [2024, 2025], player_crosswalk: [2026] },
@@ -112,7 +119,7 @@ describe('Open Sports Analyst workbench', () => {
               ]
             }
         : url.endsWith('/datasets') || url.includes('/datasets?sport=')
-          ? [
+          ? url.includes('sport=nba') ? [2024, 2025].flatMap(season => ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'].map(dataset => ({dataset, season, sport: 'nba'}))) : [
               { dataset: 'play_by_play', season: 2024 },
               { dataset: 'rosters', season: 2024 },
               { dataset: 'injuries', season: 2024 },
@@ -173,13 +180,93 @@ describe('Open Sports Analyst workbench', () => {
 
   it('renders the scoped investigation entry point without model credentials', async () => {
     render(App);
-    expect(await screen.findByText('Analyze and Discuss Football Play-by-Play Data!')).toBeTruthy();
+    expect(await screen.findByText('Football analysis')).toBeTruthy();
     expect(screen.getByText('Deterministic Mode')).toBeTruthy();
-    expect(screen.getByText('Define Comparison')).toBeTruthy();
+    expect(screen.getByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.getByLabelText('NFL team')).toBeTruthy();
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
-    expect(screen.getByText('Manage Local nflverse Data')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Start investigation/i })).toBeTruthy();
+    expect(await screen.findByText('Data ready · Manage data')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Run analysis/i })).toBeTruthy();
+  });
+
+  it('guides an empty library through explicit quick setup and remembers onboarding dismissal', async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    let downloaded = false;
+    let progress!: {onmessage: ((event: MessageEvent) => void) | null};
+    vi.stubGlobal('EventSource', class {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror = null;
+      constructor() { progress = this; }
+      close() {}
+    });
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/datasets?sport=')) return new Response(JSON.stringify(downloaded ? [2024, 2025].flatMap(season => ['play_by_play', 'rosters'].map(dataset => ({season, dataset, sport: 'nfl'}))) : []));
+      if (url.endsWith('/sports/nfl/options')) {
+        const options = await (await defaultFetch(input, init)).json();
+        options.available_seasons = downloaded ? [2024, 2025] : [];
+        options.data_setup = {label: 'Football essentials', description: 'Plays and player identities.', required_datasets: ['play_by_play'], recommended_datasets: ['rosters'], descriptions: {rosters: 'Player names and teams.'}};
+        return new Response(JSON.stringify(options));
+      }
+      return defaultFetch(input, init);
+    });
+    render(App);
+    expect(await screen.findByText('Football essentials')).toBeTruthy();
+    expect(screen.getByRole('region', {name: 'How it works'})).toBeTruthy();
+    expect(screen.queryByRole('checkbox', {name: 'Injuries'})).toBeNull();
+    expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    await fireEvent.click(screen.getByRole('button', {name: 'Download 2 sources for 2 seasons'}));
+    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/nfl/sync'))!;
+    expect(JSON.parse(String(syncCall[1]?.body))).toEqual({seasons: [2025, 2024], datasets: ['play_by_play', 'rosters']});
+    downloaded = true;
+    await waitFor(() => expect(progress.onmessage).toBeTruthy());
+    progress.onmessage?.({data: JSON.stringify({stage: 'complete', message: 'Download finished', progress: 1})} as MessageEvent);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));
+    expect(document.activeElement?.id).toBe('scope-heading');
+    const team = screen.getByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.keyDown(team, {key: 'ArrowDown'});
+    await fireEvent.keyDown(team, {key: 'Enter'});
+    await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', {name: 'Dismiss guide'}));
+    cleanup();
+    render(App);
+    await screen.findByText('Data ready · Manage data');
+    expect(screen.queryByRole('region', {name: 'How it works'})).toBeNull();
+    await fireEvent.click(screen.getByRole('button', {name: 'Getting Started'}));
+    const guide = await screen.findByRole('region', {name: 'How it works'});
+    expect(guide).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(guide));
+    expect(screen.getByRole('button', {name: 'Getting Started'}).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('explains readiness and retains custom metrics and questions through period and sport changes', async () => {
+    render(App);
+    await screen.findByRole('button', {name: /Passing.*Quarterback/});
+    await fireEvent.click(screen.getByRole('button', {name: /Choose a team or player/}));
+    expect(document.activeElement?.id).toBe('scope-heading');
+    await fireEvent.click(screen.getByRole('button', {name: 'Customize metrics'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'About EPA/dropback'}));
+    expect(await screen.findByText('mean(epa)')).toBeTruthy();
+    expect(screen.getByText('Higher is generally better')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Close explanation'}));
+    await fireEvent.click(screen.getByRole('checkbox', {name: /Success rate/}));
+    await fireEvent.change(screen.getByLabelText('From season'), {target: {value: '2023'}});
+    await waitFor(() => expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).checked).toBe(true);
+    await fireEvent.change(screen.getByLabelText('From season'), {target: {value: '2024'}});
+    await waitFor(() => expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).disabled).toBe(false));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'My own football question'}});
+    await fireEvent.click(screen.getByRole('button', {name: /NBA.*Bulk data mode/}));
+    await screen.findByRole('button', {name: /Offense.*Team offense/});
+    await fireEvent.click(screen.getByRole('button', {name: 'NFL'}));
+    await screen.findByRole('button', {name: /Passing.*Quarterback/});
+    expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Your Question:') as HTMLTextAreaElement).value).toBe('My own football question');
+    await fireEvent.click(screen.getByRole('button', {name: 'Clear All Metrics'}));
+    expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Choose at least one available metric to run your analysis.')).toBeTruthy();
   });
 
   it('waits for backend readiness before requesting the workspace catalog', async () => {
@@ -202,7 +289,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => !url.endsWith('/api/health'))).toHaveLength(0);
 
     releaseHealth();
-    expect(await screen.findByText('Analyze and Discuss Football Play-by-Play Data!')).toBeTruthy();
+    expect(await screen.findByText('Football analysis')).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/sports/nfl/options'))).toBe(true));
   });
 
@@ -251,7 +338,7 @@ describe('Open Sports Analyst workbench', () => {
     const team = await screen.findByRole('combobox', {name: 'NFL team'});
     await fireEvent.focus(team);
     await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
-    await fireEvent.click(screen.getByRole('button', {name: /Start investigation/i}));
+    await fireEvent.click(screen.getByRole('button', {name: /Run analysis/i}));
 
     expect((await screen.findAllByText('The completed analysis response is now visible.')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
@@ -263,6 +350,7 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
     expect(document.querySelector('main')?.classList.contains('nfl-background')).toBe(true);
+    expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
     const nflTeam = await screen.findByRole('combobox', { name: 'NFL team' });
     await fireEvent.focus(nflTeam);
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
@@ -270,12 +358,15 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nba');
     expect(document.querySelector('main')?.classList.contains('nba-background')).toBe(true);
-    expect(await screen.findByText('Analyze and Discuss Basketball Play-by-Play Data!')).toBeTruthy();
+    expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(true);
+    expect(await screen.findByText('Basketball analysis')).toBeTruthy();
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
+    await fireEvent.click(screen.getByText(/Data ready · Manage data|Prepare your data/, {selector: 'strong'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
-    expect(screen.getByText('not offered for selected seasons')).toBeTruthy();
+    expect(screen.getByText(/not offered for selected seasons/)).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
     const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLInputElement;
     await fireEvent.focus(player);
@@ -289,6 +380,10 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.queryByRole('option', { name: /Jaylen Brown/i })).toBeNull();
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Jayson Tatum/ }));
     expect(player.value).toBe('Jayson Tatum · BOS');
+    expect(screen.getByRole('button', {name: /Jayson Tatum's scoring.*rim pressure.*perimeter volume/i})).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Show 6 more examples'}));
+    expect(screen.getByRole('button', {name: /opponent.*venue.*rest.*Jayson Tatum's scoring comparison/i})).toBeTruthy();
+    expect(screen.getByRole('button', {name: 'Show fewer examples'})).toBeTruthy();
     expect(player.getAttribute('aria-invalid')).toBe('false');
     const playerSeasonSelectors = screen.getAllByLabelText('Season') as HTMLSelectElement[];
     expect(playerSeasonSelectors).toHaveLength(2);
@@ -298,6 +393,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'NFL' }));
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
     expect(document.querySelector('main')?.classList.contains('nfl-background')).toBe(true);
+    expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
     const restored = await screen.findByRole('combobox', { name: 'NFL team' }) as HTMLInputElement;
     await waitFor(() => expect(restored.value).toBe('Kansas City Chiefs (KC)'));
   });
@@ -317,6 +413,17 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.queryByRole('checkbox', { name: 'Down' })).toBeNull();
     expect(screen.getByText(/Team-oriented diagnostic cuts are disabled/)).toBeTruthy();
 
+    const player = screen.getByRole('combobox', {name: 'Player'});
+    await fireEvent.focus(player);
+    await fireEvent.input(player, {target: {value: 'Justin Jefferson'}});
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Justin Jefferson/}));
+    expect(screen.getByRole('checkbox', {name: /EPA\/target/})).toBeTruthy();
+    expect(screen.getByRole('button', {name: /Justin Jefferson's production.*target volume/i})).toBeTruthy();
+    expect(screen.queryByRole('button', {name: /^Quarterback/})).toBeNull();
+    expect(screen.queryByRole('button', {name: /quarterback's EPA per dropback/i})).toBeNull();
+    await fireEvent.click(screen.getByRole('button', {name: 'Show 5 more examples'}));
+    expect(screen.getByRole('button', {name: /reliable.*receiving trend.*recorded targets/i})).toBeTruthy();
+
     await fireEvent.click(screen.getByRole('button', { name: 'Team' }));
 
     expect(await screen.findByRole('button', { name: /Passing.*Quarterback dropbacks/ })).toBeTruthy();
@@ -334,6 +441,8 @@ describe('Open Sports Analyst workbench', () => {
     }
     vi.stubGlobal('EventSource', IdleEventSource);
     render(App);
+    await fireEvent.click(await screen.findByText('Data ready · Manage data'));
+    await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
     const season2024 = await screen.findByRole('checkbox', { name: '2024 season' }) as HTMLInputElement;
     const season2025 = screen.getByRole('checkbox', { name: '2025 season' }) as HTMLInputElement;
     const playByPlay = await screen.findByRole('checkbox', { name: /Play By Play/ }) as HTMLInputElement;
@@ -345,8 +454,8 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(season2025);
 
     expect(playByPlay.checked).toBe(true);
-    expect(rosters.checked).toBe(true);
-    expect(injuries.checked).toBe(true);
+    expect(rosters.checked).toBe(false);
+    expect(injuries.checked).toBe(false);
     expect(rosters.indeterminate).toBe(false);
     expect(screen.getByLabelText('Rosters local status: Installed')).toBeTruthy();
 
@@ -354,9 +463,9 @@ describe('Open Sports Analyst workbench', () => {
 
     expect(playByPlay.checked).toBe(true);
     expect(playByPlay.indeterminate).toBe(false);
-    expect(rosters.checked).toBe(true);
+    expect(rosters.checked).toBe(false);
     expect(rosters.indeterminate).toBe(false);
-    expect(injuries.checked).toBe(true);
+    expect(injuries.checked).toBe(false);
     expect(injuries.indeterminate).toBe(false);
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
@@ -369,7 +478,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
-    await fireEvent.click(screen.getByRole('button', { name: /Sync Selected Data/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Download .* sources/ }));
     await waitFor(() => expect(progressUrl).toBe('/api/dataset-jobs/sync-running/events?timeout_seconds=640'));
   });
 
@@ -397,7 +506,7 @@ describe('Open Sports Analyst workbench', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
 
     render(App);
-    expect(await screen.findByText('Define Comparison')).toBeTruthy();
+    expect(await screen.findByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.queryByText('The follow-up found a consistent shift.')).toBeNull();
     await fireEvent.click(await screen.findByText('Which games changed the most?'));
     expect(await screen.findByText('Was it consistent across the sample?')).toBeTruthy();
@@ -444,7 +553,7 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     await fireEvent.click(await screen.findByText('Which plays explain the change?'));
 
-    expect(await screen.findByText('Baseline window')).toBeTruthy();
+    expect(await screen.findByText('Reference period')).toBeTruthy();
     expect(screen.getByText('Comparison window')).toBeTruthy();
     expect(screen.getByText('1 of 160 qualifying plays selected')).toBeTruthy();
     expect(screen.getByText('Typical')).toBeTruthy();
@@ -473,15 +582,15 @@ describe('Open Sports Analyst workbench', () => {
     const first = await screen.findByRole('button', { name: 'Inspect evidence for finding 1' });
     const second = screen.getByRole('button', { name: 'Inspect evidence for finding 2' });
 
-    await fireEvent.click(first);
-    expect(await screen.findByText('2 evidence records')).toBeTruthy();
-    expect(screen.getByText('Evidence evidence-shared')).toBeTruthy();
-    expect(screen.getByText('Evidence evidence-one')).toBeTruthy();
+    const evidencePanel = within(document.querySelector('.desktop-evidence') as HTMLElement);
+    expect(await evidencePanel.findByText('Evidence evidence-shared')).toBeTruthy();
+    expect(evidencePanel.getByText('Evidence evidence-one')).toBeTruthy();
     expect(first.getAttribute('aria-pressed')).toBe('true');
     expect(second.getAttribute('aria-pressed')).toBe('false');
 
     await fireEvent.click(second);
-    expect(await screen.findByText('Evidence evidence-two')).toBeTruthy();
+    expect(await evidencePanel.findByText('Evidence evidence-two')).toBeTruthy();
+    expect(evidencePanel.queryByText('Evidence evidence-one')).toBeNull();
     expect(first.getAttribute('aria-pressed')).toBe('false');
     expect(second.getAttribute('aria-pressed')).toBe('true');
   });
