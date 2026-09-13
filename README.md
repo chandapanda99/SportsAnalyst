@@ -144,6 +144,10 @@ AWS_SECRET_ACCESS_KEY=...
 not compete to update one remote catalog. On startup, each instance rebuilds its local DuckDB index from those metadata objects and downloads Parquet datasets or report
 artifacts only when requested.
 
+Browser-initiated dataset sync uses one streamed `POST` request for both the download and its progress. Keeping the work attached to the response prevents an autoscaled
+cloud request from losing an in-memory job when a follow-up progress request reaches another instance. S3-compatible persistence is still required in cloud deployments so
+the completed dataset remains available after scale-to-zero, restarts, and requests routed to other instances.
+
 The repository pins Python 3.13 in both `pyproject.toml` and `.python-version`. Before each deployment, update the lockfile when dependencies change, build the frontend, and
 deploy from the repository root:
 
@@ -447,7 +451,7 @@ FastAPI exposes:
 |      Area      | Endpoints                                                                                                                                                                                |
 |:--------------:|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |    Runtime     | `GET /api/capabilities`, `GET /api/sports`                                                                                                                                               |
-|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync`, `GET /api/dataset-jobs/{id}/events`                                                                                |
+|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync-stream`; legacy clients may use `POST /api/datasets/{sport}/sync` plus `GET /api/dataset-jobs/{id}/events`              |
 | Sport catalog  | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players`                                        |
 | Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status` |
 |  Conversation  | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups`                                                                                                        |

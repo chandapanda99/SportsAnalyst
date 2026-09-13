@@ -44,6 +44,14 @@ export const api = {
   sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
   }),
+  syncStream: async (sport: string, seasons: number[], datasets: string[]) => {
+    const response = await fetch(`/api/datasets/${sport}/sync-stream`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+    if (!response.body) throw new Error('Dataset progress streaming is not supported by this browser.');
+    return response.body;
+  },
   investigate: (request: InvestigationRequest) =>
     json<{ investigation_id: string }>('/api/investigations', {
       method: 'POST', headers: { 'content-type': 'application/json' },

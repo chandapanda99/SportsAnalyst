@@ -2,49 +2,73 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import socket
+import sys
 import threading
 import time
 import urllib.request
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from sports_analyst.desktop_config import DesktopConfigStore
+
+
+def _setup_icon_data_uri() -> str:
+    """Embed the product logo because the setup page is shown before the web server starts."""
+    candidates = []
+    if bundle_root := getattr(sys, "_MEIPASS", None):
+        candidates.append(Path(bundle_root) / "frontend" / "dist" / "favicon.svg")
+    candidates.append(Path(__file__).resolve().parents[2] / "frontend" / "public" / "favicon.svg")
+    for candidate in candidates:
+        if candidate.is_file():
+            encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+            return f"data:image/svg+xml;base64,{encoded}"
+    return ""
+
+
+SETUP_ICON_DATA_URI = _setup_icon_data_uri()
 
 SETUP_HTML = """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Open Sports Analyst Setup</title><style>
 :root{color-scheme:dark;font-family:Inter,Segoe UI,sans-serif;background:#06131f;color:#edf7ff}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:radial-gradient(circle at 80% 0,#15394a 0,transparent 38%),#06131f}
-main{width:min(760px,100%);border:1px solid #29495d;background:#0a1c2c;padding:34px;box-shadow:0 24px 80px #0008}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;background:radial-gradient(circle at 80% 0,#15394a 0,transparent 38%),#06131f}
+main{width:min(820px,100%);border:1px solid #29495d;background:#0a1c2c;padding:34px;box-shadow:0 24px 80px #0008}
 .eyebrow{color:#68e0c3;font:12px Consolas,monospace;letter-spacing:.14em}.heading{display:flex;gap:18px;align-items:center;margin-bottom:28px}.mark{width:58px;height:58px}
 h1{font-size:29px;margin:5px 0 3px}p{color:#a7bfd0;line-height:1.5;margin:0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin:26px 0}
-label{display:grid;gap:6px;color:#bcd0dd;font-size:12px}.wide{grid-column:1/-1}input,select{width:100%;border:1px solid #31556a;background:#071625;color:#eef8ff;padding:11px 12px;outline:none}
+label{display:grid;gap:6px;color:#d7e5ee;font-size:12px}.wide{grid-column:1/-1}.provider-fields{display:contents}.field-name{display:flex;align-items:baseline;gap:6px}.required{color:#68e0c3;font-weight:700}.optional{color:#829cab;font-weight:400}.hint{color:#8faaba;font-size:11px;line-height:1.45;margin-top:-1px}.field-key .hint{color:#b9cbd5}.form-note{grid-column:1/-1;color:#8faaba;font-size:11px;margin:-3px 0 0}.form-note .required{margin-right:3px}input,select{width:100%;border:1px solid #31556a;background:#071625;color:#eef8ff;padding:11px 12px;outline:none}
 input:focus,select:focus{border-color:#68e0c3;box-shadow:0 0 0 2px #68e0c322}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center}
-button{border:1px solid #376276;background:#10283a;color:#eaf7ff;padding:11px 18px;cursor:pointer}button.primary{background:#68e0c3;color:#03211b;border-color:#68e0c3;font-weight:700}
+input:invalid:not(:placeholder-shown){border-color:#d88b62}button{border:1px solid #376276;background:#10283a;color:#eaf7ff;padding:11px 18px;cursor:pointer}button.primary{background:#68e0c3;color:#03211b;border-color:#68e0c3;font-weight:700}
 #status{min-height:20px;color:#f0ad78;font-size:12px}@media(max-width:620px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 </style></head><body><main>
-<div class="heading"><img class="mark" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='22' fill='%23071320' stroke='%2368e0c3'/%3E%3Cpath d='M16 30v-9l8-5 8 5v9l-8 5z' fill='none' stroke='%2368e0c3' stroke-width='2'/%3E%3Cpath d='M24 16v19M16 21l16 9M32 21l-16 9' stroke='%2368e0c3'/%3E%3C/svg%3E"><div><span class="eyebrow">FIRST-RUN SETUP</span><h1>Open Sports Analyst</h1><p>Configure a model provider, or continue in deterministic mode and change this later.</p></div></div>
+<div class="heading"><img class="mark" src="__SETUP_ICON_DATA_URI__" alt="Open Sports Analyst logo"><div><span class="eyebrow">FIRST-RUN SETUP</span><h1>Open Sports Analyst</h1><p>Configure a model provider, or continue in deterministic mode and change this later.</p></div></div>
 <form id="setup"><div class="grid">
-<label>Provider<select name="MODEL_PROVIDER" id="provider"><option value="azure_foundry">Azure Foundry</option><option value="ollama">Ollama</option></select></label>
-<label>Analysis model<input name="MODEL" placeholder="gpt-5.6-luna"></label>
-<label>Chat model (optional)<input name="CHAT_MODEL" placeholder="Summary and follow-up wording"></label>
-<label>Reasoning effort<select name="REASONING_EFFORT"><option>medium</option><option>low</option><option>high</option><option>xhigh</option></select></label>
-<label class="wide azure">Foundry endpoint<input name="FOUNDRY_ENDPOINT" placeholder="https://…openai.azure.com/openai/v1/"></label>
-<label class="wide azure">Foundry API key<input name="FOUNDRY_API_KEY" type="password" autocomplete="off" placeholder="Stored in Windows Credential Manager"></label>
-<label class="wide ollama" hidden>Ollama URL<input name="OLLAMA_BASE_URL" value="http://127.0.0.1:11434"></label>
-<label class="wide ollama" hidden>Ollama model<input name="OLLAMA_MODEL" value="qwen3:8b"></label>
+<label><span class="field-name">Provider <span class="required" aria-hidden="true">*</span></span><select name="MODEL_PROVIDER" id="provider" required><option value="azure_foundry">Azure Foundry</option><option value="ollama">Ollama</option></select></label>
+<p class="form-note"><span class="required" aria-hidden="true">*</span> Required field</p>
+<div class="provider-fields azure" data-provider="azure_foundry">
+<label><span class="field-name">Analysis model <span class="required" aria-hidden="true">*</span></span><input name="MODEL" placeholder="e.g. gpt-5.6-luna" required></label>
+<label><span class="field-name">Reasoning effort <span class="optional">Optional</span></span><select name="REASONING_EFFORT"><option>medium</option><option>low</option><option>high</option><option>xhigh</option></select></label>
+<label class="wide"><span class="field-name">Foundry endpoint <span class="required" aria-hidden="true">*</span></span><input name="FOUNDRY_ENDPOINT" type="url" placeholder="https://…openai.azure.com/openai/v1/" required><span class="hint">The endpoint for your Azure Foundry resource; it must end with /openai/v1/.</span></label>
+<label class="wide field-key"><span class="field-name">Foundry API key <span class="required">Required unless already authenticated</span></span><input name="FOUNDRY_API_KEY" type="password" autocomplete="off" placeholder="Enter an API key or use your existing Azure sign-in"><span class="hint">Leave blank only if you have already authenticated to this specific Azure Foundry resource. If entered, the key is stored securely in Windows Credential Manager.</span></label>
+</div>
+<div class="provider-fields ollama" data-provider="ollama" hidden>
+<label class="wide"><span class="field-name">Ollama URL <span class="required" aria-hidden="true">*</span></span><input name="OLLAMA_BASE_URL" type="url" value="http://127.0.0.1:11434" required><span class="hint">The address of the Ollama service running on this computer or your network.</span></label>
+<label class="wide"><span class="field-name">Ollama model <span class="required" aria-hidden="true">*</span></span><input name="OLLAMA_MODEL" value="qwen3:8b" required><span class="hint">Use the exact name shown by Ollama, including its tag when applicable.</span></label>
+</div>
+<label class="wide"><span class="field-name">Chat model <span class="optional">Optional</span></span><input name="CHAT_MODEL" placeholder="Defaults to the provider's analysis model"><span class="hint">Only needed if summaries and follow-up responses should use a different model.</span></label>
 </div><div id="status"></div><div class="actions"><button type="button" id="skip">Use deterministic mode</button><button class="primary" type="submit">Save and launch</button></div></form>
 </main><script>
 const form=document.querySelector('#setup'), provider=document.querySelector('#provider'), status=document.querySelector('#status');
-function fields(){document.querySelectorAll('.azure').forEach(e=>e.hidden=provider.value!=='azure_foundry');document.querySelectorAll('.ollama').forEach(e=>e.hidden=provider.value!=='ollama')}
+function fields(){document.querySelectorAll('[data-provider]').forEach(group=>{const active=group.dataset.provider===provider.value;group.hidden=!active;group.querySelectorAll('input, select').forEach(control=>control.disabled=!active)})}
 provider.addEventListener('change',fields);fields();
 async function save(payload){status.textContent='Starting the local analysis service…';try{const result=await window.pywebview.api.save_configuration(payload);if(!result.ok)throw new Error(result.error);location.replace(result.url)}catch(error){status.textContent=String(error)}}
 form.addEventListener('submit',event=>{event.preventDefault();save(Object.fromEntries(new FormData(form).entries()))});
 document.querySelector('#skip').addEventListener('click',()=>save({MODEL_PROVIDER:'azure_foundry',MODEL:'',CHAT_MODEL:'',FOUNDRY_ENDPOINT:''}));
 </script></body></html>
-"""
+""".replace("__SETUP_ICON_DATA_URI__", SETUP_ICON_DATA_URI)
 
 
 class DesktopController:

@@ -46,10 +46,12 @@ describe('Open Sports Analyst workbench', () => {
           status: 200, headers: { 'content-type': 'application/json' }
         }));
       }
-      if (init?.method === 'POST' && /\/api\/datasets\/[^/]+\/sync$/.test(url)) {
-        return Promise.resolve(new Response(JSON.stringify({ job_id: 'sync-running', timeout_seconds: 640 }), {
-          status: 202, headers: { 'content-type': 'application/json' }
-        }));
+      if (init?.method === 'POST' && /\/api\/datasets\/[^/]+\/sync-stream$/.test(url)) {
+        return Promise.resolve(new Response(
+          'data: {"stage":"downloading","message":"Downloading data","progress":0.5}\n\n' +
+          'data: {"stage":"complete","message":"Dataset sync complete","progress":1}\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        ));
       }
       if (url.endsWith('/status')) {
         return Promise.resolve(new Response(JSON.stringify({
@@ -192,13 +194,6 @@ describe('Open Sports Analyst workbench', () => {
   it('guides an empty library through explicit quick setup and remembers onboarding dismissal', async () => {
     const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
     let downloaded = false;
-    let progress!: {onmessage: ((event: MessageEvent) => void) | null};
-    vi.stubGlobal('EventSource', class {
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror = null;
-      constructor() { progress = this; }
-      close() {}
-    });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes('/datasets?sport=')) return new Response(JSON.stringify(downloaded ? [2024, 2025].flatMap(season => ['play_by_play', 'rosters'].map(dataset => ({season, dataset, sport: 'nfl'}))) : []));
@@ -207,6 +202,10 @@ describe('Open Sports Analyst workbench', () => {
         options.available_seasons = downloaded ? [2024, 2025] : [];
         options.data_setup = {label: 'Football essentials', description: 'Plays and player identities.', required_datasets: ['play_by_play'], recommended_datasets: ['rosters'], descriptions: {rosters: 'Player names and teams.'}};
         return new Response(JSON.stringify(options));
+      }
+      if (url.endsWith('/datasets/nfl/sync-stream')) {
+        downloaded = true;
+        return defaultFetch(input, init);
       }
       return defaultFetch(input, init);
     });
@@ -217,11 +216,8 @@ describe('Open Sports Analyst workbench', () => {
     expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     await fireEvent.click(screen.getByRole('button', {name: 'Download 2 sources for 2 seasons'}));
-    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/nfl/sync'))!;
+    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))!;
     expect(JSON.parse(String(syncCall[1]?.body))).toEqual({seasons: [2025, 2024], datasets: ['play_by_play', 'rosters']});
-    downloaded = true;
-    await waitFor(() => expect(progress.onmessage).toBeTruthy());
-    progress.onmessage?.({data: JSON.stringify({stage: 'complete', message: 'Download finished', progress: 1})} as MessageEvent);
     await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));
     expect(document.activeElement?.id).toBe('scope-heading');
     const team = screen.getByRole('combobox', {name: 'NFL team'});
@@ -432,11 +428,10 @@ describe('Open Sports Analyst workbench', () => {
   });
 
   it('keeps package selection independent from local-installation badges', async () => {
-    let progressUrl = '';
     class IdleEventSource {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: (() => void) | null = null;
-      constructor(url: string) { progressUrl = url; }
+      constructor(_url: string) {}
       close() {}
     }
     vi.stubGlobal('EventSource', IdleEventSource);
@@ -479,7 +474,9 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
     await fireEvent.click(screen.getByRole('button', { name: /Download .* sources/ }));
-    await waitFor(() => expect(progressUrl).toBe('/api/dataset-jobs/sync-running/events?timeout_seconds=640'));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
+      String(input) === '/api/datasets/nfl/sync-stream' && init?.method === 'POST'
+    )).toBe(true));
   });
 
   it('groups follow-ups as a saved conversation and deletes the full thread', async () => {

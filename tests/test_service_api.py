@@ -26,6 +26,29 @@ class RecordingTelemetry:
         return
 
 
+def test_dataset_sync_stream_keeps_work_and_progress_in_one_request(tmp_path: Path, monkeypatch) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    captured: dict[str, object] = {}
+
+    def sync(seasons, job_id, datasets, sport):
+        captured.update(seasons=seasons, datasets=datasets, sport=sport)
+        application.events.emit(job_id, "downloading", "Downloading selected datasets", 0.5)
+        application.events.emit(job_id, "complete", "Dataset sync complete", 1.0, manifest_ids=[])
+        return []
+
+    monkeypatch.setattr(application, "sync", sync)
+    response = TestClient(create_app(application)).post(
+        "/api/datasets/nfl/sync-stream",
+        json={"seasons": [2024, 2025], "datasets": ["play_by_play"]},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"stage": "downloading"' in response.text
+    assert '"stage": "complete"' in response.text
+    assert captured == {"seasons": [2024, 2025], "datasets": ["play_by_play"], "sport": "nfl"}
+
+
 def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch) -> None:
     settings = Settings(data_dir=tmp_path, foundry_endpoint="")
     application = AnalystApplication(settings)

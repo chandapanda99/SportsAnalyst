@@ -1540,6 +1540,38 @@
     };
   }
 
+  async function streamDatasetSync(body: ReadableStream<Uint8Array>, complete: () => Promise<void>, onSettled: () => void) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value, {stream: !done});
+        const messages = buffer.split(/\r?\n\r?\n/);
+        buffer = messages.pop() ?? '';
+        for (const message of messages) {
+          const data = message.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
+          if (!data) continue;
+          const event = JSON.parse(data);
+          stage = event.message;
+          progress = event.progress;
+          if (event.stage === 'failed') throw new Error(event.message);
+          if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
+          if (event.stage === 'complete') {
+            await complete();
+            return;
+          }
+        }
+        if (done) throw new Error('The data-sync connection ended before the download completed.');
+      }
+    } finally {
+      reader.releaseLock();
+      busy = false;
+      onSettled();
+    }
+  }
+
   async function runAnalysis() {
     if (!canRun || !resolvedSubject) return;
     error = '';
@@ -1619,21 +1651,13 @@
     stage = 'Preparing data sync';
     progress = 0.03;
     try {
-      const {job_id, timeout_seconds} = await api.sync(activeSport, requestedSeasons, requestedDatasets);
-      const timeout = Math.max(30, Math.min(3_600, Number(timeout_seconds) || 120));
-      stream(
-          `/api/dataset-jobs/${job_id}/events?timeout_seconds=${timeout}`,
-          async () => {
-            await refresh();
-            syncComplete = true;
-          },
-          undefined,
-          () => {
-            syncing = false;
-          },
-          'The data sync is still running after its extended progress window. Refresh the data catalog to check completed packages.',
-          'The data-sync progress connection was interrupted. Refresh the data catalog to check completed packages.'
-      );
+      const body = await api.syncStream(activeSport, requestedSeasons, requestedDatasets);
+      await streamDatasetSync(body, async () => {
+        await refresh();
+        syncComplete = true;
+      }, () => {
+        syncing = false;
+      });
     } catch (problem) {
       error = String(problem);
       busy = false;

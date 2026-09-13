@@ -128,6 +128,24 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         background_tasks.add_task(execute)
         return {"job_id": job_id, "timeout_seconds": timeout_seconds}
 
+    @api.post("/api/datasets/{sport}/sync-stream")
+    async def sync_datasets_stream(sport: str, request: SyncRequest) -> StreamingResponse:
+        """Keep cloud dataset work and progress on one request and one application instance."""
+        try:
+            service._sport(sport)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        job_id = stable_id(
+            "sync",
+            {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+        )
+        timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
+        return StreamingResponse(
+            _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @api.get("/api/dataset-jobs/{job_id}/events")
     async def dataset_events(job_id: str, timeout_seconds: int | None = Query(default=None, ge=30, le=3_600)) -> StreamingResponse:
         return StreamingResponse(
@@ -289,6 +307,33 @@ async def _event_stream(
             "progress": 0.95,
         }
     )
+
+
+async def _dataset_sync_stream(
+        service: AnalystApplication,
+        job_id: str,
+        sport: str,
+        seasons: list[int],
+        datasets: list[str] | None,
+        timeout_seconds: float,
+):
+    """Run a blocking dataset sync while its SSE response keeps the hosting instance active."""
+
+    def execute() -> None:
+        try:
+            service.sync(seasons, job_id, datasets, sport)
+        except Exception as error:
+            logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
+            logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
+            service.events.emit(job_id, "failed", str(error), 1.0)
+
+    task = asyncio.create_task(asyncio.to_thread(execute))
+    try:
+        async for event in _event_stream(service, job_id, timeout_seconds=timeout_seconds):
+            yield event
+    finally:
+        if task.done():
+            await task
 
 
 app = create_app()
