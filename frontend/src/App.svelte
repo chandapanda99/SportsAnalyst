@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onMount, tick} from 'svelte';
   import {api} from './api';
+  import type {EventStreamResponse} from './api';
   import Chart from './Chart.svelte';
   import SupportingEvidence from './SupportingEvidence.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
@@ -1406,6 +1407,8 @@
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
+  class ReportedInvestigationFailure extends Error {}
+
   function isMetricRowChart(specification: Record<string, unknown>) {
     return (specification.usermeta as { chartKind?: string } | undefined)?.chartKind === 'metric-rows';
   }
@@ -1468,10 +1471,45 @@
     throw lastError;
   }
 
-  async function streamInvestigation(body: ReadableStream<Uint8Array>) {
-    const reader = body.getReader();
+  async function recoverInterruptedInvestigation(investigationId: string, streamProblem: unknown) {
+    const deadline = Date.now() + 5 * 60_000;
+    let lastError = streamProblem;
+    stage = 'Connection interrupted · checking investigation status';
+    while (Date.now() < deadline) {
+      try {
+        const status = await api.investigationStatus(investigationId);
+        if (status.stage === 'failed') throw new ReportedInvestigationFailure(status.message);
+        if (status.stage !== 'pending' && status.message) {
+          stage = `Reconnecting · ${status.message}`;
+          progress = Math.max(progress, Number(status.progress || 0));
+        }
+      } catch (problem) {
+        if (problem instanceof ReportedInvestigationFailure) throw problem;
+        lastError = problem;
+      }
+
+      try {
+        const result = await api.investigation(investigationId);
+        if (isCompleteInvestigation(result, investigationId)) {
+          await loadCompletedInvestigation(investigationId);
+          return;
+        }
+      } catch (problem) {
+        lastError = problem;
+      }
+      await wait(2_500);
+    }
+    throw new Error(
+      `The analysis connection was interrupted and no completed result became available within five minutes. ` +
+      `The server may have restarted before saving it. ${String(lastError)}`
+    );
+  }
+
+  async function streamInvestigation(stream: EventStreamResponse) {
+    const reader = stream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let investigationId = stream.investigationId;
     try {
       while (true) {
         const {value, done} = await reader.read();
@@ -1484,15 +1522,19 @@
           const event = JSON.parse(data);
           stage = event.message;
           progress = Number(event.progress || 0);
-          if (event.stage === 'failed') throw new Error(event.message);
-          if (event.stage === 'timeout') throw new Error('The analysis timed out before it completed. Please try again.');
+          if (event.investigation_id) investigationId = String(event.investigation_id);
+          if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
+          if (event.stage === 'timeout') throw new Error('The live progress stream timed out.');
           if (event.stage === 'complete') {
-            await loadCompletedInvestigation(event.investigation_id);
+            await loadCompletedInvestigation(investigationId!);
             return;
           }
         }
-        if (done) throw new Error('The analysis connection ended before the result was ready. Please try again.');
+        if (done) throw new Error('The analysis connection ended before the result was ready.');
       }
+    } catch (problem) {
+      if (problem instanceof ReportedInvestigationFailure || !investigationId) throw problem;
+      await recoverInterruptedInvestigation(investigationId, problem);
     } finally {
       reader.releaseLock();
     }
@@ -1604,8 +1646,8 @@
     progress = 0.03;
     try {
       for (const [index, dataset] of requestedDatasets.entries()) {
-        const body = await api.syncStream(activeSport, missingSyncSeasons(dataset, requestedSeasons), [dataset]);
-        await streamDatasetSync(body, index, requestedDatasets.length);
+        const stream = await api.syncStream(activeSport, missingSyncSeasons(dataset, requestedSeasons), [dataset]);
+        await streamDatasetSync(stream.body, index, requestedDatasets.length);
       }
       await refresh();
       syncComplete = true;
@@ -1951,10 +1993,7 @@
                   </div>
                 {/if}
                 {#if sourceGaps.length}
-                  <div class="data-readiness-row"><p class="data-gaps">Needed for your current comparison: {sourceGaps.join('; ')}.</p>
-                    <button type="button" on:click={() => { syncSeasons = [...new Set(requiredSeasons)]; chooseQuickSetup(); }}>Select data for this comparison
-                    </button>
-                  </div>
+                  <div class="data-readiness-row"><p class="data-gaps">Needed for your current comparison: {sourceGaps.join('; ')}.</p></div>
                 {/if}
                 <div class="sync-fields">
                   <fieldset class="season-picker">
@@ -1974,7 +2013,7 @@
                     <legend><span>Packages</span>
                       <button class="package-toggle" type="button" disabled={!eligibleSyncDatasets.length}
                               on:click={() => { customizeSources = true; toggleAllSyncDatasets(); }}>
-                        {allEligibleSyncDatasetsSelected ? 'Deselect all' : 'Select all'}
+                        {allEligibleSyncDatasetsSelected ? 'Deselect All' : 'Select All'}
                       </button>
                     </legend>
                     <div class="dataset-options">
@@ -1997,9 +2036,9 @@
                     </div>
                   </fieldset>
                 </div>
-                <button disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>
+                <button class="download-data-button" disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>
                   Download {syncDatasets.filter(source => packageEligible(source)).length} sources for {syncSeasons.length} seasons
-                  <Icon name="database-import" size={18}/>
+                  <Icon name="database-import" size={20}/>
                 </button>
               {/if}
             </div>
@@ -2413,12 +2452,16 @@
         </div>
       </section>
     {:else if busy}
-      <section class="working" aria-live="polite" aria-busy="true">
+      <section class="working" aria-busy="true">
         <div class="field-lines" aria-hidden="true"></div>
         <div class="working-layout">
           <div class="working-copy">
             <span class="eyebrow">{syncing ? 'Downloading Data' : 'Analysis in Progress'}</span>
-            <h2>{stage}</h2>
+            <div class="progress-message" class:long-message={stage.length > 56} class:dense-message={stage.length > 96}
+                 class:extra-dense-message={stage.length > 150} role="status" aria-live="polite" aria-atomic="true">
+              <small>Current Update</small>
+              <h2>{stage}</h2>
+            </div>
             <div class="progress" role="progressbar" aria-label={syncing ? 'Download progress' : 'Investigation progress'} aria-valuemin="0" aria-valuemax="100"
                  aria-valuenow={Math.round(progress * 100)}><i style={`width:${Math.max(4, progress * 100)}%`}></i></div>
             <p>{syncing ? 'Each source is downloaded and checked before it is added to your library.' : 'Comparing your periods and checking the evidence behind each finding.'}</p>

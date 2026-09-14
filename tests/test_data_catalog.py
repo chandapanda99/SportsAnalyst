@@ -85,6 +85,8 @@ def test_large_nfl_syncs_stream_parquet_without_loading_the_remote_frame(tmp_pat
 
 def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_path: Path) -> None:
     persistence = MemoryPersistence()
+    stale_settings = Settings(data_dir=tmp_path / "stale-replica", foundry_endpoint="")
+    stale_store = LocalStore(stale_settings, persistence)
     source_settings = Settings(data_dir=tmp_path / "source", foundry_endpoint="")
     source_connector = NFLVerseConnector(source_settings)
     source_store = LocalStore(source_settings, persistence)
@@ -115,6 +117,12 @@ def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_p
         fallback_used=True,
     )
     source_store.save_investigation(bundle)
+
+    # This store represents a warm replica whose local catalog was initialized
+    # before another replica committed the dataset and investigation to storage.
+    stale_manifest = stale_store.manifest_for_season(2025)
+    assert Path(stale_store.materialize_manifest(stale_manifest).local_path).exists()
+    assert stale_store.get_investigation(investigation_id).summary == "Efficiency improved."
 
     restored_settings = Settings(data_dir=tmp_path / "restored", foundry_endpoint="")
     restored_store = LocalStore(restored_settings, persistence)

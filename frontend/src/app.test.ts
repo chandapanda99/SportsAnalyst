@@ -194,7 +194,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.getByLabelText('NFL team')).toBeTruthy();
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
-    expect(await screen.findByText('Data ready · Manage data')).toBeTruthy();
+    expect(await screen.findByText('Data Ready · Manage Data')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Run analysis/i })).toBeTruthy();
   });
 
@@ -223,8 +223,14 @@ describe('Open Sports Analyst workbench', () => {
     expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     await fireEvent.click(screen.getByRole('button', {name: 'Download 2 sources for 2 seasons'}));
-    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))!;
-    expect(JSON.parse(String(syncCall[1]?.body))).toEqual({seasons: [2025, 2024], datasets: ['play_by_play', 'rosters']});
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(
+      ([input]) => String(input).endsWith('/datasets/nfl/sync-stream')
+    )).toHaveLength(2));
+    const syncCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
+    expect(syncCalls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      {seasons: [2025, 2024], datasets: ['play_by_play']},
+      {seasons: [2025, 2024], datasets: ['rosters']}
+    ]);
     await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));
     expect(document.activeElement?.id).toBe('scope-heading');
     const team = screen.getByRole('combobox', {name: 'NFL team'});
@@ -235,7 +241,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(screen.getByRole('button', {name: 'Dismiss guide'}));
     cleanup();
     render(App);
-    await screen.findByText('Data ready · Manage data');
+    await screen.findByText('Data Ready · Manage Data');
     expect(screen.queryByRole('region', {name: 'How it works'})).toBeNull();
     await fireEvent.click(screen.getByRole('button', {name: 'Getting Started'}));
     const guide = await screen.findByRole('region', {name: 'How it works'});
@@ -296,7 +302,7 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/sports/nfl/options'))).toBe(true));
   });
 
-  it('retries and atomically displays a completed analysis when its first result fetch is not ready', async () => {
+  it('recovers and atomically displays a completed analysis after its progress stream disconnects', async () => {
     const completed = {
       run: {
         investigation_id: 'investigation-running', sport: 'nfl',
@@ -314,28 +320,26 @@ describe('Open Sports Analyst workbench', () => {
     let resultAttempts = 0;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (init?.method === 'POST' && url.endsWith('/investigations/stream')) {
+        mockInvestigations = [completed];
+        const interrupted = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(
+              'data: {"stage":"planning","message":"Planning analysis","progress":0.1}\n\n'
+            ));
+            queueMicrotask(() => controller.error(new TypeError('HTTP/2 stream closed')));
+          }
+        });
+        return Promise.resolve(new Response(interrupted, {
+          status: 200,
+          headers: {'content-type': 'text/event-stream', 'x-investigation-id': 'investigation-running'}
+        }));
+      }
       if (!init?.method && url === '/api/investigations/investigation-running') {
         resultAttempts += 1;
-        if (resultAttempts === 1) {
-          mockInvestigations = [completed];
-          return Promise.resolve(new Response(JSON.stringify({detail: 'Result is still being committed'}), {
-            status: 404, headers: {'content-type': 'application/json'}
-          }));
-        }
       }
       return baseFetch(input, init);
     });
-    class CompletingEventSource {
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: (() => void) | null = null;
-      constructor() {
-        setTimeout(() => this.onmessage?.({data: JSON.stringify({
-          stage: 'complete', message: 'Investigation ready', progress: 1
-        })} as MessageEvent), 0);
-      }
-      close() {}
-    }
-    vi.stubGlobal('EventSource', CompletingEventSource);
 
     render(App);
     const team = await screen.findByRole('combobox', {name: 'NFL team'});
@@ -345,7 +349,7 @@ describe('Open Sports Analyst workbench', () => {
 
     expect((await screen.findAllByText('The completed analysis response is now visible.')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
-    expect(resultAttempts).toBe(2);
+    expect(resultAttempts).toBeGreaterThanOrEqual(2);
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
   });
 
@@ -365,7 +369,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByText('Basketball analysis')).toBeTruthy();
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
-    await fireEvent.click(screen.getByText(/Data ready · Manage data|Prepare your data/, {selector: 'strong'}));
+    await fireEvent.click(screen.getByText(/Data Ready · Manage Data|Prepare Data/, {selector: 'strong'}));
     await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
@@ -443,7 +447,7 @@ describe('Open Sports Analyst workbench', () => {
     }
     vi.stubGlobal('EventSource', IdleEventSource);
     render(App);
-    await fireEvent.click(await screen.findByText('Data ready · Manage data'));
+    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
     await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
     const season2024 = await screen.findByRole('checkbox', { name: '2024 season' }) as HTMLInputElement;
     const season2025 = screen.getByRole('checkbox', { name: '2025 season' }) as HTMLInputElement;
@@ -472,14 +476,14 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
     const nextgen = screen.getByRole('checkbox', { name: /Nextgen Passing/ }) as HTMLInputElement;
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => input.checked)).toBe(true);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Deselect All' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => !input.checked)).toBe(true);
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
     await fireEvent.click(screen.getByRole('button', { name: /Download .* sources/ }));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
       String(input) === '/api/datasets/nfl/sync-stream' && init?.method === 'POST'

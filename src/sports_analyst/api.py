@@ -4,9 +4,9 @@ import asyncio
 import json
 import logging
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -181,7 +181,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         return StreamingResponse(
             _investigation_work_stream(service, investigation_id, execute, "investigation"),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Investigation-ID": investigation_id,
+            },
         )
 
     @api.get("/api/investigations", response_model=list[InvestigationSummary])
@@ -274,7 +278,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         return StreamingResponse(
             _investigation_work_stream(service, child_id, execute, "follow_up"),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Investigation-ID": child_id,
+            },
         )
 
     @api.get("/api/investigations/{investigation_id}/evidence/{evidence_id}")

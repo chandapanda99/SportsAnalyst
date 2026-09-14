@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -101,8 +102,67 @@ class LocalStore:
         return normalize_object_key(f"metadata/datasets/{manifest.sport}/{manifest.dataset}/{manifest.season}.json")
 
     @staticmethod
+    def _dataset_metadata_lookup_key(sport: str, dataset: str, season: int) -> str:
+        return normalize_object_key(f"metadata/datasets/{sport}/{dataset}/{season}.json")
+
+    @staticmethod
     def _investigation_metadata_key(investigation_id: str) -> str:
         return normalize_object_key(f"metadata/investigations/{investigation_id}.json")
+
+    def _register_durable_dataset(self, payload: bytes, db: duckdb.DuckDBPyConnection) -> None:
+        record = json.loads(payload)
+        object_path = normalize_object_key(record["object_path"])
+        manifest = DatasetManifest.model_validate(record["manifest"]).model_copy(
+            update={"local_path": str(self._local_object_path(object_path))}
+        )
+        db.execute(
+            """INSERT OR REPLACE INTO datasets
+               (manifest_id, season, acquired_at, payload, dataset, sport, object_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                manifest.manifest_id,
+                manifest.season,
+                manifest.acquired_at,
+                manifest.model_dump_json(),
+                manifest.dataset,
+                manifest.sport,
+                object_path,
+            ],
+        )
+
+    def _register_durable_investigation(self, payload: bytes, db: duckdb.DuckDBPyConnection) -> None:
+        record = json.loads(payload)
+        object_path = normalize_object_key(record["object_path"])
+        bundle_path = self._local_object_path(object_path)
+        db.execute(
+            """INSERT OR REPLACE INTO investigations
+               (investigation_id, parent_id, created_at, status, question, bundle_path, summary_payload, sport, object_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                record["investigation_id"],
+                record.get("parent_id"),
+                record["created_at"],
+                record["status"],
+                record["question"],
+                str(bundle_path),
+                json.dumps(record["summary"]),
+                record["sport"],
+                object_path,
+            ],
+        )
+
+    def _refresh_durable_record(
+        self, key: str, register: Callable[[bytes, duckdb.DuckDBPyConnection], None]
+    ) -> bool:
+        if not self.persistence.durable:
+            return False
+        with self._persistence_lock:
+            payload = self.persistence.read_bytes(key)
+            if payload is None:
+                return False
+            with self.connect() as db:
+                register(payload, db)
+        return True
 
     def _restore_durable_index(self) -> None:
         with self._persistence_lock, self.connect() as db:
@@ -112,48 +172,12 @@ class LocalStore:
                 payload = self.persistence.read_bytes(key)
                 if payload is None:
                     continue
-                record = json.loads(payload)
-                object_path = normalize_object_key(record["object_path"])
-                manifest = DatasetManifest.model_validate(record["manifest"]).model_copy(
-                    update={"local_path": str(self._local_object_path(object_path))}
-                )
-                db.execute(
-                    """INSERT OR REPLACE INTO datasets
-                       (manifest_id, season, acquired_at, payload, dataset, sport, object_path)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    [
-                        manifest.manifest_id,
-                        manifest.season,
-                        manifest.acquired_at,
-                        manifest.model_dump_json(),
-                        manifest.dataset,
-                        manifest.sport,
-                        object_path,
-                    ],
-                )
+                self._register_durable_dataset(payload, db)
             for key in self.persistence.list_keys("metadata/investigations/"):
                 payload = self.persistence.read_bytes(key)
                 if payload is None:
                     continue
-                record = json.loads(payload)
-                object_path = normalize_object_key(record["object_path"])
-                bundle_path = self._local_object_path(object_path)
-                db.execute(
-                    """INSERT OR REPLACE INTO investigations
-                       (investigation_id, parent_id, created_at, status, question, bundle_path, summary_payload, sport, object_path)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    [
-                        record["investigation_id"],
-                        record.get("parent_id"),
-                        record["created_at"],
-                        record["status"],
-                        record["question"],
-                        str(bundle_path),
-                        json.dumps(record["summary"]),
-                        record["sport"],
-                        object_path,
-                    ],
-                )
+                self._register_durable_investigation(payload, db)
 
     def save_manifest(self, manifest: DatasetManifest) -> None:
         source = Path(manifest.local_path)
@@ -207,6 +231,10 @@ class LocalStore:
 
     def manifest_for_season(self, season: int, dataset: str = "play_by_play", sport: str = "nfl") -> DatasetManifest:
         matches = [manifest for manifest in self.manifests(dataset, sport) if manifest.season == season]
+        if not matches and self._refresh_durable_record(
+            self._dataset_metadata_lookup_key(sport, dataset, season), self._register_durable_dataset
+        ):
+            matches = [manifest for manifest in self.manifests(dataset, sport) if manifest.season == season]
         if not matches:
             raise KeyError(f"{sport} {dataset} season {season} has not been synced")
         return matches[0]
@@ -296,6 +324,13 @@ class LocalStore:
             row = db.execute(
                 "SELECT bundle_path, object_path FROM investigations WHERE investigation_id = ?", [investigation_id]
             ).fetchone()
+        if not row and self._refresh_durable_record(
+            self._investigation_metadata_key(investigation_id), self._register_durable_investigation
+        ):
+            with self.connect(read_only=True) as db:
+                row = db.execute(
+                    "SELECT bundle_path, object_path FROM investigations WHERE investigation_id = ?", [investigation_id]
+                ).fetchone()
         if not row:
             raise KeyError(f"investigation not found: {investigation_id}")
         path = self._materialize_file(Path(row[0]), row[1])

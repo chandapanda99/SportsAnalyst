@@ -11,11 +11,19 @@ async function empty(url: string, init?: RequestInit): Promise<void> {
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
 }
 
-async function eventStream(url: string, init: RequestInit, label: string): Promise<ReadableStream<Uint8Array>> {
+export interface EventStreamResponse {
+  body: ReadableStream<Uint8Array>;
+  investigationId?: string;
+}
+
+async function eventStream(url: string, init: RequestInit, label: string): Promise<EventStreamResponse> {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
   if (!response.body) throw new Error(`${label} progress streaming is not supported by this browser.`);
-  return response.body;
+  return {
+    body: response.body,
+    investigationId: response.headers.get('x-investigation-id') || undefined
+  };
 }
 
 export const api = {

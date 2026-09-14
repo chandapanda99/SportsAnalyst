@@ -69,6 +69,7 @@ def test_investigation_streams_keep_model_work_and_progress_in_one_request(tmp_p
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-investigation-id"] == captured["investigation_id"]
     assert '"stage": "planning"' in response.text
     assert '"stage": "complete"' in response.text
     assert captured["request"] == request
@@ -89,6 +90,7 @@ def test_investigation_streams_keep_model_work_and_progress_in_one_request(tmp_p
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-investigation-id"] == captured["child_id"]
     assert '"stage": "synthesizing"' in response.text
     assert '"stage": "complete"' in response.text
     assert captured["parent_id"] == parent_id
