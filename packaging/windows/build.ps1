@@ -37,22 +37,28 @@ try
             Pop-Location
         }
     }
+    Write-Host "Frontend Files: BUILT"
 
     uv sync --extra desktop --extra desktop-build
     if ($LASTEXITCODE -ne 0)
     {
         throw "Desktop dependencies could not be synchronized"
     }
+    Write-Host "Desktop dependencies: SYNCHRONIZED"
+
     uv run python packaging/windows/make_icon.py
     if ($LASTEXITCODE -ne 0)
     {
         throw "Application icon generation failed"
     }
+    Write-Host "App Icon: GENERATED"
+
     uv run pyinstaller --noconfirm --clean --distpath dist --workpath build/desktop packaging/windows/OpenSportsAnalyst.spec
     if ($LASTEXITCODE -ne 0)
     {
         throw "PyInstaller build failed"
     }
+    Write-Host "PyInstaller Build: SUCCESS!"
 
     $signingConfigured = [bool]($env:WINDOWS_SIGNING_PFX_PATH -or $env:WINDOWS_SIGNING_CERT_THUMBPRINT)
     if ($signingConfigured)
@@ -61,7 +67,7 @@ try
     }
     if ($SkipInstaller)
     {
-        Write-Host "Desktop application built at $executable"
+        Write-Host "Desktop Application built at $executable"
         exit 0
     }
 
@@ -108,10 +114,11 @@ try
     {
         throw "Inno Setup was not found. Install it, then rerun this script."
     }
+
     & $iscc "/DMyAppVersion=$Version" "$scriptDirectory\OpenSportsAnalyst.iss"
     if ($LASTEXITCODE -ne 0)
     {
-        throw "Inno Setup compilation failed"
+        throw "Inno Setup compilation FAILED"
     }
 
     $installer = Get-ChildItem -LiteralPath (Join-Path $distributionDirectory "installer") -Filter "OpenSportsAnalyst-$Version-*-setup.exe" |
@@ -124,7 +131,7 @@ try
     {
         & "$scriptDirectory\sign.ps1" -Path $installer
     }
-    Write-Host "Windows installer built at $installer"
+    Write-Host "Windows Installer BUILT!"
 }
 finally
 {
