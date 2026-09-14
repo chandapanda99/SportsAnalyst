@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import shutil
+import urllib.request
 from collections import OrderedDict
 from pathlib import Path
 from threading import RLock
@@ -35,6 +37,22 @@ SOURCE_TEMPLATES = {
 }
 SUPPORTED_DATASETS = tuple(SOURCE_TEMPLATES)
 REFERENCE_DATASETS = {"players", "teams"}
+DIRECT_PARQUET_PATHS = {
+    "play_by_play": "pbp/play_by_play_{season}.parquet",
+    "player_stats": "stats_player/stats_player_week_{season}.parquet",
+    "rosters": "rosters/roster_{season}.parquet",
+    "injuries": "injuries/injuries_{season}.parquet",
+    "snap_counts": "snap_counts/snap_counts_{season}.parquet",
+    "participation": "pbp_participation/pbp_participation_{season}.parquet",
+    "weekly_rosters": "weekly_rosters/roster_weekly_{season}.parquet",
+    "depth_charts": "depth_charts/depth_charts_{season}.parquet",
+    "ftn_charting": "ftn_charting/ftn_charting_{season}.parquet",
+    "pfr_passing": "pfr_advstats/advstats_week_pass_{season}.parquet",
+    "pfr_rushing": "pfr_advstats/advstats_week_rush_{season}.parquet",
+    "pfr_receiving": "pfr_advstats/advstats_week_rec_{season}.parquet",
+    "pfr_defense": "pfr_advstats/advstats_week_def_{season}.parquet",
+}
+NFLVERSE_RELEASE_BASE_URL = "https://github.com/nflverse/nflverse-data/releases/download/"
 DATASET_MIN_SEASONS = {
     "play_by_play": 1999,
     "player_stats": 1999,
@@ -88,8 +106,12 @@ class NFLVerseConnector:
             for dataset in (item for item in selected if item not in REFERENCE_DATASETS):
                 if season < DATASET_MIN_SEASONS[dataset]:
                     continue
-                frame = self._load_remote(nfl, dataset, season)
                 path = self.settings.raw_dir / f"{dataset}_{season}.parquet"
+                if release_path := DIRECT_PARQUET_PATHS.get(dataset):
+                    self._download_parquet(f"{NFLVERSE_RELEASE_BASE_URL}{release_path.format(season=season)}", path)
+                    manifests.append(self.manifest_for(path, season, dataset=dataset))
+                    continue
+                frame = self._load_remote(nfl, dataset, season)
                 frame.write_parquet(path)
                 manifests.append(self.manifest_for(path, season, frame, dataset))
         if not manifests:
@@ -121,6 +143,20 @@ class NFLVerseConnector:
         }
         return loaders[dataset]()
 
+    @staticmethod
+    def _download_parquet(url: str, destination: Path) -> None:
+        """Stream a published Parquet asset to disk without materializing it in memory."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(f"{destination.suffix}.part")
+        request = urllib.request.Request(url, headers={"User-Agent": "Open-Sports-Analyst/1.0"})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as output:
+                shutil.copyfileobj(response, output, length=1024 * 1024)
+            temporary.replace(destination)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+
     def register_local(self, path: Path, season: int) -> DatasetManifest:
         frame = pl.read_parquet(path)
         target = self.settings.raw_dir / f"play_by_play_{season}.parquet"
@@ -129,10 +165,18 @@ class NFLVerseConnector:
         return self.manifest_for(target, season, frame, "play_by_play")
 
     def manifest_for(self, path: Path, season: int, frame: pl.DataFrame | None = None, dataset: str = "play_by_play") -> DatasetManifest:
-        frame = frame if frame is not None else pl.read_parquet(path)
+        if frame is None:
+            import pyarrow.parquet as pq
+
+            parquet = pq.ParquetFile(path)
+            row_count = parquet.metadata.num_rows
+            columns = parquet.schema_arrow.names
+        else:
+            row_count = frame.height
+            columns = frame.columns
         checksum = sha256_file(path)
         stat = path.stat()
-        payload = {"dataset": dataset, "season": season, "sha256": checksum, "rows": frame.height, "columns": frame.columns}
+        payload = {"dataset": dataset, "season": season, "sha256": checksum, "rows": row_count, "columns": columns}
         try:
             package_version = importlib.metadata.version("nflreadpy")
         except importlib.metadata.PackageNotFoundError:
@@ -143,15 +187,20 @@ class NFLVerseConnector:
             season=season,
             source_url=SOURCE_TEMPLATES[dataset].format(season=season),
             sha256=checksum,
-            row_count=frame.height,
-            columns=frame.columns,
+            row_count=row_count,
+            columns=columns,
             package_version=package_version,
             local_path=str(path.resolve()),
             file_size=stat.st_size,
             modified_ns=stat.st_mtime_ns,
         )
 
-    def load(self, manifest: DatasetManifest, columns: set[str] | list[str] | tuple[str, ...] | None = None) -> pl.DataFrame:
+    def load(
+        self,
+        manifest: DatasetManifest,
+        columns: set[str] | list[str] | tuple[str, ...] | None = None,
+        predicate: pl.Expr | None = None,
+    ) -> pl.DataFrame:
         path = Path(manifest.local_path).resolve()
         if self.settings.raw_dir.resolve() not in path.parents:
             raise ValueError("dataset path is outside the managed data directory")
@@ -159,16 +208,20 @@ class NFLVerseConnector:
         requested = set(columns) if columns is not None else None
         selected = tuple(column for column in manifest.columns if requested is not None and column in requested) or None
         cache_key = (manifest.manifest_id, selected)
-        with self._cache_lock:
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                self._cache.move_to_end(cache_key)
-                return cached
+        if predicate is None:
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+                if cached is not None:
+                    self._cache.move_to_end(cache_key)
+                    return cached
         query = pl.scan_parquet(path)
+        if predicate is not None:
+            query = query.filter(predicate)
         if selected is not None:
             query = query.select(selected)
         frame = query.collect()
-        self._cache_frame(cache_key, frame)
+        if predicate is None:
+            self._cache_frame(cache_key, frame)
         return frame
 
     def _verify(self, manifest: DatasetManifest, path: Path) -> None:

@@ -46,6 +46,13 @@ describe('Open Sports Analyst workbench', () => {
           status: 200, headers: { 'content-type': 'application/json' }
         }));
       }
+      if (init?.method === 'POST' && url.endsWith('/investigations/stream')) {
+        return Promise.resolve(new Response(
+          'data: {"stage":"planning","message":"Planning analysis","progress":0.1}\n\n' +
+          'data: {"stage":"complete","message":"Investigation ready","progress":1,"investigation_id":"investigation-running"}\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } }
+        ));
+      }
       if (init?.method === 'POST' && /\/api\/datasets\/[^/]+\/sync-stream$/.test(url)) {
         return Promise.resolve(new Response(
           'data: {"stage":"downloading","message":"Downloading data","progress":0.5}\n\n' +

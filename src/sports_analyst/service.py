@@ -93,9 +93,45 @@ class AnalystApplication:
         connector: Any,
         manifest: DatasetManifest,
         columns: set[str] | list[str] | tuple[str, ...] | None = None,
+        predicate: pl.Expr | None = None,
     ) -> pl.DataFrame:
         materialized = self.store.materialize_manifest(manifest)
-        return connector.load(materialized, columns)
+        if predicate is None:
+            return connector.load(materialized, columns)
+        return connector.load(materialized, columns, predicate=predicate)
+
+    @staticmethod
+    def _nfl_play_by_play_predicate(request: AnalysisRequest, manifest: DatasetManifest) -> pl.Expr:
+        """Push broad analysis filters into Parquet scans to cap cloud memory use."""
+        columns = set(manifest.columns)
+        predicate = pl.col("posteam").is_not_null() if "posteam" in columns else pl.lit(True)
+        if request.scope.season_type != "ALL" and "season_type" in columns:
+            predicate &= pl.col("season_type") == request.scope.season_type
+        matching_windows = [
+            window for window in (request.scope.baseline, request.scope.comparison) if window.season == manifest.season
+        ]
+        if request.scope.comparison_design != "full_seasons" and matching_windows and "week" in columns:
+            window_predicate = pl.lit(False)
+            for window in matching_windows:
+                window_predicate |= pl.col("week").is_between(window.weeks[0], window.weeks[1], closed="both")
+            predicate &= window_predicate
+        dropback = pl.col("qb_dropback") == 1 if "qb_dropback" in columns else pl.col("play_type") == "pass"
+        rush = pl.col("rush_attempt") == 1 if "rush_attempt" in columns else pl.col("play_type") == "run"
+        if request.analysis_domain == "passing":
+            predicate &= dropback
+        elif request.analysis_domain == "rushing":
+            predicate &= rush
+            if "qb_kneel" in columns:
+                predicate &= pl.col("qb_kneel").fill_null(0) != 1
+            if "qb_spike" in columns:
+                predicate &= pl.col("qb_spike").fill_null(0) != 1
+        elif request.analysis_domain == "offense":
+            predicate &= dropback | rush
+            if "qb_kneel" in columns:
+                predicate &= pl.col("qb_kneel").fill_null(0) != 1
+            if "qb_spike" in columns:
+                predicate &= pl.col("qb_spike").fill_null(0) != 1
+        return predicate
 
     def analysis_options(self, sport: str = "nfl") -> AnalysisOptions:
         connector, plugin = self._sport(sport)
@@ -311,15 +347,24 @@ class AnalystApplication:
                 season: self.store.manifest_for_season(season, "play_by_play", request.sport) for season in request.scope.included_seasons
             }
             pbp_columns = plugin.required_play_by_play_columns(request)
-            datasets = {season: self._load_dataset(connector, manifest, pbp_columns) for season, manifest in manifests.items()}
+            datasets = {
+                season: self._load_dataset(
+                    connector,
+                    manifest,
+                    pbp_columns,
+                    self._nfl_play_by_play_predicate(request, manifest) if request.sport == "nfl" else None,
+                )
+                for season, manifest in manifests.items()
+            }
             required_supplemental = plugin.required_supplemental_datasets(request)
+            endpoint_seasons = {request.scope.baseline_season, request.scope.comparison_season}
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
             for manifest in self.store.manifests(sport=request.sport):
                 if manifest.dataset in {"play_by_play", "teams"}:
                     continue
                 if manifest.dataset not in required_supplemental:
                     continue
-                if manifest.dataset != "players" and manifest.season not in manifests:
+                if manifest.dataset != "players" and manifest.season not in endpoint_seasons:
                     continue
                 supplemental_manifests.setdefault(manifest.dataset, {})[manifest.season] = manifest
             supplemental = {

@@ -49,6 +49,52 @@ def test_dataset_sync_stream_keeps_work_and_progress_in_one_request(tmp_path: Pa
     assert captured == {"seasons": [2024, 2025], "datasets": ["play_by_play"], "sport": "nfl"}
 
 
+def test_investigation_streams_keep_model_work_and_progress_in_one_request(tmp_path: Path, monkeypatch) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    captured: dict[str, object] = {}
+    request = AnalysisRequest(
+        question="Why did KC passing efficiency decline?",
+        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        metrics=["epa_per_dropback"],
+    )
+
+    def investigate(received, investigation_id):
+        captured.update(request=received, investigation_id=investigation_id)
+        application.events.emit(investigation_id, "planning", "Planning analysis", 0.1)
+        application.events.emit(investigation_id, "complete", "Investigation ready", 1.0, investigation_id=investigation_id)
+
+    monkeypatch.setattr(application, "investigate", investigate)
+    client = TestClient(create_app(application))
+    response = client.post("/api/investigations/stream", json=request.model_dump(mode="json"))
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"stage": "planning"' in response.text
+    assert '"stage": "complete"' in response.text
+    assert captured["request"] == request
+
+    parent_id = "investigation-parent"
+    monkeypatch.setattr(application.store, "get_investigation", lambda _identifier: object())
+
+    def follow_up(received_parent_id, question, child_id):
+        captured.update(parent_id=received_parent_id, question=question, child_id=child_id)
+        application.events.emit(child_id, "synthesizing", "Answering follow-up", 0.75)
+        application.events.emit(child_id, "complete", "Follow-up ready", 1.0, investigation_id=child_id)
+
+    monkeypatch.setattr(application, "follow_up", follow_up)
+    response = client.post(
+        f"/api/investigations/{parent_id}/follow-ups/stream",
+        json={"question": "Was the change consistent across the sample?"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"stage": "synthesizing"' in response.text
+    assert '"stage": "complete"' in response.text
+    assert captured["parent_id"] == parent_id
+    assert captured["question"] == "Was the change consistent across the sample?"
+
+
 def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch) -> None:
     settings = Settings(data_dir=tmp_path, foundry_endpoint="")
     application = AnalystApplication(settings)

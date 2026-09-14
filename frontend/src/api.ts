@@ -11,6 +11,13 @@ async function empty(url: string, init?: RequestInit): Promise<void> {
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
 }
 
+async function eventStream(url: string, init: RequestInit, label: string): Promise<ReadableStream<Uint8Array>> {
+  const response = await fetch(url, init);
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+  if (!response.body) throw new Error(`${label} progress streaming is not supported by this browser.`);
+  return response.body;
+}
+
 export const api = {
   ready: async () => {
     try {
@@ -44,20 +51,24 @@ export const api = {
   sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
   }),
-  syncStream: async (sport: string, seasons: number[], datasets: string[]) => {
-    const response = await fetch(`/api/datasets/${sport}/sync-stream`, {
+  syncStream: (sport: string, seasons: number[], datasets: string[]) =>
+    eventStream(`/api/datasets/${sport}/sync-stream`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
-    });
-    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
-    if (!response.body) throw new Error('Dataset progress streaming is not supported by this browser.');
-    return response.body;
-  },
+    }, 'Dataset'),
   investigate: (request: InvestigationRequest) =>
     json<{ investigation_id: string }>('/api/investigations', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request)
     }),
+  investigateStream: (request: InvestigationRequest) =>
+    eventStream('/api/investigations/stream', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request)
+    }, 'Investigation'),
   followUp: (id: string, question: string) => json<{ investigation_id: string }>(`/api/investigations/${id}/follow-ups`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question })
-  })
+  }),
+  followUpStream: (id: string, question: string) => eventStream(`/api/investigations/${id}/follow-ups/stream`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question })
+  }, 'Follow-up')
 };

@@ -6,6 +6,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -169,6 +170,20 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         background_tasks.add_task(execute)
         return {"investigation_id": investigation_id}
 
+    @api.post("/api/investigations/stream")
+    async def create_investigation_stream(request: AnalysisRequest) -> StreamingResponse:
+        """Run an investigation on the instance serving its progress stream."""
+        investigation_id = stable_id("investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()})
+
+        def execute() -> None:
+            service.investigate(request, investigation_id)
+
+        return StreamingResponse(
+            _investigation_work_stream(service, investigation_id, execute, "investigation"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @api.get("/api/investigations", response_model=list[InvestigationSummary])
     def investigations(
             limit: int | None = Query(default=None, ge=1, le=500),
@@ -240,6 +255,27 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
         background_tasks.add_task(execute)
         return {"investigation_id": child_id}
+
+    @api.post("/api/investigations/{investigation_id}/follow-ups/stream")
+    async def follow_up_stream(investigation_id: str, request: FollowUpRequest) -> StreamingResponse:
+        """Run a follow-up on the instance serving its progress stream."""
+        try:
+            service.store.get_investigation(investigation_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        child_id = stable_id(
+            "investigation",
+            {"parent": investigation_id, "question": request.question, "time": datetime.now(UTC).isoformat()},
+        )
+
+        def execute() -> None:
+            service.follow_up(investigation_id, request.question, child_id)
+
+        return StreamingResponse(
+            _investigation_work_stream(service, child_id, execute, "follow_up"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @api.get("/api/investigations/{investigation_id}/evidence/{evidence_id}")
     def evidence(investigation_id: str, evidence_id: str) -> Any:
@@ -330,6 +366,31 @@ async def _dataset_sync_stream(
     task = asyncio.create_task(asyncio.to_thread(execute))
     try:
         async for event in _event_stream(service, job_id, timeout_seconds=timeout_seconds):
+            yield event
+    finally:
+        if task.done():
+            await task
+
+
+async def _investigation_work_stream(service: AnalystApplication, investigation_id: str, execute: Callable[[], None], operation: str):
+    """Keep model work attached to the same cloud request as its SSE progress."""
+
+    def execute_safely() -> None:
+        try:
+            execute()
+        except Exception as error:
+            logger.error(
+                "%s_failed investigation_id=%s error_type=%s",
+                operation,
+                investigation_id,
+                type(error).__name__,
+            )
+            logger.debug("%s_failed_details investigation_id=%s", operation, investigation_id, exc_info=True)
+            service.events.emit(investigation_id, "failed", str(error), 1.0)
+
+    task = asyncio.create_task(asyncio.to_thread(execute_safely))
+    try:
+        async for event in _event_stream(service, investigation_id, timeout_seconds=3_600):
             yield event
     finally:
         if task.done():

@@ -63,6 +63,26 @@ def test_resync_supersedes_the_previous_package_manifest(tmp_path: Path) -> None
     assert connector.load(store.manifest_for_season(2025)).get_column("epa").to_list() == [0.2]
 
 
+def test_large_nfl_syncs_stream_parquet_without_loading_the_remote_frame(tmp_path: Path, monkeypatch) -> None:
+    settings = Settings(data_dir=tmp_path, foundry_endpoint="")
+    connector = NFLVerseConnector(settings)
+    source = tmp_path / "source.parquet"
+    pl.DataFrame({"season": [2025, 2025], "posteam": ["KC", "BUF"], "epa": [0.2, -0.1]}).write_parquet(source)
+
+    def copy_source(_url: str, destination: Path) -> None:
+        destination.write_bytes(source.read_bytes())
+
+    monkeypatch.setattr(connector, "_download_parquet", copy_source)
+    monkeypatch.setattr(connector, "_load_remote", lambda *_args: (_ for _ in ()).throw(AssertionError("must not load play-by-play")))
+
+    manifests = connector.sync([2025], ["play_by_play", "weekly_rosters"])
+
+    assert manifests[0].row_count == 2
+    assert manifests[0].columns == ["season", "posteam", "epa"]
+    assert Path(manifests[0].local_path).read_bytes() == source.read_bytes()
+    assert manifests[1].dataset == "weekly_rosters"
+
+
 def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_path: Path) -> None:
     persistence = MemoryPersistence()
     source_settings = Settings(data_dir=tmp_path / "source", foundry_endpoint="")

@@ -1352,6 +1352,13 @@
     return eligibleSelectedSeasons(dataset, selectedSeasons).length > 0;
   }
 
+  function missingSyncSeasons(dataset: string, selectedSeasons = syncSeasons) {
+    if (isReferenceDataset(dataset)) {
+      return datasets.some((item) => (item.sport ?? 'nfl') === activeSport && item.dataset === dataset) ? [] : selectedSeasons.slice(0, 1);
+    }
+    return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) => !syncedPackages(season).has(dataset));
+  }
+
   function seasonLabel(season: number) {
     return activeSport === 'nba' ? `${season - 1}–${String(season).slice(-2)}` : String(season);
   }
@@ -1461,86 +1468,7 @@
     throw lastError;
   }
 
-  async function pollInvestigation(investigationId: string) {
-    stage = 'Live progress interrupted · checking the saved investigation';
-    progress = Math.max(progress, 0.95);
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const status = await api.investigationStatus(investigationId);
-      stage = status.message;
-      progress = Math.max(progress, status.progress);
-      if (status.stage === 'failed') throw new Error(status.message);
-      if (status.stage === 'complete') {
-        return loadCompletedInvestigation(investigationId);
-      }
-      if (attempt < 29) await wait(2_000);
-    }
-    return false;
-  }
-
-  function stream(
-      url: string,
-      complete: () => Promise<void>,
-      recover?: () => Promise<boolean>,
-      onSettled?: () => void,
-      timeoutMessage = 'The investigation is still unavailable after the progress stream timed out. Refresh to check again.',
-      disconnectMessage = 'The progress stream disconnected and the investigation could not be recovered. Refresh to check again.'
-  ) {
-    const source = new EventSource(url);
-    let settled = false;
-    let recovering = false;
-
-    async function recoverOrFail(message: string) {
-      if (settled || recovering) return;
-      recovering = true;
-      source.close();
-      try {
-        if (recover && await recover()) {
-          settled = true;
-          busy = false;
-          onSettled?.();
-          return;
-        }
-        error = message;
-      } catch (problem) {
-        error = problem instanceof Error ? problem.message : String(problem);
-      }
-      settled = true;
-      busy = false;
-      onSettled?.();
-    }
-
-    source.onmessage = async (message) => {
-      const event = JSON.parse(message.data);
-      stage = event.message;
-      progress = event.progress;
-      if (event.stage === 'complete') {
-        settled = true;
-        source.close();
-        try {
-          await complete();
-        } catch (problem) {
-          error = String(problem);
-        }
-        busy = false;
-        onSettled?.();
-      }
-      if (event.stage === 'failed') {
-        settled = true;
-        source.close();
-        error = event.message;
-        busy = false;
-        onSettled?.();
-      }
-      if (event.stage === 'timeout') {
-        await recoverOrFail(timeoutMessage);
-      }
-    };
-    source.onerror = () => {
-      void recoverOrFail(disconnectMessage);
-    };
-  }
-
-  async function streamDatasetSync(body: ReadableStream<Uint8Array>, complete: () => Promise<void>, onSettled: () => void) {
+  async function streamInvestigation(body: ReadableStream<Uint8Array>) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1555,20 +1483,45 @@
           if (!data) continue;
           const event = JSON.parse(data);
           stage = event.message;
-          progress = event.progress;
+          progress = Number(event.progress || 0);
           if (event.stage === 'failed') throw new Error(event.message);
-          if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
+          if (event.stage === 'timeout') throw new Error('The analysis timed out before it completed. Please try again.');
           if (event.stage === 'complete') {
-            await complete();
+            await loadCompletedInvestigation(event.investigation_id);
             return;
           }
+        }
+        if (done) throw new Error('The analysis connection ended before the result was ready. Please try again.');
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async function streamDatasetSync(body: ReadableStream<Uint8Array>, sourceIndex: number, sourceCount: number) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value, {stream: !done});
+        const messages = buffer.split(/\r?\n\r?\n/);
+        buffer = messages.pop() ?? '';
+        for (const message of messages) {
+          const data = message.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
+          if (!data) continue;
+          const event = JSON.parse(data);
+          stage = sourceCount > 1 ? `Source ${sourceIndex + 1} of ${sourceCount} · ${event.message}` : event.message;
+          progress = Math.min(1, (sourceIndex + Number(event.progress || 0)) / sourceCount);
+          if (event.stage === 'failed') throw new Error(event.message);
+          if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
+          if (event.stage === 'complete') return;
         }
         if (done) throw new Error('The data-sync connection ended before the download completed.');
       }
     } finally {
       reader.releaseLock();
-      busy = false;
-      onSettled();
     }
   }
 
@@ -1607,7 +1560,7 @@
         const option = analysisOptions?.split_dimensions.find((split) => split.value === value);
         return option ? splitAvailable(option.available_seasons) : false;
       });
-      const {investigation_id} = await api.investigate({
+      const body = await api.investigateStream({
         sport: activeSport,
         subject: {
           type: subjectType,
@@ -1627,11 +1580,8 @@
         metrics,
         splits
       });
-      stream(
-          `/api/investigations/${investigation_id}/events`,
-          () => loadCompletedInvestigation(investigation_id).then(() => undefined),
-          () => pollInvestigation(investigation_id)
-      );
+      await streamInvestigation(body);
+      busy = false;
     } catch (problem) {
       error = String(problem);
       busy = false;
@@ -1641,7 +1591,9 @@
   async function syncData() {
     if (!syncSeasons.length || !syncDatasets.length) return;
     const offeredDatasets = new Set(analysisOptions?.syncable_datasets ?? []);
-    const requestedDatasets = syncDatasets.filter((dataset) => offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons));
+    const requestedDatasets = syncDatasets.filter((dataset) =>
+      offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons) && missingSyncSeasons(dataset).length
+    );
     const requestedSeasons = syncSeasons.map(Number).filter((season) => Number.isInteger(season));
     if (!requestedSeasons.length || !requestedDatasets.length) return;
     error = '';
@@ -1651,15 +1603,21 @@
     stage = 'Preparing data sync';
     progress = 0.03;
     try {
-      const body = await api.syncStream(activeSport, requestedSeasons, requestedDatasets);
-      await streamDatasetSync(body, async () => {
-        await refresh();
-        syncComplete = true;
-      }, () => {
-        syncing = false;
-      });
+      for (const [index, dataset] of requestedDatasets.entries()) {
+        const body = await api.syncStream(activeSport, missingSyncSeasons(dataset, requestedSeasons), [dataset]);
+        await streamDatasetSync(body, index, requestedDatasets.length);
+      }
+      await refresh();
+      syncComplete = true;
+      busy = false;
+      syncing = false;
     } catch (problem) {
       error = String(problem);
+      try {
+        await refresh();
+      } catch {
+        // Preserve the source-specific sync error; a manual refresh remains available.
+      }
       busy = false;
       syncing = false;
     }
@@ -1780,16 +1738,11 @@
     followup = '';
     clearEvidenceSelection();
     try {
-      const {investigation_id} = await api.followUp(root.run.investigation_id, question);
-      stream(
-          `/api/investigations/${investigation_id}/events`,
-          () => loadCompletedInvestigation(investigation_id).then(() => undefined),
-          () => pollInvestigation(investigation_id),
-          () => {
-            followupBusy = false;
-            pendingFollowup = '';
-          }
-      );
+      const body = await api.followUpStream(root.run.investigation_id, question);
+      await streamInvestigation(body);
+      busy = false;
+      followupBusy = false;
+      pendingFollowup = '';
     } catch (problem) {
       error = String(problem);
       followupBusy = false;
