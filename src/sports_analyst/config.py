@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from platformdirs import user_data_path
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     persistence_backend: str = "local"
+    job_backend: str = "local"
+    database_url: SecretStr | None = Field(default=None, repr=False)
+    database_migration_url: SecretStr | None = Field(default=None, repr=False)
+    job_poll_seconds: float = Field(default=5, ge=1, le=60)
+    job_idle_poll_seconds: float = Field(default=60, ge=5, le=3600)
+    job_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    job_heartbeat_seconds: int = Field(default=20, ge=1, le=120)
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
+    job_timeout_seconds: int = Field(default=7200, ge=60, le=86400)
     object_storage_bucket: str = ""
     object_storage_prefix: str = "open-sports-analyst"
     object_storage_endpoint_url: str = ""
@@ -37,10 +46,20 @@ class Settings(BaseSettings):
     langsmith_project: str = "open-sports-analyst-local"
     langsmith_workspace_id: str = ""
 
-    @field_validator("model_provider", "log_level", "persistence_backend", mode="before")
+    @field_validator("model_provider", "log_level", "persistence_backend", "job_backend", mode="before")
     @classmethod
     def normalize_token(cls, value: object) -> str:
         return str(value).strip().lower()
+
+    @model_validator(mode="after")
+    def validate_jobs(self) -> Settings:
+        if self.job_backend not in {"local", "postgres"}:
+            raise ValueError("JOB_BACKEND must be local or postgres")
+        if self.job_backend == "postgres" and (not self.database_url or self.persistence_backend != "s3"):
+            raise ValueError("Postgres jobs require DATABASE_URL and PERSISTENCE_BACKEND=s3 for shared artifacts")
+        if self.job_heartbeat_seconds * 3 >= self.job_lease_seconds:
+            raise ValueError("JOB_LEASE_SECONDS must exceed three heartbeat intervals")
+        return self
 
     @property
     def raw_dir(self) -> Path:

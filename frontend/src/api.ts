@@ -14,6 +14,8 @@ async function empty(url: string, init?: RequestInit): Promise<void> {
 export interface EventStreamResponse {
   body: ReadableStream<Uint8Array>;
   investigationId?: string;
+  jobId?: string;
+  timeoutSeconds?: number;
 }
 
 async function eventStream(url: string, init: RequestInit, label: string): Promise<EventStreamResponse> {
@@ -22,7 +24,9 @@ async function eventStream(url: string, init: RequestInit, label: string): Promi
   if (!response.body) throw new Error(`${label} progress streaming is not supported by this browser.`);
   return {
     body: response.body,
-    investigationId: response.headers.get('x-investigation-id') || undefined
+    investigationId: response.headers.get('x-investigation-id') || undefined,
+    jobId: response.headers.get('x-job-id') || undefined,
+    timeoutSeconds: Number(response.headers.get('x-job-timeout-seconds')) || undefined
   };
 }
 
@@ -49,6 +53,9 @@ export const api = {
   investigation: (id: string) => json<Investigation>(`/api/investigations/${id}`),
   investigationStatus: (id: string) => json<{ stage: string; message: string; progress: number }>(
     `/api/investigations/${id}/status`
+  ),
+  datasetJobStatus: (id: string) => json<{ stage: string; message: string; progress: number }>(
+    `/api/dataset-jobs/${id}/status`
   ),
   investigationThread: (id: string) => json<Investigation[]>(`/api/investigations/${id}/thread`),
   deleteInvestigation: (id: string) => empty(`/api/investigations/${id}`, { method: 'DELETE' }),

@@ -1621,9 +1621,9 @@ main.nba-background {
 .progress-message {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    height: 132px;
+    height: 164px;
     margin-top: 16px;
-    padding: 14px 16px 16px;
+    padding: 18px 18px 20px;
     border: 1px solid var(--color-border-strong);
     border-left: 3px solid var(--mint);
     border-radius: var(--radius-sm);
@@ -1640,7 +1640,7 @@ main.nba-background {
 
 .progress-message h2 {
     align-self: center;
-    margin: 8px 0 0;
+    margin: 10px 0 0;
     color: var(--color-text-primary);
     font-size: clamp(25px, 2.4vw, 34px);
     line-height: 1.22;

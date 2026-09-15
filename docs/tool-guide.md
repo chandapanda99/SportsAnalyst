@@ -247,6 +247,12 @@ Follow-up questions reuse the saved investigation context. History can be filter
 Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
 both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
+With `JOB_BACKEND=postgres`, investigations, follow-ups, and dataset syncs are queued in PostgreSQL and executed by `sports-analyst-worker`.
+Progress survives web replica restarts, and both investigation and sync streams have frontend status recovery.
+Workers renew leases, retry temporary failures, and reuse already-published investigation results after a crash.
+Execution is at least once: a crash before a result is saved can repeat a model call. PostgreSQL stores job metadata and events; analytical data and reports stay in R2.
+Local/desktop mode retains in-process execution. See [Durable cloud jobs](durable-jobs.md) for migration and worker deployment instructions.
+
 ## Adding a sport or analytical tool
 
 A new sport should implement the shared connector and plugin contracts, register its datasets and capabilities, normalize source schemas at the connector boundary, and keep

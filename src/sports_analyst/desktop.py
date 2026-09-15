@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import multiprocessing
+import os
 import socket
 import sys
 import threading
@@ -13,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from sports_analyst.desktop_config import DesktopConfigStore
+
+
+def _run_desktop_worker(settings: Any, stop_event: Any) -> None:
+    """Process target kept at module scope for Windows spawn/PyInstaller."""
+    from sports_analyst.worker import run_worker
+
+    run_worker(settings, stop_event=stop_event)
 
 
 def _setup_icon_data_uri() -> str:
@@ -72,12 +81,21 @@ document.querySelector('#skip').addEventListener('click',()=>save({MODEL_PROVIDE
 
 
 class DesktopController:
-    def __init__(self, config_store: DesktopConfigStore | None = None, *, allow_configuration: bool = False) -> None:
+    def __init__(
+        self,
+        config_store: DesktopConfigStore | None = None,
+        *,
+        allow_configuration: bool = False,
+        worker_context: Any | None = None,
+    ) -> None:
         self.config_store = config_store or DesktopConfigStore()
         self.allow_configuration = allow_configuration or not self.config_store.setup_complete
         self.server: Any = None
         self.server_thread: threading.Thread | None = None
         self.socket: socket.socket | None = None
+        self.worker_context = worker_context
+        self.worker_process: Any = None
+        self.worker_stop: Any = None
         self.url = ""
 
     def start_server(self) -> str:
@@ -87,6 +105,10 @@ class DesktopController:
         import uvicorn
 
         from sports_analyst.api import create_app
+        from sports_analyst.config import get_settings
+        from sports_analyst.service import AnalystApplication
+
+        settings = get_settings()
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -94,14 +116,39 @@ class DesktopController:
         listener.listen(128)
         port = int(listener.getsockname()[1])
         server = uvicorn.Server(
-            uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="info", access_log=False)
+            uvicorn.Config(
+                create_app(AnalystApplication(settings)),
+                host="127.0.0.1",
+                port=port,
+                log_level="info",
+                access_log=False,
+                # A PyInstaller windowed executable has no stderr stream.
+                # Uvicorn's default color formatter probes stderr.isatty()
+                # during construction and otherwise prevents desktop startup.
+                log_config=None,
+            )
         )
         thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, name="sports-analyst-api", daemon=True)
         self.socket, self.server, self.server_thread = listener, server, thread
         self.url = f"http://127.0.0.1:{port}"
         thread.start()
         self._wait_until_ready()
+        self._start_worker_if_configured(settings)
         return self.url
+
+    def _start_worker_if_configured(self, settings: Any) -> None:
+        if settings.job_backend != "postgres" or (self.worker_process is not None and self.worker_process.is_alive()):
+            return
+        context = self.worker_context or multiprocessing.get_context("spawn")
+        stop_event = context.Event()
+        process = context.Process(
+            target=_run_desktop_worker,
+            args=(settings, stop_event),
+            name="sports-analyst-worker",
+            daemon=False,
+        )
+        process.start()
+        self.worker_stop, self.worker_process = stop_event, process
 
     def save_configuration(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -115,6 +162,8 @@ class DesktopController:
             return {"ok": False, "error": str(error)}
 
     def stop(self) -> None:
+        if self.worker_stop is not None:
+            self.worker_stop.set()
         if self.server is not None:
             self.server.should_exit = True
         if self.server_thread is not None and self.server_thread.is_alive():
@@ -122,6 +171,14 @@ class DesktopController:
         if self.socket is not None:
             with suppress(OSError):
                 self.socket.close()
+        if self.worker_process is not None:
+            self.worker_process.join(timeout=8)
+            if self.worker_process.is_alive():
+                self.worker_process.terminate()
+                self.worker_process.join(timeout=3)
+            with suppress(ValueError):
+                self.worker_process.close()
+        self.worker_process = self.worker_stop = None
 
     def _wait_until_ready(self, timeout: float = 30) -> None:
         deadline = time.monotonic() + timeout
@@ -142,6 +199,7 @@ APPLICATION_TITLE = "Open Sports Analyst"
 
 
 def main(argv: list[str] | None = None) -> None:
+    multiprocessing.freeze_support()
     parser = argparse.ArgumentParser(description="Launch Open Sports Analyst as a Windows desktop application.")
     parser.add_argument("--configure", action="store_true", help="Open first-run model configuration again.")
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
@@ -150,8 +208,25 @@ def main(argv: list[str] | None = None) -> None:
     config_store.load_environment()
     controller = DesktopController(config_store, allow_configuration=arguments.configure)
     if arguments.smoke_test:
-        controller.start_server()
-        controller.stop()
+        try:
+            # These imports are deliberately exercised by the packaged smoke
+            # test. They are lazy in normal operation and otherwise can
+            # disappear from a frozen build even though durable jobs and R2
+            # require them.
+            import boto3  # noqa: F401
+            import psycopg  # noqa: F401
+            import sqlalchemy.dialects.postgresql.psycopg  # noqa: F401
+
+            from sports_analyst.worker import run_worker  # noqa: F401
+
+            controller.start_server()
+            controller.stop()
+        except Exception:
+            if log_path := os.getenv("SPORTS_ANALYST_SMOKE_LOG"):
+                import traceback
+
+                Path(log_path).write_text(traceback.format_exc(), encoding="utf-8")
+            raise
         return
 
     import webview

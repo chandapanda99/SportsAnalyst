@@ -57,6 +57,11 @@ class AnalystApplication:
         self.plugin = nfl_plugin
         self.agent = EvidenceBoundAgent(self.settings)
         self.events = EventRegistry()
+        self.jobs = None
+        if self.settings.job_backend == "postgres":
+            from sports_analyst.jobs import PostgresJobStore
+
+            self.jobs = PostgresJobStore(self.settings.database_url.get_secret_value())
         self.telemetry = LangSmithTelemetry(self.settings)
 
     def capabilities(self) -> RuntimeCapabilities:

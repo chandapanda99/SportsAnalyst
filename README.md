@@ -88,6 +88,10 @@ On first launch, the application asks for the model provider, analysis model, op
 remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.json`. Select **Use deterministic mode** to run without an LLM. To reopen model setup from a
 development installation, run `uv run sports-analyst-desktop --configure`.
 
+The standard local desktop configuration (`JOB_BACKEND=local`) executes jobs inside its loopback API process and needs no external services. When the desktop is configured
+with `JOB_BACKEND=postgres` and S3/R2 persistence, its launcher also starts `sports-analyst-worker` as a managed sibling process. Closing the desktop signals that worker,
+waits for its active child to stop, and then closes the API. PostgreSQL leases allow an interrupted job to be reclaimed the next time a worker starts.
+
 ### Build the installer
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:
@@ -96,9 +100,10 @@ Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https:
 ./packaging/windows/build.ps1 -Version 1.0.0
 ```
 
-The script builds the frontend, synchronizes the `desktop` and `desktop-build` dependency groups, creates a PyInstaller one-directory application, downloads Microsoft's
-WebView2 evergreen bootstrapper, and writes the installer to `dist/installer/`. Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop
-after producing the unpackaged desktop application.
+The script verifies that `uv.lock` is current, builds the frontend, synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
+one-directory application. It then runs the frozen executable in an isolated smoke-test mode before downloading Microsoft's WebView2 evergreen bootstrapper and writing the
+installer to `dist/installer/`. The frozen bundle explicitly includes the PostgreSQL, R2/S3, and managed-worker runtime pieces used when durable desktop jobs are enabled.
+Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop after producing and smoke-testing the unpackaged desktop application.
 
 For Authenticode signing, set either `WINDOWS_SIGNING_PFX_PATH` (and optionally `WINDOWS_SIGNING_PFX_PASSWORD`) or `WINDOWS_SIGNING_CERT_THUMBPRINT` before building. The build
 signs and verifies both the executable and installer. Unsigned local builds work, but Windows may display a SmartScreen warning when they are distributed.
@@ -118,6 +123,34 @@ git push origin v1.0.0-beta.1
 The workflow attaches the versioned Windows x64 installer and its SHA-256 checksum to the release. Other `v*` tags publish normal releases. A manual workflow run creates a
 downloadable Actions artifact for verification but does not publish a release. Public downloads require a public repository; for a private source repository, publish from a
 separate public distribution repository instead.
+
+## Docker Compose deployment
+
+The repository also contains an independent Linux container path for a small personal deployment. The multi-stage `Dockerfile` builds the Svelte frontend and Python 3.13
+application into one image on either AMD64 or ARM64. `compose.yaml` runs that image as separate API and durable-worker services, gives each service its own disposable local
+cache, and exposes the API only through an outbound Cloudflare Tunnel. This path does not build, modify, or replace the Windows installer.
+
+The recommended Oracle Cloud Always Free layout is:
+
+- one Ubuntu ARM64 VM;
+- Cloudflare R2 for datasets and completed investigations;
+- Neon PostgreSQL for queued jobs, progress, leases, and retries;
+- `api`, `worker`, and `cloudflared` containers managed by Docker Compose.
+
+Copy `.env.production.example` to `.env.production`, enter the R2, Neon, model-provider, and tunnel credentials, then run:
+
+```bash
+docker compose build
+docker compose run --rm api alembic upgrade head
+docker compose up -d
+docker compose ps
+```
+
+Before deployment, `bash packaging/container/smoke.sh` builds the same image, starts it with local disposable storage, and verifies both API health and delivery of the compiled
+frontend. It does not contact Neon, R2, Cloudflare, or a model provider.
+
+No application port is published on the VM. Configure the remotely managed Cloudflare Tunnel hostname to use `http://api:8080` as its service. See
+[Container deployment on an Oracle Cloud VM](docs/container-deployment.md) for provisioning, validation, backup, and update steps.
 
 ## FastAPI Cloud deployment
 
@@ -144,9 +177,11 @@ AWS_SECRET_ACCESS_KEY=...
 not compete to update one remote catalog. On startup, each instance rebuilds its local DuckDB index from those metadata objects and downloads Parquet datasets or report
 artifacts only when requested.
 
-Browser-initiated dataset sync uses one streamed `POST` request for both the download and its progress. Keeping the work attached to the response prevents an autoscaled
-cloud request from losing an in-memory job when a follow-up progress request reaches another instance. S3-compatible persistence is still required in cloud deployments so
-the completed dataset remains available after scale-to-zero, restarts, and requests routed to other instances.
+By default, jobs run inside the API process. R2/S3 preserves completed results, but active work can be interrupted when that process restarts.
+For durable cloud jobs, set `JOB_BACKEND=postgres` and run the separate Python worker described in
+[Durable cloud jobs](docs/durable-jobs.md). PostgreSQL stores requests, progress, and leases; R2 stores datasets and reports.
+Streamed POST endpoints enqueue work in this mode, and GET event streams can resume on another replica with `Last-Event-ID` or `?after=`.
+The frontend recovers interrupted investigation and dataset streams by polling durable status, without submitting another job.
 
 The repository pins Python 3.13 in both `pyproject.toml` and `.python-version`. Before each deployment, update the lockfile when dependencies change, build the frontend, and
 deploy from the repository root:

@@ -14,3 +14,14 @@ packaging/windows/vendor/
 data/
 investigations/
 *.duckdb
+.neon
+node_modules/
+.agents/
+# Environment-specific secrets; keep the template tracked
+.env.*
+!.env.example
+!.env.production.example
+
+# DuckDB write-ahead logs
+*.duckdb.wal
+/skills-lock.json

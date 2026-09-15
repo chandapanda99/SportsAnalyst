@@ -1472,7 +1472,7 @@
   }
 
   async function recoverInterruptedInvestigation(investigationId: string, streamProblem: unknown) {
-    const deadline = Date.now() + 5 * 60_000;
+    const deadline = Date.now() + 60 * 60_000;
     let lastError = streamProblem;
     stage = 'Connection interrupted · checking investigation status';
     while (Date.now() < deadline) {
@@ -1500,8 +1500,8 @@
       await wait(2_500);
     }
     throw new Error(
-      `The analysis connection was interrupted and no completed result became available within five minutes. ` +
-      `The server may have restarted before saving it. ${String(lastError)}`
+      `Live updates could not be restored within an hour. Your job ID is ${investigationId}. ` +
+      `A queued job may still finish; check Recent analyses before submitting again. ${String(lastError)}`
     );
   }
 
@@ -1540,8 +1540,8 @@
     }
   }
 
-  async function streamDatasetSync(body: ReadableStream<Uint8Array>, sourceIndex: number, sourceCount: number) {
-    const reader = body.getReader();
+  async function streamDatasetSync(stream: EventStreamResponse, sourceIndex: number, sourceCount: number) {
+    const reader = stream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     try {
@@ -1556,12 +1556,29 @@
           const event = JSON.parse(data);
           stage = sourceCount > 1 ? `Source ${sourceIndex + 1} of ${sourceCount} · ${event.message}` : event.message;
           progress = Math.min(1, (sourceIndex + Number(event.progress || 0)) / sourceCount);
-          if (event.stage === 'failed') throw new Error(event.message);
+          if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
           if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
           if (event.stage === 'complete') return;
         }
         if (done) throw new Error('The data-sync connection ended before the download completed.');
       }
+    } catch (problem) {
+      if (problem instanceof ReportedInvestigationFailure || !stream.jobId) throw problem;
+      const deadline = Date.now() + Math.max(3600, stream.timeoutSeconds || 0) * 1000;
+      while (Date.now() < deadline) {
+        try {
+          const status = await api.datasetJobStatus(stream.jobId);
+          stage = `Source ${sourceIndex + 1} of ${sourceCount} · ${status.message}`;
+          progress = Math.min(1, (sourceIndex + Number(status.progress || 0)) / sourceCount);
+          if (status.stage === 'failed') throw new ReportedInvestigationFailure(status.message);
+          if (status.stage === 'complete') return;
+        } catch (error) {
+          if (error instanceof ReportedInvestigationFailure) throw error;
+          stage = 'Connection interrupted · checking download status';
+        }
+        await wait(5_000);
+      }
+      throw new Error(`Download updates are unavailable. Job ${stream.jobId} may still finish; check your data library before retrying.`);
     } finally {
       reader.releaseLock();
     }
@@ -1647,7 +1664,7 @@
     try {
       for (const [index, dataset] of requestedDatasets.entries()) {
         const stream = await api.syncStream(activeSport, missingSyncSeasons(dataset, requestedSeasons), [dataset]);
-        await streamDatasetSync(stream.body, index, requestedDatasets.length);
+        await streamDatasetSync(stream, index, requestedDatasets.length);
       }
       await refresh();
       syncComplete = true;
@@ -2457,8 +2474,8 @@
         <div class="working-layout">
           <div class="working-copy">
             <span class="eyebrow">{syncing ? 'Downloading Data' : 'Analysis in Progress'}</span>
-            <div class="progress-message" class:long-message={stage.length > 56} class:dense-message={stage.length > 96}
-                 class:extra-dense-message={stage.length > 150} role="status" aria-live="polite" aria-atomic="true">
+            <div class="progress-message" class:long-message={stage.length > 44} class:dense-message={stage.length > 88}
+                 class:extra-dense-message={stage.length > 140} role="status" aria-live="polite" aria-atomic="true">
               <small>Current Update</small>
               <h2>{stage}</h2>
             </div>

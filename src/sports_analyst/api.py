@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
+from time import monotonic
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -33,6 +36,9 @@ logger = logging.getLogger("sports_analyst.api")
 
 def bundled_frontend_directory() -> Path:
     """Resolve the production frontend in source and frozen desktop builds."""
+    configured = os.getenv("SPORTS_ANALYST_FRONTEND_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
     bundle_root = getattr(sys, "_MEIPASS", None)
     root = Path(bundle_root) if bundle_root else Path(__file__).resolve().parents[2]
     return root / "frontend" / "dist"
@@ -60,6 +66,37 @@ def _sse(payload: dict[str, Any]) -> str:
 def create_app(application: AnalystApplication | None = None, frontend_dir: Path | None = None) -> FastAPI:
     service = application or AnalystApplication()
     api = FastAPI(title="Open Sports Analyst", version="1.0.0")
+    catalog_lock = RLock()
+    catalog_version = None
+    catalog_refreshed_at = float("-inf")
+
+    def enqueue(key: str, kind: str, payload: dict) -> None:
+        try:
+            service.jobs.enqueue(key, kind, payload, service.settings.job_max_attempts)
+        except Exception as error:
+            logger.error("job_enqueue_failed error_type=%s", type(error).__name__)
+            raise HTTPException(503, "The job queue is unavailable. Please try again shortly.") from error
+
+    def job_status(key: str) -> dict:
+        if service.jobs is not None:
+            status = service.jobs.status(key)
+            if status is None:
+                raise HTTPException(404, "Job not found")
+            if status.get("stage") == "complete":
+                # Worker artifacts can be new to this replica's local index.
+                refresh_catalog()
+            return status
+        events = service.events.events(key)
+        return events[-1] if events else {"stage": "pending", "message": "Waiting for progress", "progress": 0}
+
+    def refresh_catalog() -> None:
+        nonlocal catalog_version, catalog_refreshed_at
+        if service.jobs is not None:
+            with catalog_lock:
+                version = service.jobs.catalog_version()
+                if version != catalog_version or monotonic() - catalog_refreshed_at > 60:
+                    service.store._restore_durable_index()
+                    catalog_version, catalog_refreshed_at = version, monotonic()
 
     @api.get("/api/health")
     def health() -> dict[str, str]:
@@ -72,6 +109,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     @api.get("/api/datasets", response_model=list[DatasetManifest])
     def datasets(sport: str | None = None) -> list[DatasetManifest]:
+        refresh_catalog()
         return service.store.manifests(sport=sport)
 
     @api.get("/api/sports", response_model=list[SportOption])
@@ -80,6 +118,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     @api.get("/api/sports/{sport}/options", response_model=AnalysisOptions)
     def analysis_options(sport: str) -> AnalysisOptions:
+        refresh_catalog()
         try:
             return service.analysis_options(sport)
         except ValueError as error:
@@ -101,6 +140,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     @api.get("/api/sports/{sport}/players", response_model=list[PlayerOption])
     def players(sport: str, query: str = "") -> list[PlayerOption]:
+        refresh_catalog()
         try:
             return service.resolve_players(query, sport)
         except ValueError as error:
@@ -117,6 +157,10 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
+
+        if service.jobs is not None:
+            enqueue(job_id, "sync", {**request.model_dump(mode="json"), "sport": sport})
+            return {"job_id": job_id, "timeout_seconds": timeout_seconds}
 
         def execute() -> None:
             try:
@@ -141,6 +185,13 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
+        if service.jobs is not None:
+            await asyncio.to_thread(enqueue, job_id, "sync", {**request.model_dump(mode="json"), "sport": sport})
+            return StreamingResponse(
+                _event_stream(service, job_id, timeout_seconds=timeout_seconds), media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Job-ID": job_id,
+                         "X-Job-Timeout-Seconds": str(timeout_seconds)},
+            )
         return StreamingResponse(
             _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds),
             media_type="text/event-stream",
@@ -148,16 +199,26 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         )
 
     @api.get("/api/dataset-jobs/{job_id}/events")
-    async def dataset_events(job_id: str, timeout_seconds: int | None = Query(default=None, ge=30, le=3_600)) -> StreamingResponse:
+    async def dataset_events(
+            job_id: str, timeout_seconds: int | None = Query(default=None, ge=30, le=3_600),
+            after: int = Query(default=0, ge=0), last_event_id: str | None = Header(default=None),
+    ) -> StreamingResponse:
         return StreamingResponse(
-            _event_stream(service, job_id, timeout_seconds=timeout_seconds),
+            _event_stream(service, job_id, timeout_seconds=timeout_seconds, after=_cursor(after, last_event_id)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @api.get("/api/dataset-jobs/{job_id}/status")
+    def dataset_job_status(job_id: str) -> dict:
+        return job_status(job_id)
+
     @api.post("/api/investigations", status_code=202)
     def create_investigation(request: AnalysisRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
         investigation_id = stable_id("investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()})
+        if service.jobs is not None:
+            enqueue(investigation_id, "investigation", request.model_dump(mode="json"))
+            return {"investigation_id": investigation_id}
 
         def execute() -> None:
             try:
@@ -174,6 +235,12 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     async def create_investigation_stream(request: AnalysisRequest) -> StreamingResponse:
         """Run an investigation on the instance serving its progress stream."""
         investigation_id = stable_id("investigation", {"request": request.model_dump(), "time": datetime.now(UTC).isoformat()})
+        if service.jobs is not None:
+            await asyncio.to_thread(enqueue, investigation_id, "investigation", request.model_dump(mode="json"))
+            return StreamingResponse(
+                _event_stream(service, investigation_id, timeout_seconds=3600), media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Investigation-ID": investigation_id},
+            )
 
         def execute() -> None:
             service.investigate(request, investigation_id)
@@ -195,6 +262,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             sport: str | None = Query(default=None),
     ) -> list[InvestigationSummary]:
         page_size = limit or service.settings.investigation_history_limit
+        refresh_catalog()
         return service.store.list_investigation_summaries(page_size, offset, sport)
 
     @api.get("/api/investigations/{investigation_id}", response_model=InvestigationBundle)
@@ -224,19 +292,18 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         return Response(status_code=204)
 
     @api.get("/api/investigations/{investigation_id}/events")
-    async def investigation_events(investigation_id: str) -> StreamingResponse:
+    async def investigation_events(
+            investigation_id: str, after: int = Query(default=0, ge=0), last_event_id: str | None = Header(default=None)
+    ) -> StreamingResponse:
         return StreamingResponse(
-            _event_stream(service, investigation_id),
+            _event_stream(service, investigation_id, after=_cursor(after, last_event_id)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @api.get("/api/investigations/{investigation_id}/status")
     def investigation_status(investigation_id: str) -> dict[str, Any]:
-        events = service.events.events(investigation_id)
-        if not events:
-            return {"stage": "pending", "message": "Investigation is queued", "progress": 0.0}
-        return events[-1]
+        return job_status(investigation_id)
 
     @api.post("/api/investigations/{investigation_id}/follow-ups", status_code=202)
     def follow_up(investigation_id: str, request: FollowUpRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
@@ -248,6 +315,9 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             "investigation",
             {"parent": investigation_id, "question": request.question, "time": datetime.now(UTC).isoformat()},
         )
+        if service.jobs is not None:
+            enqueue(child_id, "follow_up", {"parent_id": investigation_id, "question": request.question})
+            return {"investigation_id": child_id}
 
         def execute() -> None:
             try:
@@ -271,6 +341,12 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             "investigation",
             {"parent": investigation_id, "question": request.question, "time": datetime.now(UTC).isoformat()},
         )
+        if service.jobs is not None:
+            await asyncio.to_thread(enqueue, child_id, "follow_up", {"parent_id": investigation_id, "question": request.question})
+            return StreamingResponse(
+                _event_stream(service, child_id, timeout_seconds=3600), media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Investigation-ID": child_id},
+            )
 
         def execute() -> None:
             service.follow_up(investigation_id, request.question, child_id)
@@ -318,12 +394,20 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     return api
 
 
+def _cursor(after: int, last_event_id: str | None) -> int:
+    try:
+        return max(after, int(last_event_id or 0), 0)
+    except ValueError:
+        raise HTTPException(400, "Last-Event-ID must be an integer") from None
+
+
 async def _event_stream(
         service: AnalystApplication,
         key: str,
         timeout_seconds: float | None = None,
         poll_interval: float = 0.1,
         heartbeat_interval: float = 15.0,
+        after: int = 0,
 ):
     offset = 0
     loop = asyncio.get_running_loop()
@@ -331,6 +415,28 @@ async def _event_stream(
     deadline = loop.time() + timeout
     next_heartbeat = loop.time() + heartbeat_interval
     while loop.time() < deadline:
+        if service.jobs is not None:
+            try:
+                events = await asyncio.to_thread(service.jobs.events, key, after)
+                for event in events:
+                    after = event["sequence"]
+                    yield f"id: {after}\n" + _sse(event)
+                    if event["stage"] in {"complete", "failed"}:
+                        return
+                if events:
+                    deadline = loop.time() + timeout
+                if not events:
+                    status = await asyncio.to_thread(service.jobs.status, key)
+                    if status and status.get("stage") in {"complete", "failed"}:
+                        yield _sse(status)
+                        return
+            except Exception as error:
+                logger.warning("job_progress_unavailable key=%s error_type=%s", key, type(error).__name__)
+            if loop.time() >= next_heartbeat:
+                yield ": keep-alive\n\n"
+                next_heartbeat = loop.time() + heartbeat_interval
+            await asyncio.sleep(max(2, poll_interval))
+            continue
         events = service.events.events(key)
         while offset < len(events):
             event = events[offset]

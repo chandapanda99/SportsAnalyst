@@ -211,8 +211,13 @@ describe('Open Sports Analyst workbench', () => {
         return new Response(JSON.stringify(options));
       }
       if (url.endsWith('/datasets/nfl/sync-stream')) {
+        return new Response(new ReadableStream({
+          start(controller) { controller.error(new TypeError('Network connection interrupted')); }
+        }), {headers: {'x-job-id': 'sync-running', 'content-type': 'text/event-stream'}});
+      }
+      if (url.endsWith('/dataset-jobs/sync-running/status')) {
         downloaded = true;
-        return defaultFetch(input, init);
+        return new Response(JSON.stringify({stage: 'complete', message: 'Data downloaded', progress: 1}));
       }
       return defaultFetch(input, init);
     });
@@ -231,6 +236,7 @@ describe('Open Sports Analyst workbench', () => {
       {seasons: [2025, 2024], datasets: ['play_by_play']},
       {seasons: [2025, 2024], datasets: ['rosters']}
     ]);
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/dataset-jobs/sync-running/status'))).toBe(true);
     await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));
     expect(document.activeElement?.id).toBe('scope-heading');
     const team = screen.getByRole('combobox', {name: 'NFL team'});

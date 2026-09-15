@@ -4,6 +4,7 @@ import json
 import shutil
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -20,6 +21,7 @@ class LocalStore:
         self.settings = settings or get_settings()
         self.persistence = persistence or create_persistence_backend(self.settings)
         self._persistence_lock = RLock()
+        self.publication_guard = nullcontext
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         if self.persistence.durable:
             # DuckDB is a disposable local index in cloud mode. Rebuilding it
@@ -166,6 +168,7 @@ class LocalStore:
 
     def _restore_durable_index(self) -> None:
         with self._persistence_lock, self.connect() as db:
+            db.execute("BEGIN TRANSACTION")
             db.execute("DELETE FROM datasets")
             db.execute("DELETE FROM investigations")
             for key in self.persistence.list_keys("metadata/datasets/"):
@@ -178,8 +181,13 @@ class LocalStore:
                 if payload is None:
                     continue
                 self._register_durable_investigation(payload, db)
+            db.execute("COMMIT")
 
     def save_manifest(self, manifest: DatasetManifest) -> None:
+        with self.publication_guard():
+            self._save_manifest(manifest)
+
+    def _save_manifest(self, manifest: DatasetManifest) -> None:
         source = Path(manifest.local_path)
         object_path = self._managed_relative_path(source)
         with self._persistence_lock:
@@ -254,6 +262,10 @@ class LocalStore:
         return manifest.model_copy(update={"local_path": str(path)})
 
     def save_investigation(self, bundle: InvestigationBundle) -> Path:
+        with self.publication_guard():
+            return self._save_investigation(bundle)
+
+    def _save_investigation(self, bundle: InvestigationBundle) -> Path:
         directory = self.settings.investigations_dir / bundle.run.investigation_id
         directory.mkdir(parents=True, exist_ok=False)
         path = directory / "bundle.json"

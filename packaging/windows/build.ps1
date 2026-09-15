@@ -39,7 +39,13 @@ try
     }
     Write-Host "Frontend Files: BUILT"
 
-    uv sync --extra desktop --extra desktop-build
+    uv lock --check
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "uv.lock is stale; run uv lock and commit the result before packaging"
+    }
+
+    uv sync --frozen --extra desktop --extra desktop-build
     if ($LASTEXITCODE -ne 0)
     {
         throw "Desktop dependencies could not be synchronized"
@@ -59,6 +65,64 @@ try
         throw "PyInstaller build failed"
     }
     Write-Host "PyInstaller Build: SUCCESS!"
+
+    if (-not (Test-Path -LiteralPath $executable))
+    {
+        throw "PyInstaller completed without producing $executable"
+    }
+
+    # Exercise the actual frozen executable with isolated local settings. This
+    # catches missing frontend assets, hidden imports, and multiprocessing
+    # bootstrap failures before an installer is produced.
+    $smokeDataDirectory = Join-Path $projectRoot "build\desktop-smoke-data"
+    New-Item -ItemType Directory -Path $smokeDataDirectory -Force | Out-Null
+    $smokeLog = Join-Path $projectRoot "build\desktop-smoke-test.log"
+    if (Test-Path -LiteralPath $smokeLog)
+    {
+        Remove-Item -LiteralPath $smokeLog -Force
+    }
+    $smokeEnvironment = @{
+        DATA_DIR = $smokeDataDirectory
+        JOB_BACKEND = "local"
+        PERSISTENCE_BACKEND = "local"
+        DATABASE_URL = ""
+        SPORTS_ANALYST_SMOKE_LOG = $smokeLog
+    }
+    $previousEnvironment = @{}
+    foreach ($name in $smokeEnvironment.Keys)
+    {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        [Environment]::SetEnvironmentVariable($name, $smokeEnvironment[$name], "Process")
+    }
+    try
+    {
+        $smokeTest = Start-Process -FilePath $executable -ArgumentList "--smoke-test" -WindowStyle Hidden -Wait -PassThru
+        $smokeExitCode = $smokeTest.ExitCode
+    }
+    finally
+    {
+        foreach ($name in $previousEnvironment.Keys)
+        {
+            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+        }
+    }
+    if ($smokeExitCode -ne 0)
+    {
+        $details = if (Test-Path -LiteralPath $smokeLog)
+        {
+            Get-Content -LiteralPath $smokeLog -Raw
+        }
+        else
+        {
+            "No diagnostic log was produced"
+        }
+        throw "Frozen desktop smoke test failed with exit code $smokeExitCode`n$details"
+    }
+    if (Test-Path -LiteralPath $smokeLog)
+    {
+        Remove-Item -LiteralPath $smokeLog -Force
+    }
+    Write-Host "Frozen Desktop Smoke Test: SUCCESS!"
 
     $signingConfigured = [bool]($env:WINDOWS_SIGNING_PFX_PATH -or $env:WINDOWS_SIGNING_CERT_THUMBPRINT)
     if ($signingConfigured)

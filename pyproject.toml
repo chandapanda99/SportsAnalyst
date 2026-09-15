@@ -29,6 +29,9 @@ dependencies = [
     "uvicorn[standard]>=0.37",
     "vl-convert-python>=1.8,<2",
     "pyarrow>=25.0.1",
+    "psycopg[binary]>=3.3.5",
+    "sqlalchemy>=2.0.53",
+    "alembic>=1.20.0",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +42,7 @@ desktop-build = ["pillow>=11,<13", "pyinstaller>=6.18,<7"]
 [project.scripts]
 sports-analyst = "sports_analyst.cli:app"
 sports-analyst-desktop = "sports_analyst.desktop:main"
+sports-analyst-worker = "sports_analyst.worker:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -50,7 +54,7 @@ packages = ["src/sports_analyst"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-markers = ["integration: downloads an external sports dataset", "live: requires a configured model provider or live sports endpoint"]
+markers = ["integration: downloads an external sports dataset", "live: requires a configured model provider or live sports endpoint", "postgres: durable-job workflows against TEST_DATABASE_URL"]
 
 [tool.fastapi]
 entrypoint = "sports_analyst.api:app"
