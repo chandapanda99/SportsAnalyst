@@ -29,11 +29,17 @@ metrics, datasets, and evidence renderer.
 The Svelte workbench provides:
 
 1. **Getting started** — a dismissible inline guide explains data, comparisons, and evidence. Completion is remembered in browser storage; **Getting started** restores it.
-2. **Prepare your data** — quick setup uses the sport plugin's required and recommended sources. Choose seasons, then explicitly download. **Customize data sources** exposes individual packages, availability, and downloaded badges. Ready data collapses into a status strip.
-3. **Subject → Comparison → Focus → Question** — searchable team/player controls, reference and comparison periods, recommended metrics, and selectable example questions form one continuous workbench. **Customize metrics** and **Optional breakdowns** reveal advanced choices; **About** opens each metric's formula, interpretation, sample, and limitations.
-4. **Analysis brief** — a live summary and actionable readiness checklist explain what will run and what still needs attention. NFL/NBA drafts remain independent, including custom metric selections.
-5. **Progress** — downloads show source-level stages; completed syncs offer **Continue building analysis**. Investigation stages describe the work as evidence is produced and reviewed.
-6. **Results** — the direct answer leads into key metric changes, findings, supporting evidence, charts, and representative plays. The first finding opens automatically. On narrow screens, evidence appears directly below its finding. Sources, caveats, and tool records are grouped under **How this analysis was calculated**.
+2. **Prepare your data** — quick setup uses the sport plugin's required and recommended sources. Choose seasons, then explicitly download. **Customize data sources** exposes
+   individual packages, availability, and downloaded badges. Ready data collapses into a status strip.
+3. **Subject → Comparison → Focus → Question** — searchable team/player controls, reference and comparison periods, recommended metrics, and selectable example questions form
+   one continuous workbench. **Customize metrics** and **Optional breakdowns** reveal advanced choices; **About** opens each metric's formula, interpretation, sample, and
+   limitations.
+4. **Analysis brief** — a live summary and actionable readiness checklist explain what will run and what still needs attention. NFL/NBA drafts remain independent, including
+   custom metric selections.
+5. **Progress** — downloads show source-level stages; completed syncs offer **Continue building analysis**. Investigation stages describe the work as evidence is produced and
+   reviewed.
+6. **Results** — the direct answer leads into key metric changes, findings, supporting evidence, charts, and representative plays. The first finding opens automatically. On
+   narrow screens, evidence appears directly below its finding. Sources, caveats, and tool records are grouped under **How this analysis was calculated**.
 7. **Film Room** — reopen, continue, export, or delete saved investigation threads.
 
 ## Quick start
@@ -76,7 +82,9 @@ npm run dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` requests to the FastAPI server at `http://127.0.0.1:8767`.
 
-You do **not** need to run a data-sync command before launching the application. Open **Prepare your data** (or **Manage data**), choose seasons, and use the **Download** button. NFL quick setup includes play-by-play and recommends schedules, player statistics, and rosters. NBA requires play-by-play, schedules, team box scores, and player box scores for the guided flow. The application reports whether the optional live transport is installed, but
+You do **not** need to run a data-sync command before launching the application. Open **Prepare your data** (or **Manage data**), choose seasons, and use the **Download**
+button. NFL quick setup includes play-by-play and recommends schedules, player statistics, and rosters. NBA requires play-by-play, schedules, team box scores, and player box
+scores for the guided flow. The application reports whether the optional live transport is installed, but
 current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
 
 ## Windows desktop application
@@ -146,7 +154,8 @@ docker compose up -d
 docker compose ps
 ```
 
-Before deployment, `bash packaging/container/smoke.sh` builds the same image, starts it with local disposable storage, and verifies both API health and delivery of the compiled
+Before deployment, `bash packaging/container/smoke.sh` builds the same image, starts it with local disposable storage, and verifies both API health and delivery of the
+compiled
 frontend. It does not contact Neon, R2, Cloudflare, or a model provider.
 
 No application port is published on the VM. Configure the remotely managed Cloudflare Tunnel hostname to use `http://api:8080` as its service. See
@@ -486,7 +495,7 @@ FastAPI exposes:
 |      Area      | Endpoints                                                                                                                                                                                |
 |:--------------:|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |    Runtime     | `GET /api/capabilities`, `GET /api/sports`                                                                                                                                               |
-|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync-stream`; legacy clients may use `POST /api/datasets/{sport}/sync` plus `GET /api/dataset-jobs/{id}/events`              |
+|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync-stream`; legacy clients may use `POST /api/datasets/{sport}/sync` plus `GET /api/dataset-jobs/{id}/events`           |
 | Sport catalog  | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players`                                        |
 | Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status` |
 |  Conversation  | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups`                                                                                                        |
