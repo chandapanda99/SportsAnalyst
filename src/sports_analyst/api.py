@@ -71,14 +71,24 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     catalog_refreshed_at = float("-inf")
 
     def enqueue(key: str, kind: str, payload: dict) -> None:
+        from sports_analyst.cloud_dispatch import ensure_dispatch
+        from sports_analyst.jobs import QueueFull
+
         try:
-            service.jobs.enqueue(key, kind, payload, service.settings.job_max_attempts)
+            service.jobs.enqueue(key, kind, payload, service.settings.job_max_attempts,
+                                 max_active=service.settings.max_active_jobs)
+        except QueueFull as error:
+            raise HTTPException(429, str(error), headers={"Retry-After": "30"}) from error
         except Exception as error:
             logger.error("job_enqueue_failed error_type=%s", type(error).__name__)
             raise HTTPException(503, "The job queue is unavailable. Please try again shortly.") from error
+        ensure_dispatch(service.settings, service.jobs, key)
 
     def job_status(key: str) -> dict:
         if service.jobs is not None:
+            from sports_analyst.cloud_dispatch import ensure_dispatch
+
+            ensure_dispatch(service.settings, service.jobs, key)
             status = service.jobs.status(key)
             if status is None:
                 raise HTTPException(404, "Job not found")

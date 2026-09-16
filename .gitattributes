@@ -1,0 +1,2 @@
+# These scripts are uploaded from Windows and executed by Linux Cloud Build.
+deploy/cloud-run/*.sh text eol=lf

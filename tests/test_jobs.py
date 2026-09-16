@@ -21,6 +21,58 @@ from sports_analyst.service import AnalystApplication
 from sports_analyst.worker import execute_job
 
 
+def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
+    from sports_analyst import cloud_dispatch
+    from sports_analyst.jobs import QueueFull
+
+    settings = Settings(_env_file=None, data_dir=tmp_path)
+    settings = settings.model_copy(update={"job_dispatch_backend": "cloud_run", "max_active_jobs": 3,
+                                           "job_progress_transport": "poll"})
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path))
+    application.settings = settings
+    queue = application.jobs = MagicMock()
+    queue.reserve_dispatch.side_effect = [1, None, 2]
+    queue.status.return_value = {"stage": "queued", "progress": 0, "message": "Queued"}
+    launch = MagicMock(side_effect=[TimeoutError("private"), None])
+    monkeypatch.setattr(cloud_dispatch, "launch", launch)
+    client = TestClient(create_app(application))
+    result = client.post("/api/datasets/nba/sync", json={"seasons": [2025]})
+    assert result.status_code == 202
+    key = result.json()["job_id"]
+    queue.complete_dispatch.assert_called_with(key, 1, False)
+    client.get(f"/api/dataset-jobs/{key}/status")
+    assert launch.call_count == 1
+    client.get(f"/api/dataset-jobs/{key}/status")
+    queue.complete_dispatch.assert_called_with(key, 2, True)
+    assert client.get("/api/capabilities").json()["job_progress_transport"] == "poll"
+    queue.enqueue.side_effect = QueueFull("Queue full")
+    assert client.post("/api/datasets/nba/sync", json={"seasons": [2025]}).status_code == 429
+
+
+def test_drain_waits_for_retries_and_cleans_attempt_cache(tmp_path, monkeypatch):
+    from sports_analyst import worker
+
+    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="postgres", persistence_backend="s3",
+                        database_url="postgresql://unused/test")
+    queue = MagicMock()
+    job = {"job_id": "job", "lease_token": "token"}
+    queue.claim.side_effect = [None, job, None, job, None]
+    queue.has_active_work.side_effect = [True, True, False]
+    monkeypatch.setattr(worker, "PostgresJobStore", lambda _: queue)
+    monkeypatch.setattr(worker.signal, "signal", lambda *_: None)
+    process = MagicMock()
+    process.is_alive.return_value = False
+    context = MagicMock()
+    context.Process.return_value = process
+    monkeypatch.setattr(worker.multiprocessing, "get_context", lambda _: context)
+    stop = MagicMock()
+    stop.is_set.return_value = False
+    worker.run_worker(settings, drain=True, stop_event=stop)
+    assert process.start.call_count == 2
+    assert stop.wait.call_count == 2
+    assert list((tmp_path / "workers").iterdir()) == []
+
+
 def test_cloud_api_enqueues_all_operations_and_replays_progress_after_restart(tmp_path, monkeypatch):
     application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, job_backend="local"))
     queue = MagicMock()
@@ -116,11 +168,20 @@ def test_postgres_migration_claim_recovery_fencing_and_event_replay(monkeypatch)
         # already exist, while alembic_version does not.
         with store.engine.begin() as db:
             Base.metadata.create_all(db)
+            for name in ("dispatch_state", "dispatch_attempts", "dispatch_lease_expires_at", "dispatched_at"):
+                db.execute(sa.text(f"ALTER TABLE jobs DROP COLUMN {name}"))
         config = Config("alembic.ini")
         with store.engine.begin() as db:
             config.attributes["connection"] = db
             command.upgrade(config, "head")
         store.enqueue("job", "investigation", {"sport": "nba"}, max_attempts=2)
+        reservation = store.reserve_dispatch("job")
+        assert reservation == 1
+        assert store.reserve_dispatch("job") is None
+        store.complete_dispatch("job", reservation, True)
+        from sports_analyst.jobs import QueueFull
+        with pytest.raises(QueueFull):
+            store.enqueue("excess", "sync", {}, max_active=1)
         first = store.claim(300)
         assert first["attempts"] == 1
         assert store.claim(300) is None  # Another worker cannot claim a live lease.

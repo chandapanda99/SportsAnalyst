@@ -1,0 +1,31 @@
+timeout: 3600s
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _REGION: us-central1
+  _APP: open-sports-analyst
+  _R2_ENDPOINT: ''
+  _R2_BUCKET: open-sports-analyst
+  _R2_PREFIX: production
+  _FOUNDRY_ENDPOINT: ''
+  _MODEL: gpt-5.6-luna
+  _LANGSMITH_TRACING: 'false'
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '--platform=linux/amd64', '--target=cloud-run', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID', '.']
+  - name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID']
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    env:
+      - 'PROJECT_ID=$PROJECT_ID'
+      - 'REGION=${_REGION}'
+      - 'APP=${_APP}'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID'
+      - 'R2_ENDPOINT=${_R2_ENDPOINT}'
+      - 'R2_BUCKET=${_R2_BUCKET}'
+      - 'R2_PREFIX=${_R2_PREFIX}'
+      - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
+      - 'MODEL=${_MODEL}'
+      - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
+    args: ['deploy/cloud-run/release.sh']

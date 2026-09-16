@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     persistence_backend: str = "local"
     job_backend: str = "local"
+    job_dispatch_backend: str = "none"
+    job_progress_transport: str = "stream"
+    cloud_run_project: str = ""
+    cloud_run_region: str = "us-central1"
+    cloud_run_worker_job: str = ""
+    max_active_jobs: int = Field(default=0, ge=0, le=100)
     database_url: SecretStr | None = Field(default=None, repr=False)
     database_migration_url: SecretStr | None = Field(default=None, repr=False)
     job_poll_seconds: float = Field(default=5, ge=1, le=60)
@@ -53,6 +59,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_jobs(self) -> Settings:
+        if self.job_dispatch_backend not in {"none", "cloud_run"}:
+            raise ValueError("JOB_DISPATCH_BACKEND must be none or cloud_run")
+        if self.job_progress_transport not in {"stream", "poll"}:
+            raise ValueError("JOB_PROGRESS_TRANSPORT must be stream or poll")
+        if (self.job_dispatch_backend == "cloud_run"
+                and (self.job_backend != "postgres" or not self.cloud_run_project or not self.cloud_run_worker_job)
+        ):
+            raise ValueError("Cloud Run dispatch requires Postgres jobs, CLOUD_RUN_PROJECT and CLOUD_RUN_WORKER_JOB")
         if self.job_backend not in {"local", "postgres"}:
             raise ValueError("JOB_BACKEND must be local or postgres")
         if self.job_backend == "postgres" and (not self.database_url or self.persistence_backend != "s3"):

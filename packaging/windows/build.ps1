@@ -18,23 +18,80 @@ try
 {
     if (-not $SkipFrontend)
     {
-        Push-Location $frontendDirectory
+        # Do not run npm ci in the development checkout. On Windows, an active
+        # Vite process keeps Rollup's native module loaded and npm cannot unlink
+        # it. Build from a disposable copy so packaging remains reproducible
+        # without disturbing a running development server.
+        $frontendStagingRoot = Join-Path $projectRoot "build\frontend-packaging"
+        $frontendStagingDirectory = Join-Path $frontendStagingRoot ([Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $frontendStagingDirectory -Force | Out-Null
         try
         {
-            npm ci
-            if ($LASTEXITCODE -ne 0)
+            foreach ($relativePath in @(
+                "package.json",
+                "package-lock.json",
+                "index.html",
+                "svelte.config.js",
+                "tsconfig.json",
+                "vite.config.ts",
+                "public",
+                "src"
+            ))
             {
-                throw "npm ci failed"
+                $source = Join-Path $frontendDirectory $relativePath
+                if (-not (Test-Path -LiteralPath $source))
+                {
+                    throw "Frontend build input is missing: $source"
+                }
+                Copy-Item -LiteralPath $source -Destination $frontendStagingDirectory -Recurse -Force
             }
-            npm run build
-            if ($LASTEXITCODE -ne 0)
+
+            Push-Location $frontendStagingDirectory
+            try
             {
-                throw "Frontend build failed"
+                npm ci
+                if ($LASTEXITCODE -ne 0)
+                {
+                    throw "npm ci failed in isolated frontend staging directory"
+                }
+                npm run build
+                if ($LASTEXITCODE -ne 0)
+                {
+                    throw "Frontend build failed"
+                }
             }
+            finally
+            {
+                Pop-Location
+            }
+
+            $stagedFrontendOutput = Join-Path $frontendStagingDirectory "dist"
+            if (-not (Test-Path -LiteralPath $stagedFrontendOutput))
+            {
+                throw "Frontend build completed without producing $stagedFrontendOutput"
+            }
+            $frontendOutput = Join-Path $frontendDirectory "dist"
+            if (Test-Path -LiteralPath $frontendOutput)
+            {
+                Remove-Item -LiteralPath $frontendOutput -Recurse -Force
+            }
+            Copy-Item -LiteralPath $stagedFrontendOutput -Destination $frontendOutput -Recurse -Force
         }
         finally
         {
-            Pop-Location
+            $resolvedBuildRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot "build"))
+            $resolvedStagingDirectory = [IO.Path]::GetFullPath($frontendStagingDirectory)
+            if (-not $resolvedStagingDirectory.StartsWith(
+                    $resolvedBuildRoot + [IO.Path]::DirectorySeparatorChar,
+                    [StringComparison]::OrdinalIgnoreCase
+            ))
+            {
+                throw "Refusing to clean unexpected frontend staging path: $resolvedStagingDirectory"
+            }
+            if (Test-Path -LiteralPath $resolvedStagingDirectory)
+            {
+                Remove-Item -LiteralPath $resolvedStagingDirectory -Recurse -Force
+            }
         }
     }
     Write-Host "Frontend Files: BUILT"
@@ -88,7 +145,7 @@ try
         DATABASE_URL = ""
         SPORTS_ANALYST_SMOKE_LOG = $smokeLog
     }
-    $previousEnvironment = @{}
+    $previousEnvironment = @{ }
     foreach ($name in $smokeEnvironment.Keys)
     {
         $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")

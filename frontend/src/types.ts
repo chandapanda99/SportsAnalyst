@@ -97,5 +97,5 @@ export type Investigation = {
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };
 export type InvestigationSummary = Pick<Investigation, 'run' | 'summary' | 'model_id' | 'fallback_used'>;
-export type Capabilities = { providers: string[]; configured_provider: string; model_configured: boolean; custom_analysis: boolean; sports: string[] };
+export type Capabilities = { providers: string[]; configured_provider: string; model_configured: boolean; custom_analysis: boolean; sports: string[]; job_progress_transport?: 'stream' | 'poll' };
 export type SportOption = { value: string; label: string; available: boolean; live_available: boolean; live_message?: string };

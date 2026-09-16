@@ -33,6 +33,10 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
+    dispatch_state: Mapped[str] = mapped_column(sa.Text, server_default="pending")
+    dispatch_attempts: Mapped[int] = mapped_column(server_default="0")
+    dispatch_lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    dispatched_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     __table_args__ = (
         sa.Index("jobs_claimable_idx", "status", "available_at", "lease_expires_at"),
     )
@@ -62,17 +66,58 @@ class LeaseLost(RuntimeError):
     pass
 
 
+class QueueFull(RuntimeError):
+    pass
+
+
 class PostgresJobStore:
     durable = True
 
     def __init__(self, url: str):
         self.engine = database_engine(url)
 
-    def enqueue(self, key: str, kind: str, payload: dict, max_attempts: int = 3) -> None:
+    def enqueue(self, key: str, kind: str, payload: dict, max_attempts: int = 3, *, max_active: int = 0) -> None:
         with self.engine.begin() as db:
+            if max_active:
+                db.execute(sa.text("SELECT pg_advisory_xact_lock(723901)"))
+                count = db.scalar(sa.select(sa.func.count()).select_from(Job).where(Job.status.in_(["queued", "running"])))
+                if count >= max_active:
+                    raise QueueFull("The analysis queue is full. Wait for an active job to finish and try again.")
             db.execute(sa.insert(Job).values(job_id=key, kind=kind, payload=payload, max_attempts=max_attempts))
             self._event(db, key, "queued", "Queued for an available worker", 0,
                         job_id=key, **({"investigation_id": key} if kind != "sync" else {}))
+
+    def reserve_dispatch(self, key: str) -> int | None:
+        """Throttle launches across replicas; an ambiguous launch expires and can be retried."""
+        with self.engine.begin() as db:
+            db.execute(sa.text("SELECT pg_advisory_xact_lock(723902)"))
+            row = db.execute(sa.select(Job).where(Job.job_id == key).with_for_update()).mappings().first()
+            if row is None or row["status"] not in {"queued", "running"}:
+                return None
+            now = db.scalar(sa.select(sa.func.now()))
+            if row["status"] == "running" and row["lease_expires_at"] and row["lease_expires_at"] > now:
+                return None
+            # One launch covers the queue. Also rate-limit uncertain/failed launches.
+            if db.scalar(sa.select(sa.func.count()).select_from(Job).where(
+                Job.status.in_(["queued", "running"]), Job.dispatch_lease_expires_at > now
+            )):
+                return None
+            attempt = row["dispatch_attempts"] + 1
+            db.execute(sa.update(Job).where(Job.job_id == key).values(
+                dispatch_state="dispatching", dispatch_attempts=attempt,
+                dispatch_lease_expires_at=now + timedelta(seconds=120)))
+            return attempt
+
+    def complete_dispatch(self, key: str, attempt: int, success: bool) -> None:
+        with self.engine.begin() as db:
+            db.execute(sa.update(Job).where(Job.job_id == key, Job.dispatch_attempts == attempt).values(
+                dispatch_state="dispatched" if success else "pending",
+                dispatched_at=sa.func.now() if success else None,
+                dispatch_lease_expires_at=sa.func.now() + timedelta(seconds=120 if success else 30)))
+
+    def has_active_work(self) -> bool:
+        with self.engine.connect() as db:
+            return bool(db.scalar(sa.select(sa.func.count()).select_from(Job).where(Job.status.in_(["queued", "running"]))))
 
     @staticmethod
     def _event(db, key: str, stage: str, message: str, progress: float, **extra) -> dict:

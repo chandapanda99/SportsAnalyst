@@ -2,7 +2,7 @@
 .github
 .agents
 .codex
-.fastapicloud
+.neon
 .idea
 .junie
 .pytest_cache
@@ -14,7 +14,6 @@ __pycache__
 .env
 .env.*
 !.env.example
-!.env.production.example
 build
 data
 dist
@@ -24,5 +23,7 @@ frontend/dist
 frontend/node_modules
 packaging
 tests
+gha-creds-*.json
+deploy/cloud-run/secrets
 *.duckdb
 *.duckdb.wal

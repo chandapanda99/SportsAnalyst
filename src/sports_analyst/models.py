@@ -554,6 +554,7 @@ class ProviderConfiguration(BaseModel):
 
 
 class RuntimeCapabilities(BaseModel):
+    job_progress_transport: Literal["stream", "poll"] = "stream"
     providers: list[str]
     configured_provider: str
     model_configured: bool

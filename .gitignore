@@ -20,8 +20,9 @@ node_modules/
 # Environment-specific secrets; keep the template tracked
 .env.*
 !.env.example
-!.env.production.example
 
 # DuckDB write-ahead logs
 *.duckdb.wal
 /skills-lock.json
+/deploy/cloud-run/secrets/
+/gha-creds-*.json

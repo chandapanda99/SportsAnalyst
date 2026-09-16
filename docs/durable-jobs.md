@@ -1,9 +1,9 @@
 # Durable cloud jobs with PostgreSQL and R2
 
+For managed on-demand workers, use [Cloud Run deployment](cloud-run.md). Its `--drain` worker exits after queued work and retries finish; dispatch recovery is driven by submissions and status polling.
+
 The API submits work to PostgreSQL. A separate Python worker runs one job at a time, updates progress, and saves artifacts to the existing R2 bucket.
 
-For the repository's ARM64/AMD64 API, worker, and Cloudflare Tunnel deployment, see [Container deployment on an Oracle Cloud VM](container-deployment.md). The Compose worker
-uses the same queue behavior described here; its local volume is only a disposable attempt cache.
 No Redis/Valkey service is required. This is optional: `JOB_BACKEND=local` retains the desktop and development behavior.
 
 ## 1. Prepare Neon

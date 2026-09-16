@@ -1,6 +1,6 @@
 <script lang="ts">
   import {onMount, tick} from 'svelte';
-  import {api} from './api';
+  import {api, pendingJob, pollingStream} from './api';
   import type {EventStreamResponse} from './api';
   import Chart from './Chart.svelte';
   import SupportingEvidence from './SupportingEvidence.svelte';
@@ -604,7 +604,22 @@
       showGuidance = localStorage.getItem('sports-analyst:onboarding:v1') !== 'done';
     } catch { /* Storage is optional. */
     }
-    void refresh();
+    void refresh().then(async () => {
+      const pending = pendingJob();
+      if (!pending || busy) return;
+      busy = true;
+      syncing = pending.kind === 'sync';
+      try {
+        if (syncing) {
+          await streamDatasetSync(pollingStream(pending), 0, 1);
+          await refresh();
+          syncComplete = true;
+        } else {
+          await streamInvestigation(pollingStream(pending));
+        }
+      } catch (problem) { error = String(problem); }
+      finally { busy = false; syncing = false; }
+    });
   });
 
   async function refresh(attempt = 0) {

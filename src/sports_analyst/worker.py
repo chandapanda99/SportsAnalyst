@@ -69,7 +69,7 @@ def execute_job(settings: Settings, job: dict) -> None:
             logger.warning("job_failure_update_unavailable job_id=%s; lease will expire", key)
 
 
-def run_worker(settings: Settings, *, once: bool = False, stop_event: Any | None = None) -> None:
+def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, stop_event: Any | None = None) -> None:
     from sports_analyst.log_config import configure_logging
 
     configure_logging(settings.log_level)
@@ -90,12 +90,12 @@ def run_worker(settings: Settings, *, once: bool = False, stop_event: Any | None
             job = jobs.claim(settings.job_lease_seconds)
         except Exception as error:
             logger.error("job_claim_unavailable error_type=%s", type(error).__name__)
-            if once:
+            if once or drain:
                 raise
             stop.wait(settings.job_idle_poll_seconds)
             continue
         if job is None:
-            if once:
+            if once or (drain and not jobs.has_active_work()):
                 return
             stop.wait(idle)
             idle = min(settings.job_idle_poll_seconds, idle * 2)
@@ -145,8 +145,11 @@ def run_worker(settings: Settings, *, once: bool = False, stop_event: Any | None
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Process at most one available job and exit")
+    parser.add_argument("--drain", action="store_true", help="Process queued jobs and delayed retries, then exit")
     args = parser.parse_args()
-    run_worker(get_settings(), once=args.once)
+    if args.once and args.drain:
+        parser.error("--once and --drain are mutually exclusive")
+    run_worker(get_settings(), once=args.once, drain=args.drain)
 
 
 if __name__ == "__main__":

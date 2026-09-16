@@ -1,5 +1,49 @@
 import type { AnalysisOptions, Capabilities, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption } from './types';
 
+let progressTransport: 'stream' | 'poll' = 'stream';
+const pendingKey = 'sports-analyst:pending-job:v1';
+type PendingJob = { id: string; kind: 'sync' | 'investigation' };
+
+export function pendingJob(): PendingJob | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(pendingKey) || 'null');
+    return value && typeof value.id === 'string' && ['sync', 'investigation'].includes(value.kind) ? value : null;
+  } catch { return null; }
+}
+
+export function pollingStream(job: PendingJob): EventStreamResponse {
+  try { sessionStorage.setItem(pendingKey, JSON.stringify(job)); } catch { /* Optional storage. */ }
+  const encoder = new TextEncoder();
+  let stopped = false;
+  return {
+    investigationId: job.kind === 'investigation' ? job.id : undefined,
+    jobId: job.kind === 'sync' ? job.id : undefined,
+    body: new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let delay = 1000;
+        const deadline = Date.now() + 6 * 60 * 60_000;
+        while (!stopped && Date.now() < deadline) {
+          try {
+            const path = job.kind === 'sync' ? 'dataset-jobs' : 'investigations';
+            const status = await json<{stage: string; message: string; progress: number}>(`/api/${path}/${encodeURIComponent(job.id)}/status`);
+            if (stopped) return;
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(status)}\n\n`));
+            if (['complete', 'failed'].includes(status.stage)) {
+              try { sessionStorage.removeItem(pendingKey); } catch { /* Optional storage. */ }
+              controller.close();
+              return;
+            }
+          } catch { /* A transient outage does not resubmit work. */ }
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay = Math.min(5000, delay * 1.5);
+        }
+        if (!stopped) controller.error(new Error('Progress polling timed out; refresh to resume this job.'));
+      },
+      cancel() { stopped = true; }
+    })
+  };
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
@@ -19,6 +63,13 @@ export interface EventStreamResponse {
 }
 
 async function eventStream(url: string, init: RequestInit, label: string): Promise<EventStreamResponse> {
+  if (progressTransport === 'poll') {
+    const endpoint = url.replace(/\/sync-stream$/, '/sync').replace(/\/stream$/, '');
+    const queued = await json<{job_id?: string; investigation_id?: string}>(endpoint, init);
+    const id = queued.job_id || queued.investigation_id;
+    if (!id) throw new Error('The server did not return a job identifier.');
+    return pollingStream({id, kind: queued.job_id ? 'sync' : 'investigation'});
+  }
   const response = await fetch(url, init);
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
   if (!response.body) throw new Error(`${label} progress streaming is not supported by this browser.`);
@@ -38,7 +89,11 @@ export const api = {
       return false;
     }
   },
-  capabilities: () => json<Capabilities>('/api/capabilities'),
+  capabilities: async () => {
+    const result = await json<Capabilities>('/api/capabilities');
+    progressTransport = result.job_progress_transport ?? 'stream';
+    return result;
+  },
   sports: () => json<SportOption[]>('/api/sports'),
   analysisOptions: (sport = 'nfl') => json<AnalysisOptions>(`/api/sports/${sport}/options`),
   players: (sport: string, query = '') => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}`),

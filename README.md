@@ -108,7 +108,7 @@ Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https:
 ./packaging/windows/build.ps1 -Version 1.0.0
 ```
 
-The script verifies that `uv.lock` is current, builds the frontend, synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
+The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
 one-directory application. It then runs the frozen executable in an isolated smoke-test mode before downloading Microsoft's WebView2 evergreen bootstrapper and writing the
 installer to `dist/installer/`. The frozen bundle explicitly includes the PostgreSQL, R2/S3, and managed-worker runtime pieces used when durable desktop jobs are enabled.
 Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop after producing and smoke-testing the unpackaged desktop application.
@@ -132,80 +132,11 @@ The workflow attaches the versioned Windows x64 installer and its SHA-256 checks
 downloadable Actions artifact for verification but does not publish a release. Public downloads require a public repository; for a private source repository, publish from a
 separate public distribution repository instead.
 
-## Docker Compose deployment
+## Google Cloud Run deployment (recommended cloud hosting)
 
-The repository also contains an independent Linux container path for a small personal deployment. The multi-stage `Dockerfile` builds the Svelte frontend and Python 3.13
-application into one image on either AMD64 or ARM64. `compose.yaml` runs that image as separate API and durable-worker services, gives each service its own disposable local
-cache, and exposes the API only through an outbound Cloudflare Tunnel. This path does not build, modify, or replace the Windows installer.
-
-The recommended Oracle Cloud Always Free layout is:
-
-- one Ubuntu ARM64 VM;
-- Cloudflare R2 for datasets and completed investigations;
-- Neon PostgreSQL for queued jobs, progress, leases, and retries;
-- `api`, `worker`, and `cloudflared` containers managed by Docker Compose.
-
-Copy `.env.production.example` to `.env.production`, enter the R2, Neon, model-provider, and tunnel credentials, then run:
-
-```bash
-docker compose build
-docker compose run --rm api alembic upgrade head
-docker compose up -d
-docker compose ps
-```
-
-Before deployment, `bash packaging/container/smoke.sh` builds the same image, starts it with local disposable storage, and verifies both API health and delivery of the
-compiled
-frontend. It does not contact Neon, R2, Cloudflare, or a model provider.
-
-No application port is published on the VM. Configure the remotely managed Cloudflare Tunnel hostname to use `http://api:8080` as its service. See
-[Container deployment on an Oracle Cloud VM](docs/container-deployment.md) for provisioning, validation, backup, and update steps.
-
-## FastAPI Cloud deployment
-
-The cloud and desktop editions share the API, analysis engine, and compiled Svelte frontend without sharing deployment artifacts or storage defaults. Desktop installations
-continue to use `PERSISTENCE_BACKEND=local`. A cloud deployment should use an S3-compatible object store so synced datasets and investigation history survive restarts and
-scale-out instances; DuckDB and materialized files remain a disposable per-instance cache.
-
-Create a private bucket, then add these environment variables to the FastAPI Cloud application. Mark credentials and model API keys as secrets:
-
-```dotenv
-PERSISTENCE_BACKEND=s3
-OBJECT_STORAGE_BUCKET=open-sports-analyst
-OBJECT_STORAGE_PREFIX=production
-OBJECT_STORAGE_REGION=us-east-1
-# Set this only for a non-AWS S3-compatible provider.
-# OBJECT_STORAGE_ENDPOINT_URL=https://...
-
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-# AWS_SESSION_TOKEN=...
-```
-
-`OBJECT_STORAGE_PREFIX` lets multiple environments safely share a bucket. Dataset and investigation metadata are stored as independent objects so concurrent instances do
-not compete to update one remote catalog. On startup, each instance rebuilds its local DuckDB index from those metadata objects and downloads Parquet datasets or report
-artifacts only when requested.
-
-By default, jobs run inside the API process. R2/S3 preserves completed results, but active work can be interrupted when that process restarts.
-For durable cloud jobs, set `JOB_BACKEND=postgres` and run the separate Python worker described in
-[Durable cloud jobs](docs/durable-jobs.md). PostgreSQL stores requests, progress, and leases; R2 stores datasets and reports.
-Streamed POST endpoints enqueue work in this mode, and GET event streams can resume on another replica with `Last-Event-ID` or `?after=`.
-The frontend recovers interrupted investigation and dataset streams by polling durable status, without submitting another job.
-
-The repository pins Python 3.13 in both `pyproject.toml` and `.python-version`. Before each deployment, update the lockfile when dependencies change, build the frontend, and
-deploy from the repository root:
-
-```powershell
-uv lock --check
-Set-Location frontend
-npm ci
-npm run build
-Set-Location ..
-uv run fastapi deploy
-```
-
-`.fastapicloudignore` includes `frontend/dist/` in the upload while excluding Windows packaging sources and generated `build/` and root `dist/` artifacts. FastAPI Cloud does
-not run the frontend build command, so `npm run build` must complete before deployment.
+Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero, the existing Neon queue and R2 storage. A Cloud Run service serves the web app;
+an on-demand Cloud Run Job runs downloads and investigations. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
+and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
 
 ## Model providers
 
@@ -495,14 +426,14 @@ FastAPI exposes:
 |      Area      | Endpoints                                                                                                                                                                                |
 |:--------------:|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |    Runtime     | `GET /api/capabilities`, `GET /api/sports`                                                                                                                                               |
-|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync-stream`; legacy clients may use `POST /api/datasets/{sport}/sync` plus `GET /api/dataset-jobs/{id}/events`           |
+|      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync`, `POST /api/datasets/{sport}/sync-stream`, `GET /api/dataset-jobs/{id}/status`, `GET /api/dataset-jobs/{id}/events` |
 | Sport catalog  | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players`                                        |
 | Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status` |
 |  Conversation  | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups`                                                                                                        |
 |    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
 |    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |
 
-Dataset sync and investigation progress use server-sent events. The frontend recovers interrupted investigation streams through the status endpoint and validates the complete
+Dataset sync and investigation progress use server-sent events locally or durable status polling on Cloud Run, selected by runtime capabilities. The frontend recovers interrupted work through the status endpoint and validates the complete
 bundle and thread before rendering them. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
 
 Interactive OpenAPI documentation is available at [http://127.0.0.1:8767/docs](http://127.0.0.1:8767/docs) while the API is running.

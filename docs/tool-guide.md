@@ -248,6 +248,7 @@ Investigation progress is streamed over server-sent events. If that stream disco
 both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
 With `JOB_BACKEND=postgres`, investigations, follow-ups, and dataset syncs are queued in PostgreSQL and executed by `sports-analyst-worker`.
+Cloud Run deployments use optional on-demand dispatch and polling progress; see [Cloud Run deployment](cloud-run.md). Local and desktop execution continue to use their existing defaults.
 Progress survives web replica restarts, and both investigation and sync streams have frontend status recovery.
 Workers renew leases, retry temporary failures, and reuse already-published investigation results after a crash.
 Execution is at least once: a crash before a result is saved can repeat a model call. PostgreSQL stores job metadata and events; analytical data and reports stay in R2.

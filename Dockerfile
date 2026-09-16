@@ -9,7 +9,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.13-slim-bookworm AS python-runtime
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.13 /uv /uvx /bin/
 
@@ -52,3 +52,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
 
 CMD ["sports-analyst", "serve", "--host", "0.0.0.0", "--port", "8080"]
+
+FROM python-runtime AS cloud-run
+USER root
+RUN uv sync --frozen --no-dev --no-editable --extra cloud-run
+ENV DATA_DIR=/tmp/open-sports-analyst
+USER analyst

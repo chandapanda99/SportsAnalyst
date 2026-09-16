@@ -67,6 +67,7 @@ class AnalystApplication:
     def capabilities(self) -> RuntimeCapabilities:
         configured = self.settings.model_provider == "ollama" or bool(self.settings.foundry_endpoint)
         return RuntimeCapabilities(
+            job_progress_transport=self.settings.job_progress_transport,
             providers=provider_ids(),
             configured_provider=self.settings.model_provider,
             model_configured=configured,
