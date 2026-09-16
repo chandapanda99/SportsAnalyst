@@ -34,7 +34,7 @@ export R2_PREFIX=cloud-run-trial
 ENV_FILE=.env bash deploy/cloud-run/deploy.sh
 ```
 
-Cloud Build builds linux/amd64, pushes the image, runs Alembic using the direct URL, deploys the worker and public service, and checks the health endpoint and frontend. Migrations must succeed before either runtime is updated. The printed `run.app` URL is the web app. To use production data, configure the production Neon secret versions and R2 prefix and repeat deployment after trial validation.
+Cloud Build builds linux/amd64, pushes the image, runs Alembic using the direct URL, deploys the worker and public service, and checks the health endpoint and frontend. `deploy.sh` prints each active stage and a timestamped heartbeat every 15 seconds; it also prints a direct Cloud Build logs link for deeper inspection. Migrations must succeed before either runtime is updated. After all smoke checks pass, the printed `run.app` URL is the web app. To use production data, configure the production Neon secret versions and R2 prefix and repeat deployment after trial validation.
 
 ## GitHub deployment
 
