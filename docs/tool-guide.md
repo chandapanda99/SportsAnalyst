@@ -247,12 +247,11 @@ Follow-up questions reuse the saved investigation context. History can be filter
 Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
 both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
-With `JOB_BACKEND=postgres`, investigations, follow-ups, and dataset syncs are queued in PostgreSQL and executed by `sports-analyst-worker`.
-Cloud Run deployments use optional on-demand dispatch and polling progress; see [Cloud Run deployment](cloud-run.md). Local and desktop execution continue to use their existing defaults.
+Recommended Cloud Run deployments use `JOB_BACKEND=object`: R2 stores request/progress records, Cloud Tasks invokes a private low-latency sync service, and a Cloud Run Job executes each investigation or follow-up. See [Cloud Run deployment](cloud-run.md). The desktop uses an AppData-backed SQLite queue and a managed sibling worker; command-line development retains in-process execution.
 Progress survives web replica restarts, and both investigation and sync streams have frontend status recovery.
 Workers renew leases, retry temporary failures, and reuse already-published investigation results after a crash.
-Execution is at least once: a crash before a result is saved can repeat a model call. PostgreSQL stores job metadata and events; analytical data and reports stay in R2.
-Local/desktop mode retains in-process execution. See [Durable cloud jobs](durable-jobs.md) for migration and worker deployment instructions.
+Execution is at least once: a crash before a result is saved can repeat a model call. Analytical data, reports, and the small cloud job ledger stay in R2.
+Desktop progress and retry state survive restarts in `jobs.sqlite3`; datasets, investigations, exports, and the DuckDB catalog remain separate files in the same per-user data directory.
 
 ## Adding a sport or analytical tool
 

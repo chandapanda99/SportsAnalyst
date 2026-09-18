@@ -1,245 +1,331 @@
-"""Durable queue and progress ledger. Each mutation is a short PostgreSQL transaction."""
+"""Durable single-machine job queue stored in the user's AppData directory."""
 from __future__ import annotations
 
+import json
+import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.pool import NullPool
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Job(Base):
-    __tablename__ = "jobs"
-    job_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
-    kind: Mapped[str] = mapped_column(sa.Text)
-    payload: Mapped[dict] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(sa.Text, server_default="queued")
-    progress: Mapped[float] = mapped_column(sa.Float, server_default="0")
-    message: Mapped[str] = mapped_column(sa.Text, server_default="Queued")
-    attempts: Mapped[int] = mapped_column(server_default="0")
-    max_attempts: Mapped[int] = mapped_column(server_default="3")
-    available_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
-    lease_owner: Mapped[str | None] = mapped_column(sa.Text)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
-    result_id: Mapped[str | None] = mapped_column(sa.Text)
-    error: Mapped[str | None] = mapped_column(sa.Text)
-    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
-    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
-    dispatch_state: Mapped[str] = mapped_column(sa.Text, server_default="pending")
-    dispatch_attempts: Mapped[int] = mapped_column(server_default="0")
-    dispatch_lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
-    dispatched_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
-    __table_args__ = (
-        sa.Index("jobs_claimable_idx", "status", "available_at", "lease_expires_at"),
-    )
-
-
-class JobEvent(Base):
-    __tablename__ = "job_events"
-    sequence: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(sa.ForeignKey("jobs.job_id", ondelete="CASCADE"))
-    stage: Mapped[str] = mapped_column(sa.Text)
-    message: Mapped[str] = mapped_column(sa.Text)
-    progress: Mapped[float] = mapped_column(sa.Float)
-    details: Mapped[dict] = mapped_column(JSONB, server_default="{}")
-    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.func.now())
-    __table_args__ = (sa.Index("job_events_stream_idx", "job_id", "sequence"),)
-
-
-def database_engine(url: str) -> sa.Engine:
-    parsed = sa.engine.make_url(url)
-    if parsed.get_backend_name() not in {"postgres", "postgresql"}:
-        raise ValueError("The job database must be PostgreSQL")
-    return sa.create_engine(parsed.set(drivername="postgresql+psycopg"), poolclass=NullPool,
-                            connect_args={"connect_timeout": 10}, hide_parameters=True)
+from sports_analyst.job_common import QueueFull
 
 
 class LeaseLost(RuntimeError):
     pass
 
 
-class QueueFull(RuntimeError):
-    pass
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
-class PostgresJobStore:
+def _timestamp(value: datetime | None = None) -> str:
+    return (value or _now()).isoformat()
+
+
+def user_job_message(kind: str, stage: str) -> str:
+    subject = "data download" if kind == "sync" else "analysis"
+    return f"Waiting to begin your {subject}" if stage == "queued" else f"Starting your {subject}"
+
+
+class SQLiteJobStore:
+    """Transactional queue for one desktop installation and its sibling worker."""
+
     durable = True
 
-    def __init__(self, url: str):
-        self.engine = database_engine(url)
+    def __init__(self, path: Path | str) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
 
-    def enqueue(self, key: str, kind: str, payload: dict, max_attempts: int = 3, *, max_active: int = 0) -> None:
-        with self.engine.begin() as db:
-            if max_active:
-                db.execute(sa.text("SELECT pg_advisory_xact_lock(723901)"))
-                count = db.scalar(sa.select(sa.func.count()).select_from(Job).where(Job.status.in_(["queued", "running"])))
-                if count >= max_active:
-                    raise QueueFull("The analysis queue is full. Wait for an active job to finish and try again.")
-            db.execute(sa.insert(Job).values(job_id=key, kind=kind, payload=payload, max_attempts=max_attempts))
-            self._event(db, key, "queued", "Queued for an available worker", 0,
-                        job_id=key, **({"investigation_id": key} if kind != "sync" else {}))
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
 
-    def reserve_dispatch(self, key: str) -> int | None:
-        """Throttle launches across replicas; an ambiguous launch expires and can be retried."""
-        with self.engine.begin() as db:
-            db.execute(sa.text("SELECT pg_advisory_xact_lock(723902)"))
-            row = db.execute(sa.select(Job).where(Job.job_id == key).with_for_update()).mappings().first()
-            if row is None or row["status"] not in {"queued", "running"}:
-                return None
-            now = db.scalar(sa.select(sa.func.now()))
-            if row["status"] == "running" and row["lease_expires_at"] and row["lease_expires_at"] > now:
-                return None
-            # One launch covers the queue. Also rate-limit uncertain/failed launches.
-            if db.scalar(sa.select(sa.func.count()).select_from(Job).where(
-                Job.status.in_(["queued", "running"]), Job.dispatch_lease_expires_at > now
-            )):
-                return None
-            attempt = row["dispatch_attempts"] + 1
-            db.execute(sa.update(Job).where(Job.job_id == key).values(
-                dispatch_state="dispatching", dispatch_attempts=attempt,
-                dispatch_lease_expires_at=now + timedelta(seconds=120)))
-            return attempt
+    def _initialize(self) -> None:
+        with self._connect() as db:
+            db.execute("PRAGMA journal_mode = WAL")
+            db.execute("PRAGMA synchronous = NORMAL")
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    progress REAL NOT NULL DEFAULT 0,
+                    message TEXT NOT NULL DEFAULT 'Queued',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    available_at TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    result_id TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS jobs_claimable_idx
+                    ON jobs(status, available_at, lease_expires_at);
+                CREATE TABLE IF NOT EXISTS job_events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+                    stage TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    progress REAL NOT NULL,
+                    details TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS job_events_stream_idx
+                    ON job_events(job_id, sequence);
+                """
+            )
 
-    def complete_dispatch(self, key: str, attempt: int, success: bool) -> None:
-        with self.engine.begin() as db:
-            db.execute(sa.update(Job).where(Job.job_id == key, Job.dispatch_attempts == attempt).values(
-                dispatch_state="dispatched" if success else "pending",
-                dispatched_at=sa.func.now() if success else None,
-                dispatch_lease_expires_at=sa.func.now() + timedelta(seconds=120 if success else 30)))
-
-    def has_active_work(self) -> bool:
-        with self.engine.connect() as db:
-            return bool(db.scalar(sa.select(sa.func.count()).select_from(Job).where(Job.status.in_(["queued", "running"]))))
+    @contextmanager
+    def _transaction(self):
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @staticmethod
-    def _event(db, key: str, stage: str, message: str, progress: float, **extra) -> dict:
-        created_at = datetime.now(UTC)
-        event = {**extra, "timestamp": created_at.isoformat(), "stage": stage, "message": message, "progress": progress}
-        sequence = db.execute(sa.insert(JobEvent).values(
-            job_id=key, stage=stage, message=message, progress=progress, details=extra, created_at=created_at
-        ).returning(JobEvent.sequence)).scalar_one()
-        event["sequence"] = sequence
-        db.execute(sa.update(Job).where(Job.job_id == key).values(
-            progress=progress, message=message, updated_at=sa.func.now()))
-        return event
+    def _event(db: sqlite3.Connection, key: str, stage: str, message: str, progress: float, **extra: object) -> dict:
+        created_at = _timestamp()
+        cursor = db.execute(
+            "INSERT INTO job_events(job_id, stage, message, progress, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (key, stage, message, progress, json.dumps(extra, separators=(",", ":"), default=str), created_at),
+        )
+        db.execute(
+            "UPDATE jobs SET progress = ?, message = ?, updated_at = ? WHERE job_id = ?",
+            (progress, message, created_at, key),
+        )
+        return {
+            **extra,
+            "timestamp": created_at,
+            "sequence": cursor.lastrowid,
+            "stage": stage,
+            "message": message,
+            "progress": progress,
+        }
+
+    def enqueue(self, key: str, kind: str, payload: dict, max_attempts: int = 3, *, max_active: int = 0) -> None:
+        now = _timestamp()
+        with self._transaction() as db:
+            if db.execute("SELECT 1 FROM jobs WHERE job_id = ?", (key,)).fetchone():
+                return
+            if max_active:
+                active = db.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running')"
+                ).fetchone()[0]
+                if active >= max_active:
+                    raise QueueFull("The analysis queue is full. Wait for an active job to finish and try again.")
+            db.execute(
+                """INSERT INTO jobs
+                   (job_id, kind, payload, max_attempts, available_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (key, kind, json.dumps(payload, separators=(",", ":"), default=str), max_attempts, now, now, now),
+            )
+            self._event(
+                db,
+                key,
+                "queued",
+                user_job_message(kind, "queued"),
+                0,
+                job_id=key,
+                **({"investigation_id": key} if kind != "sync" else {}),
+            )
+
+    def has_active_work(self) -> bool:
+        with self._connect() as db:
+            return bool(db.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running')"
+            ).fetchone()[0])
 
     def status(self, key: str) -> dict | None:
-        with self.engine.connect() as db:
-            event = db.execute(sa.select(
-                JobEvent.sequence, JobEvent.stage, JobEvent.message, JobEvent.progress,
-                JobEvent.details, JobEvent.created_at,
-            ).where(JobEvent.job_id == key).order_by(JobEvent.sequence.desc()).limit(1)).mappings().first()
-            if event is not None:
-                return {**(event["details"] or {}), "timestamp": event["created_at"].isoformat(),
-                        "sequence": event["sequence"], "stage": event["stage"],
-                        "message": event["message"], "progress": event["progress"]}
-            row = db.execute(sa.select(Job.status, Job.message, Job.progress).where(Job.job_id == key)).first()
-            return None if row is None else {"stage": row.status, "message": row.message, "progress": row.progress}
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT sequence, stage, message, progress, details, created_at
+                   FROM job_events WHERE job_id = ? ORDER BY sequence DESC LIMIT 1""",
+                (key,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                **json.loads(row["details"]),
+                "timestamp": row["created_at"],
+                "sequence": row["sequence"],
+                "stage": row["stage"],
+                "message": row["message"],
+                "progress": row["progress"],
+            }
 
-    def catalog_version(self) -> datetime | None:
-        with self.engine.connect() as db:
-            return db.execute(sa.select(sa.func.max(Job.updated_at)).where(Job.status == "complete")).scalar_one()
+    def catalog_version(self) -> str | None:
+        with self._connect() as db:
+            return db.execute("SELECT MAX(updated_at) FROM jobs WHERE status = 'complete'").fetchone()[0]
 
     def events(self, key: str, after: int = 0) -> list[dict]:
-        with self.engine.connect() as db:
-            rows = db.execute(sa.select(
-                JobEvent.sequence, JobEvent.stage, JobEvent.message, JobEvent.progress,
-                JobEvent.details, JobEvent.created_at,
-            ).where(
-                JobEvent.job_id == key, JobEvent.sequence > after).order_by(JobEvent.sequence).limit(200))
-            return [{**(row.details or {}), "timestamp": row.created_at.isoformat(), "sequence": row.sequence,
-                     "stage": row.stage, "message": row.message, "progress": row.progress} for row in rows]
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT sequence, stage, message, progress, details, created_at
+                   FROM job_events WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT 200""",
+                (key, after),
+            ).fetchall()
+        return [
+            {
+                **json.loads(row["details"]),
+                "timestamp": row["created_at"],
+                "sequence": row["sequence"],
+                "stage": row["stage"],
+                "message": row["message"],
+                "progress": row["progress"],
+            }
+            for row in rows
+        ]
 
     def claim(self, lease_seconds: int) -> dict | None:
-        with self.engine.begin() as db:
-            eligible = sa.or_(Job.status == "queued", sa.and_(
-                Job.status == "running", Job.lease_expires_at < sa.func.now()))
-            row = db.execute(sa.select(Job.__table__).where(eligible, Job.available_at <= sa.func.now())
-                             .order_by(Job.created_at).with_for_update(skip_locked=True).limit(1)).mappings().first()
+        now = _now()
+        now_text = _timestamp(now)
+        with self._transaction() as db:
+            row = db.execute(
+                """SELECT * FROM jobs
+                   WHERE available_at <= ?
+                     AND (status = 'queued' OR (status = 'running' AND lease_expires_at < ?))
+                   ORDER BY created_at LIMIT 1""",
+                (now_text, now_text),
+            ).fetchone()
             if row is None:
                 return None
             if row["attempts"] >= row["max_attempts"]:
-                db.execute(sa.update(Job).where(Job.job_id == row["job_id"]).values(status="failed", lease_owner=None))
+                db.execute(
+                    "UPDATE jobs SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL WHERE job_id = ?",
+                    (row["job_id"],),
+                )
                 self._event(db, row["job_id"], "failed", "Worker stopped repeatedly; please start a new analysis.", 1)
                 return None
             token = uuid4().hex
             attempts = row["attempts"] + 1
-            db.execute(sa.update(Job).where(Job.job_id == row["job_id"]).values(
-                status="running", lease_owner=token, attempts=attempts,
-                lease_expires_at=sa.func.now() + timedelta(seconds=lease_seconds)))
-            self._event(db, row["job_id"], "starting", f"Worker started attempt {attempts}", 0.03)
-            return {**row, "lease_token": token, "attempts": attempts}
+            db.execute(
+                """UPDATE jobs SET status = 'running', lease_owner = ?, attempts = ?, lease_expires_at = ?, updated_at = ?
+                   WHERE job_id = ?""",
+                (token, attempts, _timestamp(now + timedelta(seconds=lease_seconds)), now_text, row["job_id"]),
+            )
+            self._event(
+                db,
+                row["job_id"],
+                "starting",
+                user_job_message(row["kind"], "starting"),
+                0.03,
+                worker_attempt=attempts,
+            )
+            return {
+                **dict(row),
+                "payload": json.loads(row["payload"]),
+                "lease_token": token,
+                "attempts": attempts,
+            }
+
+    def _require_lease(self, db: sqlite3.Connection, key: str, token: str) -> sqlite3.Row:
+        row = db.execute(
+            "SELECT * FROM jobs WHERE job_id = ? AND lease_owner = ? AND status = 'running'",
+            (key, token),
+        ).fetchone()
+        if row is None or not row["lease_expires_at"] or row["lease_expires_at"] <= _timestamp():
+            raise LeaseLost("The job lease belongs to another worker or has expired")
+        return row
 
     @contextmanager
     def publication(self, key: str, token: str, lease_seconds: int | None = None):
-        """Fence progress and artifact publication against a replacement attempt."""
-        with self.engine.begin() as db:
-            owned = db.execute(sa.select(Job.job_id).where(
-                Job.job_id == key, Job.lease_owner == token, Job.status == "running",
-                Job.lease_expires_at > sa.func.now()).with_for_update()).first()
-            if not owned:
-                raise LeaseLost("The job lease belongs to another worker or has expired")
-            yield db
+        # Validate without holding SQLite's single writer lock while a large
+        # Parquet/report file is written. The sibling supervisor keeps the
+        # lease alive, and finish() fences the final state transition.
+        with self._transaction() as db:
+            self._require_lease(db, key, token)
             if lease_seconds is not None:
-                # Long uploads keep this row locked, so no replacement can
-                # claim it. Extend the lease before releasing that lock.
-                db.execute(sa.update(Job).where(Job.job_id == key).values(
-                    lease_expires_at=sa.func.clock_timestamp() + timedelta(seconds=lease_seconds)))
+                db.execute(
+                    "UPDATE jobs SET lease_expires_at = ? WHERE job_id = ?",
+                    (_timestamp(_now() + timedelta(seconds=lease_seconds)), key),
+                )
+        yield None
 
     def heartbeat(self, key: str, token: str, lease_seconds: int) -> bool:
-        with self.engine.begin() as db:
-            owned = db.execute(sa.select(Job.job_id).where(
-                Job.job_id == key, Job.lease_owner == token, Job.status == "running")
-                .with_for_update(skip_locked=True)).first()
-            if not owned:
-                # A publication may hold the row. Read the committed token
-                # without blocking the supervisor; check again next heartbeat.
-                return db.execute(sa.select(Job.job_id).where(
-                    Job.job_id == key, Job.lease_owner == token, Job.status == "running")).first() is not None
-            result = db.execute(sa.update(Job).where(
-                Job.job_id == key, Job.lease_owner == token, Job.status == "running",
-                Job.lease_expires_at > sa.func.now()).values(
-                lease_expires_at=sa.func.now() + timedelta(seconds=lease_seconds)))
+        with self._transaction() as db:
+            now = _timestamp()
+            result = db.execute(
+                """UPDATE jobs SET lease_expires_at = ?, updated_at = ?
+                   WHERE job_id = ? AND lease_owner = ? AND status = 'running' AND lease_expires_at > ?""",
+                (_timestamp(_now() + timedelta(seconds=lease_seconds)), now, key, token, now),
+            )
             return result.rowcount == 1
 
-    def emit_owned(self, key: str, token: str, stage: str, message: str, progress: float, **extra) -> None:
-        with self.publication(key, token) as db:
+    def emit_owned(self, key: str, token: str, stage: str, message: str, progress: float, **extra: object) -> None:
+        with self._transaction() as db:
+            self._require_lease(db, key, token)
             self._event(db, key, stage, message, progress, **extra)
 
     def finish(self, key: str, token: str, event: dict) -> None:
-        with self.publication(key, token) as db:
+        with self._transaction() as db:
+            self._require_lease(db, key, token)
             self._event(db, key, **event)
-            db.execute(sa.update(Job).where(Job.job_id == key).values(
-                status="complete", lease_owner=None, lease_expires_at=None,
-                result_id=event.get("investigation_id") or key, error=None))
+            db.execute(
+                """UPDATE jobs SET status = 'complete', lease_owner = NULL, lease_expires_at = NULL,
+                   result_id = ?, error = NULL, updated_at = ? WHERE job_id = ?""",
+                (event.get("investigation_id") or key, _timestamp(), key),
+            )
 
     def fail(self, key: str, token: str, retryable: bool) -> None:
-        with self.publication(key, token) as db:
-            row = db.execute(sa.select(Job.attempts, Job.max_attempts).where(Job.job_id == key)).one()
-            retry = retryable and row.attempts < row.max_attempts
-            db.execute(sa.update(Job).where(Job.job_id == key).values(
-                status="queued" if retry else "failed", lease_owner=None, lease_expires_at=None,
-                error=None if retry else "Job failed. Check worker logs, then try again.",
-                available_at=sa.func.now() + timedelta(seconds=min(300, 10 * 2 ** row.attempts))))
-            self._event(db, key, "retrying" if retry else "failed",
-                        "Temporary failure; waiting to retry." if retry else "Job failed. Check worker logs, then try again.",
-                        0 if retry else 1)
+        with self._transaction() as db:
+            row = self._require_lease(db, key, token)
+            retry = retryable and row["attempts"] < row["max_attempts"]
+            db.execute(
+                """UPDATE jobs SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
+                   error = ?, available_at = ?, updated_at = ? WHERE job_id = ?""",
+                (
+                    "queued" if retry else "failed",
+                    None if retry else "Job failed. Check worker logs, then try again.",
+                    _timestamp(_now() + timedelta(seconds=min(300, 10 * 2 ** row["attempts"]))),
+                    _timestamp(),
+                    key,
+                ),
+            )
+            self._event(
+                db,
+                key,
+                "retrying" if retry else "failed",
+                "Temporary failure; waiting to retry." if retry else "Job failed. Check worker logs, then try again.",
+                0 if retry else 1,
+            )
+
+    def release(self, key: str, token: str) -> bool:
+        """Immediately recover a child that exited before publishing a terminal state."""
+        with self._transaction() as db:
+            result = db.execute(
+                """UPDATE jobs SET status = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+                   available_at = ?, updated_at = ?
+                   WHERE job_id = ? AND lease_owner = ? AND status = 'running'""",
+                (_timestamp(), _timestamp(), key, token),
+            )
+            if not result.rowcount:
+                return False
+            self._event(db, key, "queued", "The interrupted job will resume automatically.", 0)
+            return True
 
 
 class WorkerEvents:
-    def __init__(self, jobs: PostgresJobStore, key: str, token: str):
+    def __init__(self, jobs: SQLiteJobStore, key: str, token: str):
         self.jobs, self.key, self.token = jobs, key, token
         self.completion: dict[str, Any] | None = None
 
-    def emit(self, key: str, stage: str, message: str, progress: float, **extra) -> None:
+    def emit(self, key: str, stage: str, message: str, progress: float, **extra: object) -> None:
         if key != self.key:
             raise ValueError("Worker attempted to write another job's progress")
         if stage == "complete":

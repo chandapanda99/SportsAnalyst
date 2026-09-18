@@ -11,13 +11,14 @@ export function pendingJob(): PendingJob | null {
   } catch { return null; }
 }
 
-export function pollingStream(job: PendingJob): EventStreamResponse {
+export function pollingStream(job: PendingJob, timeoutSeconds?: number): EventStreamResponse {
   try { sessionStorage.setItem(pendingKey, JSON.stringify(job)); } catch { /* Optional storage. */ }
   const encoder = new TextEncoder();
   let stopped = false;
   return {
     investigationId: job.kind === 'investigation' ? job.id : undefined,
     jobId: job.kind === 'sync' ? job.id : undefined,
+    timeoutSeconds,
     body: new ReadableStream<Uint8Array>({
       async start(controller) {
         let delay = 1000;
@@ -65,10 +66,10 @@ export interface EventStreamResponse {
 async function eventStream(url: string, init: RequestInit, label: string): Promise<EventStreamResponse> {
   if (progressTransport === 'poll') {
     const endpoint = url.replace(/\/sync-stream$/, '/sync').replace(/\/stream$/, '');
-    const queued = await json<{job_id?: string; investigation_id?: string}>(endpoint, init);
+    const queued = await json<{job_id?: string; investigation_id?: string; timeout_seconds?: number}>(endpoint, init);
     const id = queued.job_id || queued.investigation_id;
     if (!id) throw new Error('The server did not return a job identifier.');
-    return pollingStream({id, kind: queued.job_id ? 'sync' : 'investigation'});
+    return pollingStream({id, kind: queued.job_id ? 'sync' : 'investigation'}, queued.timeout_seconds);
   }
   const response = await fetch(url, init);
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);

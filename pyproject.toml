@@ -9,7 +9,6 @@ authors = [{ name = "Aayush Chanda" }]
 dependencies = [
     "altair>=5.5,<6",
     "azure-identity>=1.25,<2",
-    "boto3>=1.42,<2",
     "deepagents>=0.7",
     "duckdb>=1.4,<2",
     "fastapi[standard]>=0.141.1",
@@ -29,13 +28,10 @@ dependencies = [
     "uvicorn[standard]>=0.37",
     "vl-convert-python>=1.8,<2",
     "pyarrow>=25.0.1",
-    "psycopg[binary]>=3.3.5",
-    "sqlalchemy>=2.0.53",
-    "alembic>=1.20.0",
 ]
 
 [project.optional-dependencies]
-cloud-run = ["google-auth[requests]>=2.58,<3"]
+cloud-run = ["boto3>=1.42,<2", "google-auth[requests]>=2.58,<3"]
 test = ["httpx>=0.28,<1", "pytest>=8.4,<9", "pytest-asyncio>=1.2,<2", "respx>=0.22,<1", "ruff>=0.14,<1", "curl-cffi>=0.13,<1"]
 desktop = ["keyring>=25,<26", "pywebview>=6,<7"]
 desktop-build = ["pillow>=11,<13", "pyinstaller>=6.18,<7"]
@@ -55,7 +51,7 @@ packages = ["src/sports_analyst"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-markers = ["integration: downloads an external sports dataset", "live: requires a configured model provider or live sports endpoint", "postgres: durable-job workflows against TEST_DATABASE_URL"]
+markers = ["integration: downloads an external sports dataset", "live: requires a configured model provider or live sports endpoint"]
 
 [tool.fastapi]
 entrypoint = "sports_analyst.api:app"

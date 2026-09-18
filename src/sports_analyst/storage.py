@@ -267,7 +267,10 @@ class LocalStore:
 
     def _save_investigation(self, bundle: InvestigationBundle) -> Path:
         directory = self.settings.investigations_dir / bundle.run.investigation_id
-        directory.mkdir(parents=True, exist_ok=False)
+        # A desktop worker can be interrupted after creating the directory but
+        # before registering the completed bundle. Retrying the same durable
+        # job safely replaces those deterministic artifacts.
+        directory.mkdir(parents=True, exist_ok=True)
         path = directory / "bundle.json"
         path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
         from sports_analyst.reports import render_html, render_markdown

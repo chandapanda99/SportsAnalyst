@@ -37,13 +37,11 @@ COPY --chown=analyst:analyst pyproject.toml uv.lock README.md LICENSE NOTICE ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=analyst:analyst src/ ./src/
-COPY --chown=analyst:analyst migrations/ ./migrations/
-COPY --chown=analyst:analyst alembic.ini ./
 COPY --chown=analyst:analyst --from=frontend-build /build/frontend/dist/ ./frontend/dist/
 
 RUN uv sync --frozen --no-dev --no-editable \
     && JOB_BACKEND=local PERSISTENCE_BACKEND=local DATA_DIR=/tmp/container-smoke sports-analyst capabilities \
-    && python -c "import boto3, psycopg, sqlalchemy.dialects.postgresql.psycopg, sports_analyst.worker"
+    && python -c "import sports_analyst.worker"
 
 USER analyst
 EXPOSE 8080
@@ -52,6 +50,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
 
 CMD ["sports-analyst", "serve", "--host", "0.0.0.0", "--port", "8080"]
+
+FROM python-runtime AS runtime
 
 FROM python-runtime AS cloud-run
 USER root

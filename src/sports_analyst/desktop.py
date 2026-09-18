@@ -108,7 +108,9 @@ class DesktopController:
         from sports_analyst.config import get_settings
         from sports_analyst.service import AnalystApplication
 
-        settings = get_settings()
+        # Desktop jobs always use the private AppData SQLite ledger. Ignore
+        # cloud/self-hosting backend variables inherited from a developer shell.
+        settings = get_settings().model_copy(update={"job_backend": "sqlite", "persistence_backend": "local"})
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -137,7 +139,7 @@ class DesktopController:
         return self.url
 
     def _start_worker_if_configured(self, settings: Any) -> None:
-        if settings.job_backend != "postgres" or (self.worker_process is not None and self.worker_process.is_alive()):
+        if settings.job_backend != "sqlite" or (self.worker_process is not None and self.worker_process.is_alive()):
             return
         context = self.worker_context or multiprocessing.get_context("spawn")
         stop_event = context.Event()
@@ -210,13 +212,8 @@ def main(argv: list[str] | None = None) -> None:
     if arguments.smoke_test:
         try:
             # These imports are deliberately exercised by the packaged smoke
-            # test. They are lazy in normal operation and otherwise can
-            # disappear from a frozen build even though durable jobs and R2
-            # require them.
-            import boto3  # noqa: F401
-            import psycopg  # noqa: F401
-            import sqlalchemy.dialects.postgresql.psycopg  # noqa: F401
-
+            # test. The worker import is lazy in normal operation and could
+            # otherwise disappear from a frozen desktop build.
             from sports_analyst.worker import run_worker  # noqa: F401
 
             controller.start_server()

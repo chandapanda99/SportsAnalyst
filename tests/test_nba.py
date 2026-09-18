@@ -172,6 +172,7 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
     connector = SportsDataverseNBAConnector(Settings(data_dir=tmp_path))
     calls: list[tuple[str, list[int], bool]] = []
     progress: list[tuple[str, str, int, int, int]] = []
+    published = []
 
     def loader(dataset: str):
         def load(seasons: list[int], return_as_pandas: bool) -> pl.DataFrame:
@@ -185,7 +186,12 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
         "_loader_registry",
         lambda: {dataset: loader(dataset) for dataset in NBA_DEFAULT_DATASETS},
     )
-    manifests = connector.sync([2025], NBA_DEFAULT_DATASETS, progress_callback=lambda *event: progress.append(event))
+    manifests = connector.sync(
+        [2025],
+        NBA_DEFAULT_DATASETS,
+        progress_callback=lambda *event: progress.append(event),
+        manifest_callback=published.append,
+    )
 
     assert {item.dataset for item in manifests} == set(NBA_DEFAULT_DATASETS)
     assert all(item.sport == "nba" and item.season == 2025 and item.sha256 for item in manifests)
@@ -193,10 +199,24 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
     assert progress[0] == ("downloading", "play_by_play", 2025, 0, 4)
     assert progress[-1] == ("downloaded", "player_boxscores", 2025, 4, 4)
     assert {event[0] for event in progress} == {"downloading", "processing", "downloaded"}
+    assert [item.manifest_id for item in published] == [item.manifest_id for item in manifests]
     pbp = connector.load(next(item for item in manifests if item.dataset == "play_by_play"))
     assert {"season", "play_id", "description", "period", "clock", "team_abbreviation"} <= set(pbp.columns)
     with pytest.raises(ValueError, match="cannot load nfl"):
         connector.load(manifests[0].model_copy(update={"sport": "nfl"}))
+
+    calls.clear()
+    progress.clear()
+    published.clear()
+    assert connector.sync(
+        [2025],
+        NBA_DEFAULT_DATASETS,
+        progress_callback=lambda *event: progress.append(event),
+        manifest_callback=published.append,
+        skip={(dataset, 2025) for dataset in NBA_DEFAULT_DATASETS},
+    ) == []
+    assert calls == [] and published == []
+    assert [event[0] for event in progress] == ["available"] * len(NBA_DEFAULT_DATASETS)
 
 
 def test_nba_connector_keeps_core_data_when_optional_release_is_unavailable(tmp_path: Path, monkeypatch) -> None:
@@ -403,7 +423,7 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     assert "possessions_v3" not in options["syncable_datasets"]
     progress_manifests = application.store.manifests(sport="nba")[:2]
 
-    def progress_sync(_seasons, _datasets, progress_callback):
+    def progress_sync(_seasons, _datasets, progress_callback, **_kwargs):
         progress_callback("downloading", "play_by_play", 2024, 0, 2)
         progress_callback("processing", "play_by_play", 2024, 0, 2)
         progress_callback("downloaded", "play_by_play", 2024, 1, 2)

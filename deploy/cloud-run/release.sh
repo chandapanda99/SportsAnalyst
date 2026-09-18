@@ -2,39 +2,42 @@
 set -euo pipefail
 : "${PROJECT_ID:?}" "${REGION:?}" "${APP:?}" "${IMAGE:?}" "${R2_ENDPOINT:?}" "${FOUNDRY_ENDPOINT:?}"
 phase=${1:-all}
-common="DATA_DIR=/tmp/open-sports-analyst,PERSISTENCE_BACKEND=s3,JOB_BACKEND=postgres,DATASET_CACHE_MB=256,OBJECT_STORAGE_ENDPOINT_URL=${R2_ENDPOINT},OBJECT_STORAGE_BUCKET=${R2_BUCKET},OBJECT_STORAGE_PREFIX=${R2_PREFIX},OBJECT_STORAGE_REGION=auto,FOUNDRY_ENDPOINT=${FOUNDRY_ENDPOINT},MODEL=${MODEL},LANGSMITH_TRACING=false"
-secrets="DATABASE_URL=${APP}-database:latest,AWS_ACCESS_KEY_ID=${APP}-r2-key:latest,AWS_SECRET_ACCESS_KEY=${APP}-r2-secret:latest,FOUNDRY_API_KEY=${APP}-model-key:latest"
+storage="DATA_DIR=/tmp/open-sports-analyst,PERSISTENCE_BACKEND=s3,JOB_BACKEND=object,JOB_MAX_ATTEMPTS=2,DATASET_CACHE_MB=256,OBJECT_STORAGE_ENDPOINT_URL=${R2_ENDPOINT},OBJECT_STORAGE_BUCKET=${R2_BUCKET},OBJECT_STORAGE_PREFIX=${R2_PREFIX},OBJECT_STORAGE_REGION=auto,LANGSMITH_TRACING=false"
+analysis_env="${storage},JOB_TIMEOUT_SECONDS=21600,FOUNDRY_ENDPOINT=${FOUNDRY_ENDPOINT},MODEL=${MODEL}"
+storage_secrets="AWS_ACCESS_KEY_ID=${APP}-r2-key:latest,AWS_SECRET_ACCESS_KEY=${APP}-r2-secret:latest"
+analysis_secrets="${storage_secrets},FOUNDRY_API_KEY=${APP}-model-key:latest"
 if [ "${LANGSMITH_TRACING:-false}" = true ]; then
-  common="${common/LANGSMITH_TRACING=false/LANGSMITH_TRACING=true}"
-  secrets="${secrets},LANGSMITH_API_KEY=${APP}-langsmith:latest"
+  analysis_env="${analysis_env/LANGSMITH_TRACING=false/LANGSMITH_TRACING=true}"
+  analysis_secrets="${analysis_secrets},LANGSMITH_API_KEY=${APP}-langsmith:latest"
 fi
 
-migrate() {
-  echo "[release] Applying database migrations"
-  gcloud run jobs deploy "${APP}-migrate" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
-    --service-account="${APP}-migrate@${PROJECT_ID}.iam.gserviceaccount.com" \
-    --command=alembic --args=upgrade,head --tasks=1 --max-retries=0 --task-timeout=600s \
-    --set-secrets="DATABASE_MIGRATION_URL=${APP}-migration:latest"
-  gcloud run jobs execute "${APP}-migrate" --project="$PROJECT_ID" --region="$REGION" --wait
+deploy_analysis() {
+  echo "[release] Deploying long-running analysis job"
+  gcloud run jobs deploy "${APP}-analysis" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
+    --service-account="${APP}-analysis@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --command=sports-analyst-worker --args=--object-job --tasks=1 --parallelism=1 --max-retries=1 \
+    --task-timeout=21600s --cpu=1 --memory=4Gi --set-env-vars="$analysis_env" --set-secrets="$analysis_secrets"
 }
 
-deploy_worker() {
-  echo "[release] Deploying durable worker job"
-  gcloud run jobs deploy "${APP}-worker" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
-    --service-account="${APP}-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
-    --command=sports-analyst-worker --args=--drain --tasks=1 --parallelism=1 --max-retries=1 \
-    --task-timeout=21600s --cpu=2 --memory=8Gi --set-env-vars="$common" --set-secrets="$secrets"
-  gcloud run jobs add-iam-policy-binding "${APP}-worker" --project="$PROJECT_ID" --region="$REGION" \
-    --member="serviceAccount:${APP}-api@${PROJECT_ID}.iam.gserviceaccount.com" --role=roles/run.invoker
+deploy_sync() {
+  echo "[release] Deploying private low-latency sync service"
+  gcloud run deploy "${APP}-sync" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
+    --service-account="${APP}-sync@${PROJECT_ID}.iam.gserviceaccount.com" --no-allow-unauthenticated \
+    --command=uvicorn --args=sports_analyst.sync_api:app,--host,0.0.0.0,--port,8080 \
+    --port=8080 --cpu=1 --memory=4Gi --concurrency=1 --min=0 --max=1 --timeout=1800s \
+    --set-env-vars="$storage" --set-secrets="$storage_secrets"
+  gcloud run services add-iam-policy-binding "${APP}-sync" --project="$PROJECT_ID" --region="$REGION" \
+    --member="serviceAccount:${APP}-tasks@${PROJECT_ID}.iam.gserviceaccount.com" --role=roles/run.invoker
 }
 
 deploy_service() {
   echo "[release] Deploying public API and frontend service"
+  sync_url=$(gcloud run services describe "${APP}-sync" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')
   gcloud run deploy "$APP" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
     --service-account="${APP}-api@${PROJECT_ID}.iam.gserviceaccount.com" --allow-unauthenticated \
     --port=8080 --cpu=2 --memory=4Gi --concurrency=8 --min=0 --max=1 --timeout=300s \
-    --set-env-vars="${common},JOB_DISPATCH_BACKEND=cloud_run,JOB_PROGRESS_TRANSPORT=poll,CLOUD_RUN_PROJECT=${PROJECT_ID},CLOUD_RUN_REGION=${REGION},CLOUD_RUN_WORKER_JOB=${APP}-worker,MAX_ACTIVE_JOBS=3" \
-    --set-secrets="$secrets"
+    --set-env-vars="${storage},JOB_DISPATCH_BACKEND=cloud_run,JOB_DISPATCH_RETRY_SECONDS=30,JOB_DISPATCH_STARTUP_SECONDS=900,JOB_PROGRESS_TRANSPORT=poll,CLOUD_RUN_PROJECT=${PROJECT_ID},CLOUD_RUN_REGION=${REGION},CLOUD_RUN_WORKER_JOB=${APP}-analysis,CLOUD_RUN_SYNC_SERVICE_URL=${sync_url},CLOUD_TASKS_QUEUE=${APP}-sync,CLOUD_TASKS_SERVICE_ACCOUNT=${APP}-tasks@${PROJECT_ID}.iam.gserviceaccount.com,MAX_ACTIVE_JOBS=3,FOUNDRY_ENDPOINT=${FOUNDRY_ENDPOINT},MODEL=${MODEL}" \
+    --set-secrets="$storage_secrets"
 }
 
 smoke_test() {
@@ -46,13 +49,13 @@ smoke_test() {
 }
 
 case "$phase" in
-  migrate) migrate ;;
-  worker) deploy_worker ;;
+  analysis) deploy_analysis ;;
+  sync) deploy_sync ;;
   service) deploy_service ;;
   smoke) smoke_test ;;
   all)
-    migrate
-    deploy_worker
+    deploy_analysis
+    deploy_sync
     deploy_service
     smoke_test
     ;;

@@ -32,9 +32,12 @@ class Settings(BaseSettings):
     cloud_run_project: str = ""
     cloud_run_region: str = "us-central1"
     cloud_run_worker_job: str = ""
+    cloud_run_sync_service_url: str = ""
+    cloud_tasks_queue: str = ""
+    cloud_tasks_service_account: str = ""
+    job_dispatch_retry_seconds: int = Field(default=30, ge=5, le=300)
+    job_dispatch_startup_seconds: int = Field(default=900, ge=60, le=3_600)
     max_active_jobs: int = Field(default=0, ge=0, le=100)
-    database_url: SecretStr | None = Field(default=None, repr=False)
-    database_migration_url: SecretStr | None = Field(default=None, repr=False)
     job_poll_seconds: float = Field(default=5, ge=1, le=60)
     job_idle_poll_seconds: float = Field(default=60, ge=5, le=3600)
     job_lease_seconds: int = Field(default=300, ge=30, le=3600)
@@ -63,14 +66,21 @@ class Settings(BaseSettings):
             raise ValueError("JOB_DISPATCH_BACKEND must be none or cloud_run")
         if self.job_progress_transport not in {"stream", "poll"}:
             raise ValueError("JOB_PROGRESS_TRANSPORT must be stream or poll")
-        if (self.job_dispatch_backend == "cloud_run"
-                and (self.job_backend != "postgres" or not self.cloud_run_project or not self.cloud_run_worker_job)
-        ):
-            raise ValueError("Cloud Run dispatch requires Postgres jobs, CLOUD_RUN_PROJECT and CLOUD_RUN_WORKER_JOB")
-        if self.job_backend not in {"local", "postgres"}:
-            raise ValueError("JOB_BACKEND must be local or postgres")
-        if self.job_backend == "postgres" and (not self.database_url or self.persistence_backend != "s3"):
-            raise ValueError("Postgres jobs require DATABASE_URL and PERSISTENCE_BACKEND=s3 for shared artifacts")
+        if self.job_dispatch_backend == "cloud_run":
+            if self.job_backend != "object" or not self.cloud_run_project or not self.cloud_run_worker_job:
+                raise ValueError("Cloud Run dispatch requires durable jobs, CLOUD_RUN_PROJECT and CLOUD_RUN_WORKER_JOB")
+            if self.job_backend == "object" and not all((
+                self.cloud_run_sync_service_url,
+                self.cloud_tasks_queue,
+                self.cloud_tasks_service_account,
+            )):
+                raise ValueError(
+                    "Object jobs require CLOUD_RUN_SYNC_SERVICE_URL, CLOUD_TASKS_QUEUE and CLOUD_TASKS_SERVICE_ACCOUNT"
+                )
+        if self.job_backend not in {"local", "sqlite", "object"}:
+            raise ValueError("JOB_BACKEND must be local, sqlite or object")
+        if self.job_backend == "object" and self.persistence_backend != "s3":
+            raise ValueError("Object jobs require PERSISTENCE_BACKEND=s3")
         if self.job_heartbeat_seconds * 3 >= self.job_lease_seconds:
             raise ValueError("JOB_LEASE_SECONDS must exceed three heartbeat intervals")
         return self
@@ -86,6 +96,10 @@ class Settings(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.data_dir / "catalog.duckdb"
+
+    @property
+    def job_database_path(self) -> Path:
+        return self.data_dir / "jobs.sqlite3"
 
     def ensure_directories(self) -> None:
         for path in (self.data_dir, self.raw_dir, self.investigations_dir):

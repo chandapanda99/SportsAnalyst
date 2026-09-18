@@ -58,10 +58,14 @@ class AnalystApplication:
         self.agent = EvidenceBoundAgent(self.settings)
         self.events = EventRegistry()
         self.jobs = None
-        if self.settings.job_backend == "postgres":
-            from sports_analyst.jobs import PostgresJobStore
+        if self.settings.job_backend == "sqlite":
+            from sports_analyst.jobs import SQLiteJobStore
 
-            self.jobs = PostgresJobStore(self.settings.database_url.get_secret_value())
+            self.jobs = SQLiteJobStore(self.settings.job_database_path)
+        elif self.settings.job_backend == "object":
+            from sports_analyst.object_jobs import ObjectJobStore
+
+            self.jobs = ObjectJobStore(self.store.persistence)
         self.telemetry = LangSmithTelemetry(self.settings)
 
     def capabilities(self) -> RuntimeCapabilities:
@@ -198,35 +202,55 @@ class AnalystApplication:
         )
         self.events.emit(key, "starting", f"Preparing selected {sport.upper()} datasets", 0.03)
 
-        def report_nba_sync(phase: str, dataset: str, season: int, completed: int, total: int) -> None:
+        existing = {(manifest.dataset, manifest.season) for manifest in self.store.manifests(sport=sport)}
+        registered: set[str] = set()
+        last_sync_progress = 0.08
+
+        def report_sync(phase: str, dataset: str, season: int, completed: int, total: int) -> None:
+            nonlocal last_sync_progress
             if total <= 0:
                 return
             label = dataset.replace("_", " ").title()
-            season_label = f"{season - 1}–{str(season)[-2:]}"
+            season_label = "reference data" if season == 0 else (
+                f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season)
+            )
             offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
             unit_progress = min(total, completed + offsets.get(phase, 0.0))
             progress = 0.08 + 0.68 * unit_progress / total
+            last_sync_progress = max(last_sync_progress, progress)
             messages = {
                 "downloading": f"Downloading {label} for {season_label} · {completed + 1} of {total}",
                 "processing": f"Processing {label} for {season_label} · {completed + 1} of {total}",
                 "downloaded": f"Downloaded {label} for {season_label} · {completed} of {total}",
                 "skipped": f"Skipped unavailable {label} for {season_label} · {completed} of {total}",
+                "available": f"Already downloaded {label} for {season_label} · {completed} of {total}",
             }
-            self.events.emit(key, phase, messages.get(phase, f"Syncing {label} for {season_label}"), progress)
+            self.events.emit(key, phase, messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress)
 
-        manifests = (
-            connector.sync(seasons, selected_datasets, progress_callback=report_nba_sync)
-            if sport == "nba"
-            else connector.sync(seasons, selected_datasets)
-        )
-        for index, manifest in enumerate(manifests, start=1):
+        def register_manifest(manifest: DatasetManifest) -> None:
+            label = manifest.dataset.replace("_", " ").title()
+            self.events.emit(key, "uploading", f"Saving {label} {manifest.season} to the data library", last_sync_progress)
             self.store.save_manifest(manifest)
+            registered.add(manifest.manifest_id)
             self.events.emit(
                 key,
                 "registering",
                 f"Registered {manifest.dataset} {manifest.season}",
-                0.78 + 0.2 * index / len(manifests),
+                last_sync_progress,
             )
+
+        manifests = connector.sync(
+            seasons,
+            selected_datasets,
+            progress_callback=report_sync,
+            manifest_callback=register_manifest,
+            skip=existing,
+        )
+        # Connector test doubles and third-party-compatible implementations may
+        # return manifests without invoking the incremental callback.
+        for manifest in manifests:
+            if manifest.manifest_id not in registered:
+                register_manifest(manifest)
         connector.clear_cache()
         self.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
         logger.info(

@@ -1,24 +1,86 @@
-"""Major durable-job workflows, including real Postgres lease recovery when configured."""
+"""Major desktop SQLite and cloud object-job workflows."""
 import asyncio
-import os
+import json
+import sqlite3
 from contextlib import nullcontext
-from datetime import timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
-import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
 from sports_analyst.api import _event_stream, create_app
 from sports_analyst.config import Settings
-from sports_analyst.jobs import Base, Job, LeaseLost, PostgresJobStore
+from sports_analyst.jobs import LeaseLost, SQLiteJobStore
 from sports_analyst.models import AnalysisRequest, AnalysisScope
+from sports_analyst.object_jobs import ObjectJobStore
 from sports_analyst.service import AnalystApplication
 from sports_analyst.worker import execute_job
+
+
+class MemoryPersistence:
+    durable = True
+
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return sorted(key for key in self.objects if key.startswith(prefix))
+
+    def read_bytes(self, key: str) -> bytes | None:
+        return self.objects.get(key)
+
+    def write_bytes(self, key: str, payload: bytes, content_type: str = "application/octet-stream") -> None:
+        del content_type
+        self.objects[key] = payload
+
+    def download_file(self, key: str, destination: Path) -> bool:
+        payload = self.objects.get(key)
+        if payload is None:
+            return False
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return True
+
+    def upload_file(self, key: str, source: Path) -> None:
+        self.objects[key] = source.read_bytes()
+
+    def delete_prefix(self, prefix: str) -> None:
+        for key in [key for key in self.objects if key.startswith(prefix)]:
+            del self.objects[key]
+
+
+def test_object_job_ledger_preserves_requests_progress_and_dispatch_recovery():
+    persistence = MemoryPersistence()
+    store = ObjectJobStore(persistence)
+    store.enqueue("sync-one", "sync", {"sport": "nba", "seasons": [2025]}, max_active=1)
+    assert store.request("sync-one")["payload"]["sport"] == "nba"
+    attempt = store.reserve_dispatch("sync-one", startup_seconds=900)
+    assert attempt == 1 and store.reserve_dispatch("sync-one", startup_seconds=900) is None
+    store.complete_dispatch("sync-one", attempt, True, startup_seconds=900)
+    assert store.reserve_dispatch("sync-one", startup_seconds=0) is None
+    store.emit("sync-one", "downloading", "Downloading Play By Play", 0.4, dataset="play_by_play")
+    status = store.status("sync-one")
+    assert status["stage"] == "downloading" and status["dataset"] == "play_by_play"
+    events = store.events("sync-one")
+    assert [event["stage"] for event in events] == ["queued", "dispatching", "provisioning", "downloading"]
+    assert json.loads(persistence.objects["jobs/sync-one/request.json"])["kind"] == "sync"
+
+
+def test_object_cloud_dispatch_routes_syncs_and_analyses_separately(tmp_path, monkeypatch):
+    from sports_analyst import cloud_dispatch
+
+    settings = Settings(_env_file=None, data_dir=tmp_path).model_copy(update={"job_backend": "object"})
+    sync = MagicMock()
+    analysis = MagicMock()
+    monkeypatch.setattr(cloud_dispatch, "launch_sync", sync)
+    monkeypatch.setattr(cloud_dispatch, "launch_analysis", analysis)
+
+    cloud_dispatch.launch(settings, "sync-job", "sync")
+    cloud_dispatch.launch(settings, "analysis-job", "investigation")
+
+    sync.assert_called_once_with(settings, "sync-job")
+    analysis.assert_called_once_with(settings, "analysis-job")
 
 
 def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
@@ -39,26 +101,31 @@ def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
     result = client.post("/api/datasets/nba/sync", json={"seasons": [2025]})
     assert result.status_code == 202
     key = result.json()["job_id"]
-    queue.complete_dispatch.assert_called_with(key, 1, False)
+    queue.complete_dispatch.assert_called_with(
+        key, 1, False, retry_seconds=settings.job_dispatch_retry_seconds,
+        startup_seconds=settings.job_dispatch_startup_seconds,
+    )
     client.get(f"/api/dataset-jobs/{key}/status")
     assert launch.call_count == 1
     client.get(f"/api/dataset-jobs/{key}/status")
-    queue.complete_dispatch.assert_called_with(key, 2, True)
+    queue.complete_dispatch.assert_called_with(
+        key, 2, True, retry_seconds=settings.job_dispatch_retry_seconds,
+        startup_seconds=settings.job_dispatch_startup_seconds,
+    )
     assert client.get("/api/capabilities").json()["job_progress_transport"] == "poll"
     queue.enqueue.side_effect = QueueFull("Queue full")
     assert client.post("/api/datasets/nba/sync", json={"seasons": [2025]}).status_code == 429
 
 
-def test_drain_waits_for_retries_and_cleans_attempt_cache(tmp_path, monkeypatch):
+def test_drain_waits_for_retries_and_releases_interrupted_attempts(tmp_path, monkeypatch):
     from sports_analyst import worker
 
-    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="postgres", persistence_backend="s3",
-                        database_url="postgresql://unused/test")
+    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="sqlite")
     queue = MagicMock()
     job = {"job_id": "job", "lease_token": "token"}
     queue.claim.side_effect = [None, job, None, job, None]
     queue.has_active_work.side_effect = [True, True, False]
-    monkeypatch.setattr(worker, "PostgresJobStore", lambda _: queue)
+    monkeypatch.setattr("sports_analyst.jobs.SQLiteJobStore", lambda _: queue)
     monkeypatch.setattr(worker.signal, "signal", lambda *_: None)
     process = MagicMock()
     process.is_alive.return_value = False
@@ -70,7 +137,7 @@ def test_drain_waits_for_retries_and_cleans_attempt_cache(tmp_path, monkeypatch)
     worker.run_worker(settings, drain=True, stop_event=stop)
     assert process.start.call_count == 2
     assert stop.wait.call_count == 2
-    assert list((tmp_path / "workers").iterdir()) == []
+    assert queue.release.call_count == 2
 
 
 def test_cloud_api_enqueues_all_operations_and_replays_progress_after_restart(tmp_path, monkeypatch):
@@ -117,10 +184,10 @@ def test_cloud_api_enqueues_all_operations_and_replays_progress_after_restart(tm
 
 
 def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, monkeypatch):
-    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="local", database_url=SecretStr("postgresql://unused/db"))
+    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="sqlite")
     queue = MagicMock()
     queue.publication.return_value = nullcontext()
-    monkeypatch.setattr("sports_analyst.worker.PostgresJobStore", lambda _: queue)
+    monkeypatch.setattr("sports_analyst.jobs.SQLiteJobStore", lambda _: queue)
     application = MagicMock()
     application.store.get_investigation.side_effect = KeyError("missing")
     monkeypatch.setattr("sports_analyst.service.AnalystApplication", lambda _: application)
@@ -151,70 +218,35 @@ def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, mon
     queue.fail.assert_called_with("job", "attempt", False)
 
 
-@pytest.mark.postgres
-def test_postgres_migration_claim_recovery_fencing_and_event_replay(monkeypatch):
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Set TEST_DATABASE_URL to a disposable local or development PostgreSQL database")
-    from sports_analyst.jobs import database_engine
-    admin = database_engine(url)
-    schema = "test_jobs_" + uuid4().hex
-    with admin.begin() as db:
-        db.execute(sa.schema.CreateSchema(schema))
-    scoped_url = sa.engine.make_url(url).update_query_dict({"options": f"-csearch_path={schema}"})
-    store = PostgresJobStore(scoped_url.render_as_string(hide_password=False))
-    try:
-        # Reproduce the documented pre-Alembic setup: the normalized job tables
-        # already exist, while alembic_version does not.
-        with store.engine.begin() as db:
-            Base.metadata.create_all(db)
-            for name in ("dispatch_state", "dispatch_attempts", "dispatch_lease_expires_at", "dispatched_at"):
-                db.execute(sa.text(f"ALTER TABLE jobs DROP COLUMN {name}"))
-        config = Config("alembic.ini")
-        with store.engine.begin() as db:
-            config.attributes["connection"] = db
-            command.upgrade(config, "head")
-        store.enqueue("job", "investigation", {"sport": "nba"}, max_attempts=2)
-        reservation = store.reserve_dispatch("job")
-        assert reservation == 1
-        assert store.reserve_dispatch("job") is None
-        store.complete_dispatch("job", reservation, True)
-        from sports_analyst.jobs import QueueFull
-        with pytest.raises(QueueFull):
-            store.enqueue("excess", "sync", {}, max_active=1)
-        first = store.claim(300)
-        assert first["attempts"] == 1
-        assert store.claim(300) is None  # Another worker cannot claim a live lease.
-        assert store.heartbeat("job", first["lease_token"], 300)
-        with store.engine.begin() as db:
-            db.execute(sa.update(Job).values(lease_expires_at=sa.func.now() - timedelta(seconds=1)))
-        second = store.claim(300)
-        assert second["lease_token"] != first["lease_token"] and second["attempts"] == 2
-        with pytest.raises(LeaseLost):
-            store.emit_owned("job", first["lease_token"], "complete", "Stale result", 1)
-        # A publication lock must not block another claim or kill the publishing child.
-        with store.publication("job", second["lease_token"], 300):
-            assert store.claim(300) is None
-            assert store.heartbeat("job", second["lease_token"], 300)
-        store.finish("job", second["lease_token"], dict(stage="complete", message="Ready", progress=1))
-        restarted = PostgresJobStore(scoped_url.render_as_string(hide_password=False))
-        events = restarted.events("job")
-        assert events[-1]["stage"] == "complete"
-        assert restarted.events("job", events[-2]["sequence"]) == [events[-1]]
-        with pytest.raises(LeaseLost):
-            store.fail("job", second["lease_token"], True)
-        store.enqueue("retry", "sync", {}, max_attempts=1)
-        retry = store.claim(300)
-        store.fail("retry", retry["lease_token"], True)
-        assert store.status("retry")["stage"] == "failed"
+def test_sqlite_queue_survives_restart_recovers_leases_and_replays_progress(tmp_path):
+    from sports_analyst.jobs import QueueFull
 
-        async def replay():
-            application = MagicMock(jobs=restarted)
-            application.settings.event_stream_timeout_seconds = 30
-            return [event async for event in _event_stream(application, "job", after=events[-2]["sequence"])]
-        assert '"stage": "complete"' in "".join(asyncio.run(replay()))
-    finally:
-        store.engine.dispose()
-        with admin.begin() as db:
-            db.execute(sa.schema.DropSchema(schema, cascade=True))
-        admin.dispose()
+    path = tmp_path / "jobs.sqlite3"
+    store = SQLiteJobStore(path)
+    store.enqueue("job", "investigation", {"sport": "nba"}, max_attempts=2)
+    with pytest.raises(QueueFull):
+        store.enqueue("excess", "sync", {}, max_active=1)
+
+    first = store.claim(300)
+    assert first["attempts"] == 1 and store.claim(300) is None
+    assert store.heartbeat("job", first["lease_token"], 300)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE jobs SET lease_expires_at = '2000-01-01T00:00:00+00:00' WHERE job_id = 'job'")
+
+    restarted = SQLiteJobStore(path)
+    second = restarted.claim(300)
+    assert second["lease_token"] != first["lease_token"] and second["attempts"] == 2
+    with pytest.raises(LeaseLost):
+        restarted.emit_owned("job", first["lease_token"], "complete", "Stale result", 1)
+    restarted.finish("job", second["lease_token"], dict(stage="complete", message="Ready", progress=1))
+
+    events = SQLiteJobStore(path).events("job")
+    assert events[-1]["stage"] == "complete"
+    assert SQLiteJobStore(path).events("job", events[-2]["sequence"]) == [events[-1]]
+
+    async def replay():
+        application = MagicMock(jobs=SQLiteJobStore(path))
+        application.settings.event_stream_timeout_seconds = 30
+        return [event async for event in _event_stream(application, "job", after=events[-2]["sequence"])]
+
+    assert '"stage": "complete"' in "".join(asyncio.run(replay()))

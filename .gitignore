@@ -23,6 +23,8 @@ node_modules/
 
 # DuckDB write-ahead logs
 *.duckdb.wal
+*.sqlite3-wal
+*.sqlite3-shm
 /skills-lock.json
 /deploy/cloud-run/secrets/
 /gha-creds-*.json

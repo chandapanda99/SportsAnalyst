@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import copy_metadata
 
 
 ROOT = Path(SPEC).resolve().parents[2]
@@ -12,19 +12,10 @@ if not FRONTEND.joinpath("index.html").exists():
     raise SystemExit("frontend/dist is missing; run `npm run build` in frontend first")
 
 datas = [(str(FRONTEND), "frontend/dist")]
-# Botocore loads its endpoint definitions and CA bundle at runtime. Including
-# them explicitly keeps R2/S3 usable in the frozen desktop application even
-# when that backend was not active while PyInstaller analyzed the entry point.
-datas += collect_data_files("botocore")
 for distribution in (
     "open-sports-analyst",
     "nflreadpy",
     "sportsdataverse",
-    "boto3",
-    "botocore",
-    "psycopg",
-    "psycopg-binary",
-    "sqlalchemy",
     "keyring",
     "pywebview",
 ):
@@ -39,14 +30,8 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
-        "boto3",
         "keyring.backends.Windows",
-        "psycopg",
-        "psycopg_binary",
-        "psycopg_binary._psycopg",
-        "psycopg_binary.pq",
         "sports_analyst.worker",
-        "sqlalchemy.dialects.postgresql.psycopg",
     ],
     hookspath=[],
     hooksconfig={},

@@ -5,6 +5,7 @@ import importlib.metadata
 import shutil
 import urllib.request
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
 
@@ -91,31 +92,51 @@ class NFLVerseConnector:
         self._verified_files: set[tuple[str, int, int]] = set()
         self._cache_lock = RLock()
 
-    def sync(self, seasons: list[int], datasets: list[str] | None = None) -> list[DatasetManifest]:
+    def sync(
+        self,
+        seasons: list[int],
+        datasets: list[str] | None = None,
+        progress_callback: Callable[[str, str, int, int, int], None] | None = None,
+        manifest_callback: Callable[[DatasetManifest], None] | None = None,
+        skip: set[tuple[str, int]] | None = None,
+    ) -> list[DatasetManifest]:
         selected = list(dict.fromkeys(datasets or ["play_by_play"]))
         unknown = sorted(set(selected) - set(SUPPORTED_DATASETS))
         if unknown:
             raise ValueError(f"unsupported nflverse datasets: {unknown}")
-        manifests = []
-        for dataset in (item for item in selected if item in REFERENCE_DATASETS):
-            frame = self._load_remote(nfl, dataset, 0)
-            path = self.settings.raw_dir / f"{dataset}.parquet"
-            frame.write_parquet(path)
-            manifests.append(self.manifest_for(path, 0, frame, dataset))
-        for season in sorted(set(seasons)):
-            for dataset in (item for item in selected if item not in REFERENCE_DATASETS):
-                if season < DATASET_MIN_SEASONS[dataset]:
-                    continue
-                path = self.settings.raw_dir / f"{dataset}_{season}.parquet"
-                if release_path := DIRECT_PARQUET_PATHS.get(dataset):
-                    self._download_parquet(f"{NFLVERSE_RELEASE_BASE_URL}{release_path.format(season=season)}", path)
-                    manifests.append(self.manifest_for(path, season, dataset=dataset))
-                    continue
-                frame = self._load_remote(nfl, dataset, season)
-                frame.write_parquet(path)
-                manifests.append(self.manifest_for(path, season, frame, dataset))
-        if not manifests:
+        work = [(0, dataset) for dataset in selected if dataset in REFERENCE_DATASETS]
+        work.extend(
+            (season, dataset)
+            for season in sorted(set(seasons))
+            for dataset in selected
+            if dataset not in REFERENCE_DATASETS and season >= DATASET_MIN_SEASONS[dataset]
+        )
+        if not work:
             raise ValueError("none of the selected datasets are available for the selected seasons")
+        skipped = skip or set()
+        manifests = []
+        for index, (season, dataset) in enumerate(work):
+            if (dataset, season) in skipped:
+                if progress_callback:
+                    progress_callback("available", dataset, season, index + 1, len(work))
+                continue
+            if progress_callback:
+                progress_callback("downloading", dataset, season, index, len(work))
+            path = self.settings.raw_dir / (f"{dataset}.parquet" if season == 0 else f"{dataset}_{season}.parquet")
+            frame: pl.DataFrame | None = None
+            if release_path := DIRECT_PARQUET_PATHS.get(dataset):
+                self._download_parquet(f"{NFLVERSE_RELEASE_BASE_URL}{release_path.format(season=season)}", path)
+            else:
+                frame = self._load_remote(nfl, dataset, season)
+                if progress_callback:
+                    progress_callback("processing", dataset, season, index, len(work))
+                frame.write_parquet(path)
+            manifest = self.manifest_for(path, season, frame, dataset)
+            manifests.append(manifest)
+            if progress_callback:
+                progress_callback("downloaded", dataset, season, index + 1, len(work))
+            if manifest_callback:
+                manifest_callback(manifest)
         return manifests
 
     @staticmethod

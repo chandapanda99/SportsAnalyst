@@ -611,7 +611,7 @@
       syncing = pending.kind === 'sync';
       try {
         if (syncing) {
-          await streamDatasetSync(pollingStream(pending), 0, 1);
+          await streamDatasetSync(pollingStream(pending));
           await refresh();
           syncComplete = true;
         } else {
@@ -1555,7 +1555,7 @@
     }
   }
 
-  async function streamDatasetSync(stream: EventStreamResponse, sourceIndex: number, sourceCount: number) {
+  async function streamDatasetSync(stream: EventStreamResponse) {
     const reader = stream.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1569,8 +1569,8 @@
           const data = message.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
           if (!data) continue;
           const event = JSON.parse(data);
-          stage = sourceCount > 1 ? `Source ${sourceIndex + 1} of ${sourceCount} · ${event.message}` : event.message;
-          progress = Math.min(1, (sourceIndex + Number(event.progress || 0)) / sourceCount);
+          stage = event.message;
+          progress = Number(event.progress || 0);
           if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
           if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
           if (event.stage === 'complete') return;
@@ -1583,8 +1583,8 @@
       while (Date.now() < deadline) {
         try {
           const status = await api.datasetJobStatus(stream.jobId);
-          stage = `Source ${sourceIndex + 1} of ${sourceCount} · ${status.message}`;
-          progress = Math.min(1, (sourceIndex + Number(status.progress || 0)) / sourceCount);
+          stage = status.message;
+          progress = Number(status.progress || 0);
           if (status.stage === 'failed') throw new ReportedInvestigationFailure(status.message);
           if (status.stage === 'complete') return;
         } catch (error) {
@@ -1677,10 +1677,11 @@
     stage = 'Preparing data sync';
     progress = 0.03;
     try {
-      for (const [index, dataset] of requestedDatasets.entries()) {
-        const stream = await api.syncStream(activeSport, missingSyncSeasons(dataset, requestedSeasons), [dataset]);
-        await streamDatasetSync(stream, index, requestedDatasets.length);
-      }
+      const missingSeasons = [...new Set(requestedDatasets.flatMap(
+        dataset => missingSyncSeasons(dataset, requestedSeasons)
+      ))];
+      const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets);
+      await streamDatasetSync(stream);
       await refresh();
       syncComplete = true;
       busy = false;

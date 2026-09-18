@@ -42,8 +42,8 @@ stage_label() {
   case "$1" in
     build-image) echo "Building the Linux application image" ;;
     push-image) echo "Uploading the image to Artifact Registry" ;;
-    migrate-database) echo "Applying Neon database migrations" ;;
-    deploy-worker) echo "Deploying the durable analysis worker" ;;
+    deploy-analysis) echo "Deploying the long-running analysis job" ;;
+    deploy-sync) echo "Deploying the private dataset-sync service" ;;
     deploy-service) echo "Deploying the API and frontend" ;;
     smoke-test) echo "Verifying health and frontend responses" ;;
     *) echo "Finalizing the Cloud Build" ;;

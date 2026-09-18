@@ -230,11 +230,10 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(screen.getByRole('button', {name: 'Download 2 sources for 2 seasons'}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(
       ([input]) => String(input).endsWith('/datasets/nfl/sync-stream')
-    )).toHaveLength(2));
+    )).toHaveLength(1));
     const syncCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
     expect(syncCalls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-      {seasons: [2025, 2024], datasets: ['play_by_play']},
-      {seasons: [2025, 2024], datasets: ['rosters']}
+      {seasons: [2025, 2024], datasets: ['play_by_play', 'rosters']}
     ]);
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/dataset-jobs/sync-running/status'))).toBe(true);
     await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));

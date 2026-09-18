@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'src/**', 'frontend/**', 'migrations/**', 'Dockerfile', 'pyproject.toml', 'uv.lock', 'deploy/cloud-run/**', '.github/workflows/cloud-run.yml' ]
+    paths: [ 'src/**', 'frontend/**', 'Dockerfile', 'pyproject.toml', 'uv.lock', 'deploy/cloud-run/**', '.github/workflows/cloud-run.yml' ]
 permissions:
   contents: read
   id-token: write

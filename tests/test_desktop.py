@@ -55,7 +55,7 @@ def test_frozen_frontend_resolves_from_pyinstaller_bundle(tmp_path: Path, monkey
     assert bundled_frontend_directory() == tmp_path / "frontend" / "dist"
 
 
-def test_desktop_owns_durable_worker_lifecycle(tmp_path: Path) -> None:
+def test_desktop_owns_appdata_worker_lifecycle(tmp_path: Path) -> None:
     class FakeEvent:
         def __init__(self) -> None:
             self.stopped = False
@@ -100,7 +100,7 @@ def test_desktop_owns_durable_worker_lifecycle(tmp_path: Path) -> None:
     context = FakeContext()
     controller = DesktopController(DesktopConfigStore(tmp_path), worker_context=context)
     local_settings = type("Settings", (), {"job_backend": "local"})()
-    durable_settings = type("Settings", (), {"job_backend": "postgres"})()
+    durable_settings = type("Settings", (), {"job_backend": "sqlite"})()
 
     controller._start_worker_if_configured(local_settings)
     assert context.process is None

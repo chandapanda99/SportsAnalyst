@@ -17,7 +17,7 @@ steps:
   - id: push-image
     name: gcr.io/cloud-builders/docker
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID']
-  - id: migrate-database
+  - id: deploy-analysis
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     env:
@@ -31,8 +31,8 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'migrate']
-  - id: deploy-worker
+    args: ['deploy/cloud-run/release.sh', 'analysis']
+  - id: deploy-sync
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     env:
@@ -46,7 +46,7 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'worker']
+    args: ['deploy/cloud-run/release.sh', 'sync']
   - id: deploy-service
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash

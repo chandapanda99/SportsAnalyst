@@ -72,7 +72,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     def enqueue(key: str, kind: str, payload: dict) -> None:
         from sports_analyst.cloud_dispatch import ensure_dispatch
-        from sports_analyst.jobs import QueueFull
+        from sports_analyst.job_common import QueueFull
 
         try:
             service.jobs.enqueue(key, kind, payload, service.settings.job_max_attempts,
@@ -82,7 +82,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         except Exception as error:
             logger.error("job_enqueue_failed error_type=%s", type(error).__name__)
             raise HTTPException(503, "The job queue is unavailable. Please try again shortly.") from error
-        ensure_dispatch(service.settings, service.jobs, key)
+        ensure_dispatch(service.settings, service.jobs, key, kind)
 
     def job_status(key: str) -> dict:
         if service.jobs is not None:
@@ -92,16 +92,16 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             status = service.jobs.status(key)
             if status is None:
                 raise HTTPException(404, "Job not found")
-            if status.get("stage") == "complete":
-                # Worker artifacts can be new to this replica's local index.
-                refresh_catalog()
+            if status.get("stage") == "complete" and service.settings.job_backend == "object":
+                # Cloud workers publish to R2 outside this API replica.
+                service.store._restore_durable_index()
             return status
         events = service.events.events(key)
         return events[-1] if events else {"stage": "pending", "message": "Waiting for progress", "progress": 0}
 
     def refresh_catalog() -> None:
         nonlocal catalog_version, catalog_refreshed_at
-        if service.jobs is not None:
+        if service.settings.job_backend == "object":
             with catalog_lock:
                 version = service.jobs.catalog_version()
                 if version != catalog_version or monotonic() - catalog_refreshed_at > 60:

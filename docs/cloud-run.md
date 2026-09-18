@@ -1,73 +1,78 @@
 # Google Cloud Run deployment
 
-Cloud Run is the recommended managed hosting path. One service serves the frontend and API; an on-demand job drains the existing Neon queue. R2 retains datasets and reports. The Windows installer uses its existing build scripts and local defaults.
+Cloud Run is the recommended managed hosting path. It keeps the Windows desktop build independent and uses four managed pieces:
+
+- the public `open-sports-analyst` service for the compiled frontend and API;
+- the private `open-sports-analyst-sync` service, invoked by Cloud Tasks for low-latency dataset downloads;
+- the `open-sports-analyst-analysis` Cloud Run Job for long investigations and follow-ups;
+- Cloudflare R2 for datasets, reports, request records, and progress events.
+
+The cloud path does **not** require Neon, PostgreSQL, Alembic migrations, Redis, or a continuously running worker. Cloud Tasks retries sync requests, while Cloud Run Jobs provide the longer execution window required by investigations.
 
 ## First deployment
 
-Use Google Cloud Shell (Bash, Git and gcloud are already installed). Select a billing-enabled project, clone this repository, and work from its root. No local Docker installation is required.
+Use Google Cloud Shell, or Git Bash with an authenticated `gcloud` installation. Clone the repository and run these commands from its root:
 
 ```bash
 export PROJECT_ID=your-project
 export BILLING_ACCOUNT=000000-000000-000000
 export REGION=us-central1
-# Optional: enable the GitHub deployment identity at the same time.
+# Optional: create the GitHub deployment identity too.
 export GITHUB_REPOSITORY=your-user/your-repository
 ENV_FILE=.env bash deploy/cloud-run/bootstrap.sh
-```
-
-With `ENV_FILE=.env`, bootstrap imports an explicit credential allowlist into Secret Manager: pooled `DATABASE_URL`, direct `DATABASE_MIGRATION_URL`, the two R2 credentials, the Foundry key, and the LangSmith key when tracing is enabled. It never executes the dotenv file as shell code. Each explicit import creates a new secret version; omit `ENV_FILE` to reuse existing versions or receive private prompts for missing secrets. The script rejects a pooled migration URL and a non-pooled runtime URL.
-
-Local-only values—including `DATA_DIR`, persistence/job backends, dispatch settings, and desktop settings—are never imported. Google recommends Secret Manager rather than ordinary Cloud Run environment variables for credentials.
-
-Bootstrap creates dedicated API, worker, migration, build and deployment identities, an image repository, a source staging bucket, and a $5 monthly alert budget. The runtime accounts do not receive build or administration permissions.
-
-Use a development Neon branch and a separate R2 prefix for the first trial. The migration adds dispatch columns and preserves existing records. Do not run competing desktop workers against the trial database while testing cloud execution.
-
-```bash
 ENV_FILE=.env bash deploy/cloud-run/deploy.sh
 ```
 
-The deploy script maps the following non-secret dotenv values when their shell equivalents are not already set: `OBJECT_STORAGE_ENDPOINT_URL` → `R2_ENDPOINT`, `OBJECT_STORAGE_BUCKET` → `R2_BUCKET`, `OBJECT_STORAGE_PREFIX` → `R2_PREFIX`, plus `FOUNDRY_ENDPOINT`, `MODEL`, and `LANGSMITH_TRACING`. Explicit exported values take precedence, which is useful for a trial prefix:
+Bootstrap enables Cloud Run, Cloud Build, Cloud Tasks, Artifact Registry, Secret Manager, and IAM; creates narrowly scoped service accounts; creates the sync queue and image repository; and imports an explicit credential allowlist from `.env`. It imports only the R2 credentials, model-provider key, and optional LangSmith key. The dotenv file is parsed as data and is never executed as shell code.
+
+The deploy script maps these non-secret dotenv values when an exported shell value is absent: `OBJECT_STORAGE_ENDPOINT_URL` to `R2_ENDPOINT`, `OBJECT_STORAGE_BUCKET` to `R2_BUCKET`, `OBJECT_STORAGE_PREFIX` to `R2_PREFIX`, plus `FOUNDRY_ENDPOINT`, `MODEL`, and `LANGSMITH_TRACING`. Exported values take precedence, so a safe trial can use a separate prefix:
 
 ```bash
 export R2_PREFIX=cloud-run-trial
 ENV_FILE=.env bash deploy/cloud-run/deploy.sh
 ```
 
-Cloud Build builds linux/amd64, pushes the image, runs Alembic using the direct URL, deploys the worker and public service, and checks the health endpoint and frontend. `deploy.sh` prints each active stage and a timestamped heartbeat every 15 seconds; it also prints a direct Cloud Build logs link for deeper inspection. Migrations must succeed before either runtime is updated. After all smoke checks pass, the printed `run.app` URL is the web app. To use production data, configure the production Neon secret versions and R2 prefix and repeat deployment after trial validation.
+Cloud Build creates a Linux AMD64 image, deploys the analysis job, deploys the private sync service, deploys the public service, and performs health and frontend smoke checks. There is no database migration stage.
+
+## Runtime behavior
+
+- The API writes a small job request and initial progress record to R2.
+- A sync request becomes an authenticated Cloud Task. Cloud Tasks calls the private sync service and retries transient failures. Its 30-minute HTTP deadline is suitable for ordinary package/season sync units; completed manifests are published incrementally, so a retry skips already stored data.
+- An investigation or follow-up starts one Cloud Run Job execution with its R2 job ID supplied as an execution override. Cloud Run retries the task once for transient failures.
+- The browser polls durable R2-backed status and survives API scale-to-zero, refreshes, and replica replacement.
+- R2 is authoritative. `/tmp` on each Cloud Run instance is only a bounded disposable cache.
+- Accepted Cloud Tasks and Job executions are not re-dispatched by browser polling. Google Cloud owns their delivery after acceptance.
+
+Current deployment limits are intentionally conservative for a personal project:
+
+| Runtime | CPU / memory | Scaling and timeout |
+|---|---|---|
+| Public API/frontend | 2 vCPU / 4 GiB | concurrency 8, 0–1 instances, 5 minutes |
+| Private sync service | 1 vCPU / 4 GiB | concurrency 1, 0–1 instances, 30 minutes |
+| Analysis job | 1 vCPU / 4 GiB | one task, one retry, 6 hours |
+
+The first sync request may still incur a normal service cold start, but it avoids the several-minute Cloud Run Job scheduling delay previously seen for downloads. Analyses remain Jobs because they can exceed the Cloud Tasks request deadline.
+
+The public URL has no authentication. Anyone with the URL can submit work or view reports. `MAX_ACTIVE_JOBS=3`, one API instance, one sync instance, payload validation, and queue rate limits reduce accidental abuse but are not access control or a hard spending cap.
 
 ## GitHub deployment
 
-Set repository variables `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER` (printed by bootstrap), `GCP_REGION`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_PREFIX`, `FOUNDRY_ENDPOINT`, and `MODEL`. The separate **Cloud Run deployment** workflow runs on relevant pushes to `main` or manual dispatch. Its `cloud-run` environment can use GitHub deployment protections. Federation accepts only this repository's `main` branch; no Google service-account key is stored in GitHub. Both deployment paths use the same Cloud Build configuration.
+Set repository variables `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER` (printed by bootstrap), `GCP_REGION`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_PREFIX`, `FOUNDRY_ENDPOINT`, `MODEL`, and optionally `LANGSMITH_TRACING`. The **Cloud Run deployment** workflow uses Workload Identity Federation and the same Cloud Build configuration as manual deployment; it stores no Google service-account key.
 
-## Runtime behavior and limits
+## Verification and cleanup
 
-- `JOB_DISPATCH_BACKEND=cloud_run` launches the configured worker after committing a queue record. Defaults remain `none` elsewhere.
-- `JOB_PROGRESS_TRANSPORT=poll` uses short status requests; the current job ID is retained in browser session storage for refresh recovery. Desktop defaults to streaming.
-- `MAX_ACTIVE_JOBS=3` bounds queued/running requests across API replicas with a PostgreSQL transaction lock. A full queue returns HTTP 429.
-- Dispatch reservations throttle launches across replicas. A failed launch is eligible again after 30 seconds; an unclaimed successful launch after 120 seconds. Submission and status polling drive recovery. If every browser closes before a failed launch is recovered, the record remains queued until a status check resumes or a worker is executed manually.
-- `--drain` waits for delayed retries and expired leases and exits when all work is terminal. Each attempt retains its own lease and temporary directory; completed and interrupted attempts remove that directory. Existing continuous and `--once` worker modes remain available.
-- The API uses 2 CPUs/4 GiB, concurrency 8, and 0–1 instances. Worker executions use one task, 2 CPUs/8 GiB, a six-hour timeout and one infrastructure retry. Task parallelism does not limit simultaneous executions; database leases prevent duplicate ownership of an individual job.
-- Cloud Run's writable filesystem consumes RAM. Attempt cleanup bounds retained data between jobs, but peak memory must still fit the largest selected dataset. Begin with small syncs and monitor before importing many seasons. API caches are ephemeral and can be recreated from R2.
+After deployment, test one small NFL sync, one NBA sync, a team investigation, a player investigation, and a follow-up. Refresh the page during both a sync and investigation, then let the API scale to zero and confirm history returns. Verify the corresponding dataset and investigation objects exist in R2.
 
-There is no authentication, as requested: anyone reaching the URL can submit work, view reports, or use existing deletion endpoints. Admission limits bound simultaneous work, not total use or spending.
-
-## Verification and recovery
-
-Run one small NFL sync, one NBA sync, a team and player investigation, and a follow-up. Refresh during work; verify completion without resubmission. Verify reports and manifests appear in R2. Let the service scale to zero and check that history returns on the next visit. On a development branch, interrupt a worker execution and confirm lease-based recovery and bounded attempts.
+Useful diagnostics:
 
 ```bash
-gcloud run jobs execute open-sports-analyst-worker --project="$PROJECT_ID" --region="$REGION"
-gcloud run services logs read open-sports-analyst --project="$PROJECT_ID" --region="$REGION" --limit=50
-gcloud run jobs executions list --job=open-sports-analyst-worker --project="$PROJECT_ID" --region="$REGION"
+gcloud run services logs read open-sports-analyst-sync --project="$PROJECT_ID" --region="$REGION" --limit=100
+gcloud run jobs executions list --job=open-sports-analyst-analysis --project="$PROJECT_ID" --region="$REGION"
+gcloud tasks queues describe open-sports-analyst-sync --project="$PROJECT_ID" --location="$REGION"
 ```
 
-Keep the previous host until these checks pass. Retirement of that deployment is a separate manual action. Roll back the Cloud Run service to its previous revision if necessary; use the matching prior image for the worker. The additive migration can remain installed.
+Keep the old deployment and any existing Neon resources until these checks pass. Afterward, the old `open-sports-analyst-worker` and `open-sports-analyst-migrate` Jobs, their obsolete service accounts and database secrets, and the Neon project can be removed manually. The application no longer contains a PostgreSQL runtime or migration path. R2 remains required because Cloud Run's filesystem is ephemeral.
 
-## Costs and secrets
+Free-tier usage is not a guaranteed zero bill. Cloud Run, Cloud Tasks, builds, image storage, internet transfer to R2, R2 operations/storage, and model calls have separate allowances. The bootstrap-created budget is an alert, not a spending cap.
 
-Free-tier usage is not a guaranteed zero bill. Builds, image storage, internet uploads to R2, runtime resources, model calls, and Neon usage have independent limits. The budget is an alert, not a hard spending cap. The image cleanup policy retains three recent versions and removes older images after seven days. Periodically remove obsolete source archives in the build staging bucket.
-
-Secret bindings use `latest` at deployment/startup; rotate a secret by adding a version and redeploying both runtimes. For optional LangSmith tracing, export `LANGSMITH_TRACING=true` before bootstrap and deployment; bootstrap prompts for its separate secret and grants API/worker access. Use the same GitHub variable if deploying through Actions. Never place credentials in build substitutions or GitHub variables.
-
-References: [Cloud Run pricing](https://cloud.google.com/run/pricing), [container contract](https://cloud.google.com/run/docs/container-contract), [Artifact Registry pricing](https://cloud.google.com/artifact-registry/pricing).
+References: [Cloud Tasks with Cloud Run](https://cloud.google.com/run/docs/triggering/using-tasks), [Cloud Tasks HTTP deadlines](https://cloud.google.com/tasks/docs/creating-http-target-tasks), [executing Cloud Run Jobs](https://cloud.google.com/run/docs/execute/jobs), and [Cloud Run pricing](https://cloud.google.com/run/pricing).

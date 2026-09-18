@@ -142,7 +142,6 @@ try
         DATA_DIR = $smokeDataDirectory
         JOB_BACKEND = "local"
         PERSISTENCE_BACKEND = "local"
-        DATABASE_URL = ""
         SPORTS_ANALYST_SMOKE_LOG = $smokeLog
     }
     $previousEnvironment = @{ }

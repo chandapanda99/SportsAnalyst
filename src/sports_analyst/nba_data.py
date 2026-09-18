@@ -127,6 +127,8 @@ class SportsDataverseNBAConnector:
         seasons: list[int],
         datasets: list[str] | None = None,
         progress_callback: Callable[[str, str, int, int, int], None] | None = None,
+        manifest_callback: Callable[[DatasetManifest], None] | None = None,
+        skip: set[tuple[str, int]] | None = None,
     ) -> list[DatasetManifest]:
         selected = list(dict.fromkeys(datasets or NBA_DEFAULT_DATASETS))
         unknown = sorted(set(selected) - set(NBA_DATASETS))
@@ -138,8 +140,17 @@ class SportsDataverseNBAConnector:
         work = [
             (season, dataset) for season in sorted(set(seasons)) for dataset in selected if season in NBA_DATASETS[dataset].available_seasons
         ]
+        if not work:
+            raise ValueError(
+                "none of the selected NBA datasets are available for the selected seasons; choose a supported season or include a core dataset"
+            )
+        skipped = skip or set()
         manifests: list[DatasetManifest] = []
         for index, (season, dataset) in enumerate(work):
+            if (dataset, season) in skipped:
+                if progress_callback:
+                    progress_callback("available", dataset, season, index + 1, len(work))
+                continue
             if progress_callback:
                 progress_callback("downloading", dataset, season, index, len(work))
             try:
@@ -167,10 +178,13 @@ class SportsDataverseNBAConnector:
             frame = self.normalize(frame, season, dataset)
             path = self.data_dir / f"{dataset}_{season}.parquet"
             frame.write_parquet(path)
-            manifests.append(self.manifest_for(path, season, frame, dataset))
+            manifest = self.manifest_for(path, season, frame, dataset)
+            manifests.append(manifest)
             if progress_callback:
                 progress_callback("downloaded", dataset, season, index + 1, len(work))
-        if not manifests:
+            if manifest_callback:
+                manifest_callback(manifest)
+        if not manifests and not any((dataset, season) in skipped for season, dataset in work):
             raise ValueError(
                 "none of the selected NBA datasets are available for the selected seasons; choose a supported season or include a core dataset"
             )

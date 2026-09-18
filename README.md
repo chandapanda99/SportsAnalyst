@@ -96,9 +96,9 @@ On first launch, the application asks for the model provider, analysis model, op
 remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.json`. Select **Use deterministic mode** to run without an LLM. To reopen model setup from a
 development installation, run `uv run sports-analyst-desktop --configure`.
 
-The standard local desktop configuration (`JOB_BACKEND=local`) executes jobs inside its loopback API process and needs no external services. When the desktop is configured
-with `JOB_BACKEND=postgres` and S3/R2 persistence, its launcher also starts `sports-analyst-worker` as a managed sibling process. Closing the desktop signals that worker,
-waits for its active child to stop, and then closes the API. PostgreSQL leases allow an interrupted job to be reclaimed the next time a worker starts.
+The desktop automatically stores its queue and progress history in `%LOCALAPPDATA%\open-sports-analyst\jobs.sqlite3` and starts `sports-analyst-worker` as a managed sibling
+process. It needs no database server or cloud storage. Closing the desktop stops the active child cleanly; unfinished work is released back to the SQLite queue and resumes
+when the application starts again. The command-line development server keeps the simpler in-process `JOB_BACKEND=local` default.
 
 ### Build the installer
 
@@ -110,7 +110,7 @@ Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https:
 
 The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
 one-directory application. It then runs the frozen executable in an isolated smoke-test mode before downloading Microsoft's WebView2 evergreen bootstrapper and writing the
-installer to `dist/installer/`. The frozen bundle explicitly includes the PostgreSQL, R2/S3, and managed-worker runtime pieces used when durable desktop jobs are enabled.
+installer to `dist/installer/`. The frozen bundle includes the managed SQLite worker while cloud-only R2 and Google dependencies remain outside the desktop package.
 Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop after producing and smoke-testing the unpackaged desktop application.
 
 For Authenticode signing, set either `WINDOWS_SIGNING_PFX_PATH` (and optionally `WINDOWS_SIGNING_PFX_PASSWORD`) or `WINDOWS_SIGNING_CERT_THUMBPRINT` before building. The build
@@ -134,8 +134,8 @@ separate public distribution repository instead.
 
 ## Google Cloud Run deployment (recommended cloud hosting)
 
-Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero, the existing Neon queue and R2 storage. A Cloud Run service serves the web app;
-an on-demand Cloud Run Job runs downloads and investigations. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
+Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero and R2 storage. A public Cloud Run service serves the web app, a private service
+handles dataset syncs through Cloud Tasks, and an on-demand Cloud Run Job handles investigations and follow-ups. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
 and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
 
 ## Model providers

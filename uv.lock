@@ -17,20 +17,6 @@ wheels = [
 ]
 
 [[package]]
-name = "alembic"
-version = "1.20.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mako" },
-    { name = "sqlalchemy" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/aa/02910bdb8e2f1444f6654d5b296cd827d126f82209050ee7b1000f92ac4b/alembic-1.20.0.tar.gz", hash = "sha256:db505480647bc60386c5369402f4a57a506b7539c9e9ef5e270d45cbbe4939bf", size = 2093272, upload-time = "2026-09-11T19:09:11.126Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/27/78a89b55b0904d222183164e079b4ca56208e94eff1d35ad1f1ad5be9b06/alembic-1.20.0-py3-none-any.whl", hash = "sha256:77eb101048d95f982c0353e9233404889dcd7a6fc244c107836c0e2fc9cf7d9d", size = 268719, upload-time = "2026-09-11T19:09:12.88Z" },
-]
-
-[[package]]
 name = "altair"
 version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -304,7 +290,7 @@ name = "clr-loader"
 version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform == 'win32'" },
+    { name = "cffi" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e4/46/7eea92b6aa2d68af78e049cbecec5f757f1aad44ecdecdc16bbad7eead51/clr_loader-0.3.1.tar.gz", hash = "sha256:2e073e9aaf49d1ae2f56ecba27987ad5fb68be4bcd9dd34a5bed8f0e4e128366", size = 86805, upload-time = "2026-04-18T17:49:44.287Z" }
 wheels = [
@@ -681,8 +667,8 @@ name = "httpcore2"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
+    { name = "h11" },
+    { name = "truststore" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/15/8c/e925b1c92018abb3a1863ce1549d76d2381e334d21d65d4ac8f65dabd78a/httpcore2-2.13.0.tar.gz", hash = "sha256:2adc8be4fb285fbcd6d894298db3b52c177e74b6674eda3a76bd36be3292a3db", size = 67740, upload-time = "2026-09-14T14:18:04.717Z" }
 wheels = [
@@ -1205,23 +1191,11 @@ name = "macholib"
 version = "1.16.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "altgraph", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "altgraph" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz", hash = "sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362", size = 59427, upload-time = "2025-11-22T08:28:38.373Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/d1/a9f36f8ecdf0fb7c9b1e78c8d7af12b8c8754e74851ac7b94a8305540fc7/macholib-1.16.4-py2.py3-none-any.whl", hash = "sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea", size = 38117, upload-time = "2025-11-22T08:28:36.939Z" },
-]
-
-[[package]]
-name = "mako"
-version = "1.4.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markupsafe" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/12/b5fa2353e2754cd67fb9f83793fa48ff42c213a5da7e719869d2301f6ab8/mako-1.4.1.tar.gz", hash = "sha256:d7904710b662996425a21627710c4777c45053146942cf8a7aebf757c92b8c27", size = 410165, upload-time = "2026-08-05T06:10:56.611Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/54/12ed58d458474aaab5c3d180173e745a4fe131bb330370596876d19ff60f/mako-1.4.1-py3-none-any.whl", hash = "sha256:a359d9a94a541213958742b2698d0a7757bb83551767bc468a74b9905aba9617", size = 80010, upload-time = "2026-08-05T06:10:58.248Z" },
 ]
 
 [[package]]
@@ -1426,10 +1400,8 @@ name = "open-sports-analyst"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "alembic" },
     { name = "altair" },
     { name = "azure-identity" },
-    { name = "boto3" },
     { name = "deepagents" },
     { name = "duckdb" },
     { name = "fastapi", extra = ["standard"] },
@@ -1440,13 +1412,11 @@ dependencies = [
     { name = "numpy" },
     { name = "platformdirs" },
     { name = "polars" },
-    { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "sportsdataverse" },
-    { name = "sqlalchemy" },
     { name = "typer" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1455,6 +1425,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cloud-run = [
+    { name = "boto3" },
     { name = "google-auth", extra = ["requests"] },
 ]
 desktop = [
@@ -1476,10 +1447,9 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.20.0" },
     { name = "altair", specifier = ">=5.5,<6" },
     { name = "azure-identity", specifier = ">=1.25,<2" },
-    { name = "boto3", specifier = ">=1.42,<2" },
+    { name = "boto3", marker = "extra == 'cloud-run'", specifier = ">=1.42,<2" },
     { name = "curl-cffi", marker = "extra == 'test'", specifier = ">=0.13,<1" },
     { name = "deepagents", specifier = ">=0.7" },
     { name = "duckdb", specifier = ">=1.4,<2" },
@@ -1495,7 +1465,6 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'desktop-build'", specifier = ">=11,<13" },
     { name = "platformdirs", specifier = ">=4.4,<5" },
     { name = "polars", specifier = ">=1.34,<2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.5" },
     { name = "pyarrow", specifier = ">=25.0.1" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pydantic-settings", specifier = ">=2.11,<3" },
@@ -1507,7 +1476,6 @@ requires-dist = [
     { name = "respx", marker = "extra == 'test'", specifier = ">=0.22,<1" },
     { name = "ruff", marker = "extra == 'test'", specifier = ">=0.14,<1" },
     { name = "sportsdataverse", specifier = ">=0.0.75,<0.1" },
-    { name = "sqlalchemy", specifier = ">=2.0.53" },
     { name = "typer", specifier = ">=0.19,<1" },
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.37" },
@@ -1732,41 +1700,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f2/cf/77d3e19b7fabd03895caca7857ef51e4c409e0ca6b37ee6e9f7daa50b642/proxy_tools-0.1.0.tar.gz", hash = "sha256:ccb3751f529c047e2d8a58440d86b205303cf0fe8146f784d1cbcd94f0a28010", size = 2978, upload-time = "2014-05-05T21:02:24.606Z" }
 
 [[package]]
-name = "psycopg"
-version = "3.3.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/72/73/8fb739d0f6bba247b9b93c9840c402a4f88545be5f1d4b02b23366371c00/psycopg-3.3.5.tar.gz", hash = "sha256:d0a3d9ccf5788af054cbd745278cb02401b5c312aeaafbf2c6144460aec47da4", size = 166508, upload-time = "2026-08-31T22:45:43.151Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/2e/d0a645bcaadde68bd6d93c43f02f14b0191bdda367ce3f7722abe3da744a/psycopg-3.3.5-py3-none-any.whl", hash = "sha256:ce5aa5cdb4f9379f00f487590e5890bfa7df9a164648c969ffa628505e21af4e", size = 213598, upload-time = "2026-08-31T22:39:02.184Z" },
-]
-
-[package.optional-dependencies]
-binary = [
-    { name = "psycopg-binary", marker = "implementation_name != 'pypy'" },
-]
-
-[[package]]
-name = "psycopg-binary"
-version = "3.3.5"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/1c/e718752cc63cf4e99e4a10fd36e3a3364dabdd0819484a24c0d79fbb9685/psycopg_binary-3.3.5-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:6e85d50b87257fb117675a19ee59daa7bf9a57f6431500adf7059df799232ef4", size = 4704421, upload-time = "2026-08-31T22:42:59.564Z" },
-    { url = "https://files.pythonhosted.org/packages/af/cf/a0e748e27c09b92738e4460582d121ba1908be3e36791e150f435e54b332/psycopg_binary-3.3.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e5becd311f9af8d180bad372f51fb2252fd02cb2073056e2b170c9274f95fe7f", size = 4765054, upload-time = "2026-08-31T22:43:05.421Z" },
-    { url = "https://files.pythonhosted.org/packages/39/62/0cbac0266d56c94dd1f702d9af2b5d54bf80b6e658048f4f2c5bd63dd7e3/psycopg_binary-3.3.5-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:19e5bf9872dbd164c220567fd385ba2309c7d9df1541f78343510c6b0f36a1b7", size = 5547137, upload-time = "2026-08-31T22:43:11.768Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/3a/73c6f8871f38fc07a9c0b4cbc9467beb116a2783cecf87dfa53900a396dc/psycopg_binary-3.3.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:cb3b3bffebfe07110730626e76238161124f35ac87b748d663316a28d22f58b0", size = 5227577, upload-time = "2026-08-31T22:43:20.767Z" },
-    { url = "https://files.pythonhosted.org/packages/59/7b/9f17b9f4d297b774dc574199c4dcd02dadc32a00c4056265918de5c70635/psycopg_binary-3.3.5-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2111f880add40fb03c60556069ad68e884a0908a74d2debafc603caf93b73552", size = 6824606, upload-time = "2026-08-31T22:43:33.698Z" },
-    { url = "https://files.pythonhosted.org/packages/94/86/d84dadd94a004dbbb43ce0579f1f766fdc6b8cbef745090e24bea77b5283/psycopg_binary-3.3.5-cp313-cp313-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:40505676b1526b9ea387dace034040a8c8b0bcf984cd6bd4720a2ab15e813586", size = 5060854, upload-time = "2026-08-31T22:43:42.258Z" },
-    { url = "https://files.pythonhosted.org/packages/30/d0/e5078be2c7d2490c0d6cd4cb7b3601aec44be2fa8b3fe927e9419b06004f/psycopg_binary-3.3.5-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:5816472e3bb05615f33a741e0835043d1f4bf9709ff30d2f4aed71815cfc6b5e", size = 4589511, upload-time = "2026-08-31T22:43:50.012Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/01/08dfb5b18fa482e025864fd91a022310d0782c42e4cf5dda5d0e010b6790/psycopg_binary-3.3.5-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:358748fc4c8ccdc0e2bdf55420494930e19c3ade586ea9c3a6de3dad1f897311", size = 4268144, upload-time = "2026-08-31T22:43:56.993Z" },
-    { url = "https://files.pythonhosted.org/packages/88/b9/cb01dc1d63f3241b49b2ca7fb9f98d0f5c76127f0dbb9440635a6ad0233e/psycopg_binary-3.3.5-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:1ef2e498be47800f6202b9a2304c22646325ca6d54001b7c785bcfdb24a1e8ab", size = 4001036, upload-time = "2026-08-31T22:44:04.429Z" },
-    { url = "https://files.pythonhosted.org/packages/95/49/7c17dd832c05b380562ff2ff5f6ab2bcaeca8b7fff2c2b355854368a5bdb/psycopg_binary-3.3.5-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:88e01aa2e938a45655a8a5213fc3a44ba78cb4cab8a569b3e0bcb3d1d0eaba16", size = 4313112, upload-time = "2026-08-31T22:44:12.446Z" },
-    { url = "https://files.pythonhosted.org/packages/7c/2c/b0b2f887185d6a2ec0b3bef948cc07656d2d1a5d96fa7f2bb03f6ef06ca4/psycopg_binary-3.3.5-cp313-cp313-win_amd64.whl", hash = "sha256:ba466011569297114449df9d523438e1adeedf3e4f31ffb78e897ec3fef3076b", size = 3647313, upload-time = "2026-08-31T22:44:19.139Z" },
-]
-
-[[package]]
 name = "pyarrow"
 version = "25.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1979,7 +1912,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/75/76/49c6da2c6a831020b4854ba20079d5a1030474bffc776b7b73c2eeff8c15/pyobjc_framework_cocoa-12.2.2.tar.gz", hash = "sha256:c96c0ef69a71afbbb0e6a7d594b455c5fe47d62e0db376ee7a2b4b828c16ace9", size = 3132831, upload-time = "2026-08-11T19:44:02.288Z" }
 wheels = [
@@ -1992,8 +1925,8 @@ name = "pyobjc-framework-quartz"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/b1/426a37c7ae37280b3ffca2571fb48f211946aee2f4ca31a603ed1943c4a7/pyobjc_framework_quartz-12.2.2.tar.gz", hash = "sha256:810f97b210cfd93704d240860286dfd6df09f9f1c52525fc5c2166723aea3f9e", size = 3218295, upload-time = "2026-08-11T19:45:15.189Z" }
 wheels = [
@@ -2006,8 +1939,8 @@ name = "pyobjc-framework-security"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/92/c304b7fc3a0fe7484a2a3cf25711e70c8fa2b6969d82f4010e35b9af2164/pyobjc_framework_security-12.2.2.tar.gz", hash = "sha256:33efab1ff7d18570148f8f3ddd44eca305f733aee00b9115d5263bef81018f65", size = 181827, upload-time = "2026-08-11T19:45:24.042Z" }
 wheels = [
@@ -2020,8 +1953,8 @@ name = "pyobjc-framework-uniformtypeidentifiers"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/70/c6/31ac40c4d918baa36ca06d196bfec0f47f804a74684988cf424060469d98/pyobjc_framework_uniformtypeidentifiers-12.2.2.tar.gz", hash = "sha256:12f8ba77dcc949ffb9f0f48743cae326aebec8e69cb1ac55a1d1e04dca7bd59a", size = 20848, upload-time = "2026-08-11T19:45:37.634Z" }
 wheels = [
@@ -2033,8 +1966,8 @@ name = "pyobjc-framework-webkit"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6f/1f/766e338197f7051c25f23cb0d350caa88234b31c3a759127f2cbb67f3376/pyobjc_framework_webkit-12.2.2.tar.gz", hash = "sha256:e5588df2a73b377b59a994cc2a78b467e4341f4e4d28b52e8671e21a2811d3c1", size = 333834, upload-time = "2026-08-11T19:45:42.708Z" }
 wheels = [
@@ -2114,7 +2047,7 @@ name = "pythonnet"
 version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "clr-loader", marker = "sys_platform == 'win32'" },
+    { name = "clr-loader" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/05/57/da1992e44663b71365c6e842c8d7fa453d4ec45fb99a68cfee5b7e944d3c/pythonnet-3.1.0.tar.gz", hash = "sha256:7b34c382905d10a371509ffafd64cae0416305c28817738a9cd138336f4e9991", size = 250599, upload-time = "2026-05-23T20:30:21.578Z" }
 wheels = [
@@ -2176,7 +2109,7 @@ name = "qtpy"
 version = "2.4.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "packaging" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/70/01/392eba83c8e47b946b929d7c46e0f04b35e9671f8bb6fc36b6f7945b4de8/qtpy-2.4.3.tar.gz", hash = "sha256:db744f7832e6d3da90568ba6ccbca3ee2b3b4a890c3d6fbbc63142f6e4cdf5bb", size = 66982, upload-time = "2025-02-11T15:09:25.759Z" }
 wheels = [
@@ -2440,8 +2373,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -2533,28 +2466,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b9/8a/bef848b90fdaf350da61c033aa0b1745f2d1b56025b2d015a1f0b18c9710/sportsdataverse-0.0.75.tar.gz", hash = "sha256:0215606345d91967dabe6eed17a28d894a32e2115f9e99ca82128fcd785f1a1c", size = 18589831, upload-time = "2026-08-02T23:51:05.146Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/cd/a2d0d5067f65765f92ce877b7553208eb515eb9874b4b6f953a152eea1b2/sportsdataverse-0.0.75-py3-none-any.whl", hash = "sha256:3b5a3cb952e6a28c978e8180f495eed8cc60086b0e52ab7042da84e62b277228", size = 19389481, upload-time = "2026-08-02T23:51:02.539Z" },
-]
-
-[[package]]
-name = "sqlalchemy"
-version = "2.1.0rc2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/21/f4/e1f158a455a140fda0cb84944713d7b5c65f472096f6398d64144a236972/sqlalchemy-2.1.0rc2.tar.gz", hash = "sha256:3a28c8d9ee917d80a84a61dcb4d6ba27d2634bf1b43dc5351524cca999cbb8c4", size = 10466404, upload-time = "2026-09-08T18:48:53.901Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/45/76f5ffacfc83a3f159ed182e0eec96026a618c6c4f1b3fe2e3c6b5f553c9/sqlalchemy-2.1.0rc2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:09ecb791188949b9342903ab344a3c6200339723db4588a18adec2d20c1bafe0", size = 2448440, upload-time = "2026-09-08T19:04:13.583Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/3a/10557ce9859bc4bf54dad9e9db00268eb2d9a431fc11512c930c5dc8c222/sqlalchemy-2.1.0rc2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c2793b2309b2012f69ed7008e27b5d06e2a516ab8eed8615a99a191056237054", size = 4573499, upload-time = "2026-09-08T19:09:09.121Z" },
-    { url = "https://files.pythonhosted.org/packages/01/85/290280a0973bf1a292549d828b81126f0a0c74c85503000c136eec1b0323/sqlalchemy-2.1.0rc2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7264d8fb41c916e83887a813ae0e56f806dabdb75525ed96773b75afe38fb8e4", size = 4624613, upload-time = "2026-09-08T19:24:12.562Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/ac/f9d13839803942ad092570ddffa22351bb00d6ef32bfbed59fe0ef35c5c2/sqlalchemy-2.1.0rc2-cp313-cp313-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:3e71bdb4dd21f325b0ce37aa691a6252b38fe3407cf3ed550a7d9cb770664830", size = 4291731, upload-time = "2026-09-08T19:41:39.639Z" },
-    { url = "https://files.pythonhosted.org/packages/da/10/6fa1790c9849caf217bd1058610f76a19063fb8e5d22e1f072ddf65fdec3/sqlalchemy-2.1.0rc2-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:a988f381add8e2d38a8d17a22b585c996fb05a6e8f3a30f99039b8d44217ef68", size = 4498450, upload-time = "2026-09-08T19:09:11.799Z" },
-    { url = "https://files.pythonhosted.org/packages/76/47/ab2a48e95f002efe9fb40e5c27db402c0ecfaa7ff4b473d009b46a3896d8/sqlalchemy-2.1.0rc2-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:7a230b8e49b9919a24aea99b744aa84ad4633704d8ce22f448b75e94d5fff7b0", size = 4293104, upload-time = "2026-09-08T19:41:42.156Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/f6/704d14a1d37bed2a21cab71c17c6a2caea6ffe1778ab5838db25da2ee9b0/sqlalchemy-2.1.0rc2-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:81fd156cc06a691a5650b60dfeac9135914ba40105f38898609395fefc751bc0", size = 4585850, upload-time = "2026-09-08T19:24:14.772Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/33/049d96464dc80d72d4cba1401b42661ffffaeb7a38cdf8acf33fe900de34/sqlalchemy-2.1.0rc2-cp313-cp313-win32.whl", hash = "sha256:c70ff5938cf1cdaa90387f6ee76ffdea4b0b72e3ffb70dac5c52ab8d3154f85d", size = 2362349, upload-time = "2026-09-08T19:09:58.468Z" },
-    { url = "https://files.pythonhosted.org/packages/12/20/be48ed9b3ba1d33d1cbf30a08369971133e1578369b0fc69716933a27f33/sqlalchemy-2.1.0rc2-cp313-cp313-win_amd64.whl", hash = "sha256:d3d20e08f29400537ce8675bcce30b43abdde446b371c80d60c2297d91a52b8a", size = 2412380, upload-time = "2026-09-08T19:09:59.968Z" },
-    { url = "https://files.pythonhosted.org/packages/79/f9/d99b089cf3f0aa56961407e5cf3a31f9333ee3b3a5a79e0f459d1236592b/sqlalchemy-2.1.0rc2-cp313-cp313-win_arm64.whl", hash = "sha256:540095d2c2ece33c99d492f593e6d378eb4bdf09bcd472d9e061995833a35109", size = 2356217, upload-time = "2026-09-08T19:09:27.158Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/46/d84e701fad970bf53df829e7d304f5378abbcb30ba6be4ae9b047c5934a2/sqlalchemy-2.1.0rc2-py3-none-any.whl", hash = "sha256:7d8de8ce7c502cbbef315b7d919fec1320b14dd0d87baa081613646a473c5f51", size = 2043460, upload-time = "2026-09-08T19:12:37.939Z" },
 ]
 
 [[package]]
