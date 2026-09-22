@@ -53,8 +53,8 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=cloud-analysis-build --chown=analyst:analyst /app/.venv/ /app/.venv/
-RUN python -c "import boto3, google.auth, vl_convert; import sports_analyst.service, sports_analyst.worker, sports_analyst.reports, sports_analyst.analysis_api"
 USER analyst
+RUN python -c "import boto3, google.auth, vl_convert; import sports_analyst.service, sports_analyst.worker, sports_analyst.reports, sports_analyst.analysis_api; from sports_analyst.nba_data import SportsDataverseNBAConnector; SportsDataverseNBAConnector()"
 
 
 FROM node:24-bookworm-slim AS frontend-build

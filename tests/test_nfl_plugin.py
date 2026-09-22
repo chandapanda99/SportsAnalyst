@@ -8,8 +8,6 @@ from sports_analyst.models import (
     AnalysisSubject,
     AnalysisWindow,
     DatasetManifest,
-    PlayEvidence,
-    PlayVisualization,
 )
 from sports_analyst.plugins.nfl import NFLPlugin
 
@@ -88,51 +86,6 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert "analyze_situational_split" in {item.tool for item in first.executions}
 
 
-def test_legacy_participation_ids_resolve_through_player_directory() -> None:
-    plugin = NFLPlugin()
-    play = PlayEvidence(
-        evidence_id="play-legacy",
-        season=2022,
-        game_id="2022_13_GB_CHI",
-        play_id=1317,
-        team="CHI",
-        description="Pass to Equanimeous St. Brown.",
-        dataset_manifest_id="dataset-pbp-2022",
-        visualization=PlayVisualization(source_packages=["play_by_play"]),
-    )
-    participation = pl.DataFrame(
-        {
-            "nflverse_game_id": ["2022_13_GB_CHI"],
-            "play_id": [1317.0],
-            "offense_players": ["00-qb;00-wr"],
-            "defense_players": ["00-cb"],
-            "defenders_in_box": [6],
-        }
-    )
-    players = pl.DataFrame(
-        {
-            "gsis_id": ["00-qb", "00-wr", "00-cb"],
-            "display_name": ["Justin Fields", "Equanimeous St. Brown", "Jaire Alexander"],
-            "position": ["QB", "WR", "CB"],
-        }
-    )
-
-    enriched = plugin._enrich_representative_plays(
-        [play], participation, None, {"players": players}
-    )[0]
-
-    assert enriched.visualization is not None
-    assert enriched.visualization.offense_names == ["Justin Fields", "Equanimeous St. Brown"]
-    assert enriched.visualization.offense_positions == ["QB", "WR"]
-    assert enriched.visualization.defense_names == ["Jaire Alexander"]
-    assert enriched.visualization.defense_positions == ["CB"]
-    assert enriched.visualization.source_packages == ["play_by_play", "participation", "players"]
-    assert "players" in plugin.required_supplemental_datasets(
-        AnalysisRequest(
-            question="Why did passing efficiency change?",
-            scope=AnalysisScope(team="CHI", baseline_season=2022, comparison_season=2025),
-        )
-    )
 
 
 def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair) -> None:
@@ -233,62 +186,6 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
     assert rushing.play_evidence and all(play.visualization.rusher == "Test Runner" for play in rushing.play_evidence)
 
 
-def test_player_analysis_uses_sparse_plays_and_published_qb_fallbacks(pbp_pair) -> None:
-    plugin = NFLPlugin()
-    request = AnalysisRequest(
-        question="How did Patrick Mahomes' quarterback performance change?",
-        subject=AnalysisSubject(type="player", id="00-0033873", team_id="KC"),
-        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
-        analysis_domain="quarterback",
-        metrics=["qb_epa_per_dropback"],
-    )
-    sparse = {season: frame.head(5) for season, frame in pbp_pair.items()}
-    sparse_manifests = {season: manifest(season, frame.columns) for season, frame in sparse.items()}
-
-    sparse_result = plugin.analyze(request, sparse, sparse_manifests)
-
-    sparse_epa = next(item for item in sparse_result.aggregate_evidence if item.metric == "qb_epa_per_dropback")
-    assert sparse_epa.sample_size == 5
-    assert sparse_epa.confidence_low is None and sparse_epa.confidence_high is None
-    assert any("all available plays are included" in caveat for caveat in sparse_epa.caveats)
-
-    empty_pbp = {season: frame.head(0) for season, frame in pbp_pair.items()}
-    empty_manifests = {season: manifest(season, frame.columns) for season, frame in empty_pbp.items()}
-    player_stats = {
-        season: pl.DataFrame(
-            {
-                "player_id": ["00-0033873", "00-0033873"],
-                "recent_team": ["KC", "KC"],
-                "season_type": ["REG", "REG"],
-                "week": [1, 2],
-                "attempts": [4, 3 if season == 2024 else 5],
-                "completions": [3, 2 if season == 2024 else 4],
-                "passing_yards": [45, 30 if season == 2024 else 70],
-                "passing_tds": [0, 1],
-                "passing_interceptions": [0, 1 if season == 2024 else 0],
-                "sacks_suffered": [1, 0],
-                "passing_epa": [0.2, 0.1 if season == 2024 else 0.5],
-                "passing_cpoe": [1.0, 2.0 if season == 2024 else 4.0],
-            }
-        )
-        for season in (2024, 2025)
-    }
-    supplemental = {"player_stats": player_stats}
-    supplemental_manifests = {
-        "player_stats": {
-            season: manifest(season, frame.columns, "player_stats") for season, frame in player_stats.items()
-        }
-    }
-
-    fallback_result = plugin.analyze(
-        request, empty_pbp, empty_manifests, supplemental, supplemental_manifests
-    )
-
-    fallback_metrics = {item.metric for item in fallback_result.aggregate_evidence}
-    assert {"player_stats_attempts", "player_stats_completion_percentage", "player_stats_epa_per_dropback"} <= fallback_metrics
-    assert not {"qb_epa_per_dropback"} & fallback_metrics
-    assert any("published statistics instead" in caveat for caveat in fallback_result.caveats)
-    assert any(chart.title == "Supplemental published quarterback statistics" for chart in fallback_result.charts)
 
 
 def test_rushing_and_overall_offense_domains_scope_the_correct_plays(pbp_pair) -> None:

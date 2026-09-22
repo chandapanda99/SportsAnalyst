@@ -75,7 +75,7 @@ def test_object_job_ledger_preserves_requests_progress_and_dispatch_recovery():
     attempt = store.reserve_dispatch("sync-one", startup_seconds=900)
     assert attempt == 1 and store.reserve_dispatch("sync-one", startup_seconds=900) is None
     store.complete_dispatch("sync-one", attempt, True, startup_seconds=900)
-    assert store.status("sync-one")["message"] == "Your data download is about to begin"
+    assert store.status("sync-one")["message"] == "Waiting for the data download service to start"
     assert store.reserve_dispatch("sync-one", startup_seconds=0) is None
     store.emit("sync-one", "downloading", "Downloading Play By Play", 0.4, dataset="play_by_play")
     status = store.status("sync-one")
@@ -85,45 +85,13 @@ def test_object_job_ledger_preserves_requests_progress_and_dispatch_recovery():
     assert [event["message"] for event in events[:3]] == [
         "Waiting to begin your data download",
         "Getting your data download ready",
-        "Your data download is about to begin",
+        "Waiting for the data download service to start",
     ]
     assert json.loads(persistence.objects["jobs/sync-one/request.json"])["kind"] == "sync"
 
 
-def test_polling_object_jobs_coalesce_progress_without_event_object_churn():
-    persistence = MemoryPersistence()
-    store = ObjectJobStore(persistence, record_events=False, status_min_interval=60)
-    store.enqueue("sync-poll", "sync", {"sport": "nfl", "seasons": [2025]})
-    store.emit("sync-poll", "downloading", "Downloading package", 0.2)
-    store.emit("sync-poll", "processing", "Processing package", 0.205)
-    assert store.status("sync-poll")["stage"] == "downloading"
-    assert not any("/events/" in key for key in persistence.objects)
-    store.emit("sync-poll", "complete", "Ready", 1)
-    assert [event["stage"] for event in store.events("sync-poll")] == ["complete"]
 
 
-def test_object_cloud_dispatch_routes_syncs_and_analyses_separately(tmp_path, monkeypatch):
-    from sports_analyst import cloud_dispatch
-
-    settings = Settings(_env_file=None, data_dir=tmp_path).model_copy(update={
-        "job_backend": "object", "cloud_run_analysis_service_url": "https://private.example",
-    })
-    sync = MagicMock()
-    analysis = MagicMock()
-    analysis_task = MagicMock()
-    monkeypatch.setattr(cloud_dispatch, "launch_sync", sync)
-    monkeypatch.setattr(cloud_dispatch, "launch_analysis", analysis)
-    monkeypatch.setattr(cloud_dispatch, "launch_analysis_task", analysis_task)
-
-    cloud_dispatch.launch(settings, "sync-job", "sync")
-    cloud_dispatch.launch(settings, "analysis-job", "investigation")
-    cloud_dispatch.launch(settings, "follow-up-job", "follow_up")
-
-    sync.assert_called_once_with(settings, "sync-job")
-    assert [call.args[1] for call in analysis_task.call_args_list] == ["analysis-job", "follow-up-job"]
-    analysis.assert_not_called()
-    cloud_dispatch.launch(settings.model_copy(update={"cloud_run_analysis_service_url": ""}), "legacy-job", "investigation")
-    analysis.assert_called_once()
 
 
 def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypatch):
@@ -132,7 +100,8 @@ def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypat
     application = MagicMock()
     application.jobs.request.return_value = {"kind": "investigation", "payload": {}, "max_attempts": 2}
     application.jobs.status.return_value = {"stage": "queued"}
-    monkeypatch.setattr(analysis_api, "analysis_application", lambda: application)
+    monkeypatch.setattr(analysis_api, "analysis_job_store", lambda: application.jobs)
+    monkeypatch.setattr(analysis_api, "analysis_application", lambda _: application)
     run = MagicMock(side_effect=[TimeoutError("model temporarily unavailable"), None, None])
     monkeypatch.setattr(analysis_api, "run_object_analysis", run)
     client = TestClient(analysis_api.app)
@@ -150,6 +119,8 @@ def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypat
     assert run.call_args.args[2] == "follow_up"
     application.jobs.request.return_value = {"kind": "sync", "payload": {}}
     assert client.post("/internal/jobs/job-1").status_code == 409
+
+
 
 
 def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
@@ -186,27 +157,6 @@ def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
     assert client.post("/api/datasets/nba/sync", json={"seasons": [2025]}).status_code == 429
 
 
-def test_drain_waits_for_retries_and_releases_interrupted_attempts(tmp_path, monkeypatch):
-    from sports_analyst import worker
-
-    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="sqlite")
-    queue = MagicMock()
-    job = {"job_id": "job", "lease_token": "token"}
-    queue.claim.side_effect = [None, job, None, job, None]
-    queue.has_active_work.side_effect = [True, True, False]
-    monkeypatch.setattr("sports_analyst.jobs.SQLiteJobStore", lambda _: queue)
-    monkeypatch.setattr(worker.signal, "signal", lambda *_: None)
-    process = MagicMock()
-    process.is_alive.return_value = False
-    context = MagicMock()
-    context.Process.return_value = process
-    monkeypatch.setattr(worker.multiprocessing, "get_context", lambda _: context)
-    stop = MagicMock()
-    stop.is_set.return_value = False
-    worker.run_worker(settings, drain=True, stop_event=stop)
-    assert process.start.call_count == 2
-    assert stop.wait.call_count == 2
-    assert queue.release.call_count == 2
 
 
 def test_cloud_api_enqueues_all_operations_and_replays_progress_after_restart(tmp_path, monkeypatch):

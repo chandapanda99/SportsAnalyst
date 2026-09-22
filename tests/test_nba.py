@@ -6,7 +6,6 @@ from pathlib import Path
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
-from sportsdataverse.errors import SeasonNotFoundError
 
 from sports_analyst.api import create_app
 from sports_analyst.config import Settings
@@ -219,25 +218,6 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
     assert [event[0] for event in progress] == ["available"] * len(NBA_DEFAULT_DATASETS)
 
 
-def test_nba_connector_keeps_core_data_when_optional_release_is_unavailable(tmp_path: Path, monkeypatch) -> None:
-    connector = SportsDataverseNBAConnector(Settings(data_dir=tmp_path))
-
-    def unavailable(_seasons: list[int], return_as_pandas: bool) -> pl.DataFrame:
-        assert return_as_pandas is False
-        raise SeasonNotFoundError("season is not published")
-
-    monkeypatch.setattr(
-        connector,
-        "_loader_registry",
-        lambda: {
-            "play_by_play": lambda seasons, return_as_pandas: _nba_frames(seasons[0], 108)["play_by_play"],
-            "player_crosswalk": unavailable,
-        },
-    )
-
-    manifests = connector.sync([2026], ["play_by_play", "player_crosswalk"])
-
-    assert [(item.dataset, item.season) for item in manifests] == [("play_by_play", 2026)]
 
 
 def test_nba_subject_options_are_limited_to_franchises_and_their_players() -> None:

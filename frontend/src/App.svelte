@@ -1541,7 +1541,7 @@
           if (!data) continue;
           const event = JSON.parse(data);
           stage = event.message;
-          progress = Number(event.progress || 0);
+          progress = Math.max(progress, Number(event.progress || 0));
           if (event.investigation_id) investigationId = String(event.investigation_id);
           if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
           if (event.stage === 'timeout') throw new Error('The live progress stream timed out.');
@@ -1575,7 +1575,7 @@
           if (!data) continue;
           const event = JSON.parse(data);
           stage = event.message;
-          progress = Number(event.progress || 0);
+          progress = Math.max(progress, Number(event.progress || 0));
           if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
           if (event.stage === 'timeout') throw new Error('The data sync timed out before it completed. Try fewer seasons or sources.');
           if (event.stage === 'complete') return;
@@ -1589,7 +1589,7 @@
         try {
           const status = await api.datasetJobStatus(stream.jobId);
           stage = status.message;
-          progress = Number(status.progress || 0);
+          progress = Math.max(progress, Number(status.progress || 0));
           if (status.stage === 'failed') throw new ReportedInvestigationFailure(status.message);
           if (status.stage === 'complete') return;
         } catch (error) {
@@ -2500,7 +2500,7 @@
             </div>
             <div class="progress" role="progressbar" aria-label={syncing ? 'Download progress' : 'Investigation progress'} aria-valuemin="0" aria-valuemax="100"
                  aria-valuenow={Math.round(progress * 100)}><i style={`width:${Math.max(4, progress * 100)}%`}></i></div>
-            <p>{syncing ? 'Each source is downloaded and checked before it is added to your library.' : 'Comparing your periods and checking the evidence behind each finding.'}</p>
+            <p>{syncing ? 'Each source is downloaded and checked before it is added to your library.' : progress < 0.1 ? 'Preparing the analysis service and checking your data. The comparison has not started yet.' : 'Comparing your periods and checking the evidence behind each finding.'}</p>
           </div>
           <div class="play-visual" class:nba-loading={activeSport === 'nba'} aria-hidden="true">
             <div class="play-caption">

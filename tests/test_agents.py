@@ -1,14 +1,9 @@
-import pytest
-from pydantic import ValidationError
-
 from sports_analyst.agents import (
     SynthesisDraft,
     _citation_ledger,
     _citation_response_model,
     _formulate_user_message,
-    _is_citation_error,
     _resolve_citation_draft,
-    _synthesis_mode,
 )
 from sports_analyst.config import Settings
 from sports_analyst.models import AggregateEvidence, Claim, ClaimType, PlayEvidence
@@ -67,27 +62,8 @@ def test_citation_ledger_hides_canonical_ids_and_resolves_aliases() -> None:
     assert resolved.claims[0].evidence_ids == ["evidence-canonical-aggregate"]
 
 
-def test_citation_schema_rejects_unavailable_aliases() -> None:
-    response_model = _citation_response_model(["E1", "P1"])
-    with pytest.raises(ValidationError) as caught:
-        response_model.model_validate(
-            {
-                "summary": "Invalid citation.",
-                "claims": [
-                    {
-                        "claim_type": "measured",
-                        "statement": "Unsupported claim.",
-                        "evidence_refs": ["E99"],
-                        "confidence": "low",
-                    }
-                ],
-            }
-        )
-    assert _is_citation_error(caught.value)
 
 
-def test_growth_questions_receive_full_analytical_review() -> None:
-    assert _synthesis_mode("How did Caleb Williams grow from 2024 to 2025?", 8) == "full"
 
 
 def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:

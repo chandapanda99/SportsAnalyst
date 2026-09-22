@@ -212,7 +212,7 @@ class ObjectJobStore:
         kind = (self.request(key) or {}).get("kind", "investigation")
         subject = "data download" if kind == "sync" else "analysis"
         message = (
-            f"Your {subject} is about to begin"
+            f"Waiting for the {subject} service to start"
             if success
             else f"Your {subject} is taking a little longer to start · trying again shortly"
         )

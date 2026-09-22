@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException, Request
 from sports_analyst.config import get_settings
 from sports_analyst.job_common import retryable_job_error
 from sports_analyst.log_config import configure_logging
+from sports_analyst.object_jobs import ObjectJobStore
+from sports_analyst.persistence import PersistenceBackend, create_persistence_backend
 from sports_analyst.service import AnalystApplication
 from sports_analyst.worker import run_object_analysis
 
@@ -15,9 +17,18 @@ logger = logging.getLogger("sports_analyst.analysis_api")
 settings = get_settings()
 configure_logging(settings.log_level)
 app = FastAPI(title="Open Sports Analyst Analysis Worker", docs_url=None, redoc_url=None, openapi_url=None)
-def analysis_application() -> AnalystApplication:
+
+
+def analysis_job_store() -> ObjectJobStore:
+    """Access durable progress independently of local catalog initialization."""
+    polling = settings.job_progress_transport == "poll"
+    return ObjectJobStore(create_persistence_backend(settings), record_events=not polling,
+                          status_min_interval=0.5 if polling else 0)
+
+
+def analysis_application(persistence: PersistenceBackend) -> AnalystApplication:
     """Load the latest R2 catalog for each task, including post-start syncs."""
-    return AnalystApplication(settings)
+    return AnalystApplication(settings, persistence=persistence)
 
 
 @app.get("/health")
@@ -28,10 +39,7 @@ def health() -> dict[str, str]:
 @app.post("/internal/jobs/{job_id}")
 def execute_analysis(job_id: str, request: Request) -> dict[str, str]:
     """Acknowledge terminal work; ask Cloud Tasks to retry transient failures."""
-    application = analysis_application()
-    jobs = application.jobs
-    if jobs is None:
-        raise HTTPException(503, "Durable job storage is unavailable")
+    jobs = analysis_job_store()
     job = jobs.request(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
@@ -41,11 +49,14 @@ def execute_analysis(job_id: str, request: Request) -> dict[str, str]:
     status = jobs.status(job_id)
     if status and status.get("stage") == "complete":
         return {"status": "complete"}
-    application.jobs = jobs
-    application.events = jobs
-    jobs.emit(job_id, "starting", "Starting your analysis", 0.03)
-    logger.info("analysis_task_started job_id=%s kind=%s", job_id, kind)
+    jobs.emit(job_id, "preparing", "Preparing analysis data", 0.03)
+    logger.info("analysis_task_accepted job_id=%s kind=%s", job_id, kind)
     try:
+        application = analysis_application(jobs.persistence)
+        application.jobs = jobs
+        application.events = jobs
+        jobs.emit(job_id, "starting", "Starting your analysis", 0.05)
+        logger.info("analysis_task_started job_id=%s kind=%s", job_id, kind)
         run_object_analysis(application, job_id, kind, job["payload"])
     except Exception as error:
         logger.error("analysis_task_failed job_id=%s error_type=%s", job_id, type(error).__name__)
