@@ -15,7 +15,9 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.gzip import GZipMiddleware
 
+from sports_analyst import __version__
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -64,11 +66,12 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 def create_app(application: AnalystApplication | None = None, frontend_dir: Path | None = None) -> FastAPI:
-    service = application or AnalystApplication()
-    api = FastAPI(title="Open Sports Analyst", version="1.0.0")
+    service = application or AnalystApplication(analysis_runtime=os.getenv("SPORTS_ANALYST_RUNTIME_ROLE") != "api")
+    api = FastAPI(title="Open Sports Analyst", version=__version__)
+    api.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
     catalog_lock = RLock()
-    catalog_version = None
-    catalog_refreshed_at = float("-inf")
+    catalog_version = service.store.catalog_version()
+    catalog_refreshed_at = monotonic()
 
     def enqueue(key: str, kind: str, payload: dict) -> None:
         from sports_analyst.cloud_dispatch import ensure_dispatch
@@ -94,7 +97,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                 raise HTTPException(404, "Job not found")
             if status.get("stage") == "complete" and service.settings.job_backend == "object":
                 # Cloud workers publish to R2 outside this API replica.
-                service.store._restore_durable_index()
+                refresh_catalog()
             return status
         events = service.events.events(key)
         return events[-1] if events else {"stage": "pending", "message": "Waiting for progress", "progress": 0}
@@ -104,9 +107,10 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         if service.settings.job_backend == "object":
             with catalog_lock:
                 version = service.jobs.catalog_version()
-                if version != catalog_version or monotonic() - catalog_refreshed_at > 60:
+                legacy_refresh_due = version is None and monotonic() - catalog_refreshed_at > 60
+                if version != catalog_version or legacy_refresh_due:
                     service.store._restore_durable_index()
-                    catalog_version, catalog_refreshed_at = version, monotonic()
+                    catalog_version, catalog_refreshed_at = service.store.catalog_version(), monotonic()
 
     @api.get("/api/health")
     def health() -> dict[str, str]:

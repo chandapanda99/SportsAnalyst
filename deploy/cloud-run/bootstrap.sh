@@ -130,9 +130,14 @@ for identity in deploy build; do
     --role=roles/storage.objectAdmin
 done
 
-if ! gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --format='value(displayName)' | grep -Fxq "${APP} monthly"; then
+budget_name=$(gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
+  --filter="displayName='${APP} monthly'" --format='value(name)' --limit=1)
+if [ -n "$budget_name" ]; then
+  gcloud billing budgets update "$budget_name" --budget-amount=1USD \
+    --filter-projects="projects/${number}"
+else
   gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" --display-name="${APP} monthly" \
-    --budget-amount=5USD --filter-projects="projects/${number}" \
+    --budget-amount=1USD --filter-projects="projects/${number}" \
     --threshold-rule=percent=0.5 --threshold-rule=percent=1
 fi
 

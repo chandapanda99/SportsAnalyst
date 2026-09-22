@@ -5,9 +5,11 @@ import importlib.util
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from typing import NamedTuple
 
 import polars as pl
@@ -145,12 +147,19 @@ class SportsDataverseNBAConnector:
                 "none of the selected NBA datasets are available for the selected seasons; choose a supported season or include a core dataset"
             )
         skipped = skip or set()
-        manifests: list[DatasetManifest] = []
+        manifests_by_index: dict[int, DatasetManifest] = {}
+        pending: list[tuple[int, int, str]] = []
+        completed = 0
         for index, (season, dataset) in enumerate(work):
             if (dataset, season) in skipped:
+                completed += 1
                 if progress_callback:
-                    progress_callback("available", dataset, season, index + 1, len(work))
+                    progress_callback("available", dataset, season, completed, len(work))
                 continue
+            pending.append((index, season, dataset))
+
+        def acquire(index: int, season: int, dataset: str) -> tuple[int, DatasetManifest | None]:
+            item_started_at = perf_counter()
             if progress_callback:
                 progress_callback("downloading", dataset, season, index, len(work))
             try:
@@ -165,25 +174,47 @@ class SportsDataverseNBAConnector:
                     season,
                     error,
                 )
-                if progress_callback:
-                    progress_callback("skipped", dataset, season, index + 1, len(work))
-                continue
+                return index, None
             if progress_callback:
                 progress_callback("processing", dataset, season, index, len(work))
             frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
             if frame.is_empty():
-                if progress_callback:
-                    progress_callback("skipped", dataset, season, index + 1, len(work))
-                continue
+                return index, None
             frame = self.normalize(frame, season, dataset)
             path = self.data_dir / f"{dataset}_{season}.parquet"
             frame.write_parquet(path)
             manifest = self.manifest_for(path, season, frame, dataset)
-            manifests.append(manifest)
-            if progress_callback:
-                progress_callback("downloaded", dataset, season, index + 1, len(work))
-            if manifest_callback:
-                manifest_callback(manifest)
+            logger.info(
+                "dataset_item_acquired sport=nba dataset=%s season=%s bytes=%d duration_ms=%d",
+                dataset,
+                season,
+                path.stat().st_size,
+                round((perf_counter() - item_started_at) * 1000),
+            )
+            return index, manifest
+
+        workers = min(self.settings.dataset_sync_concurrency, len(pending))
+        if workers:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="nba-sync") as executor:
+                futures = {
+                    executor.submit(acquire, index, season, dataset): (season, dataset)
+                    for index, season, dataset in pending
+                }
+                for future in as_completed(futures):
+                    season, dataset = futures[future]
+                    index, manifest = future.result()
+                    completed += 1
+                    if manifest is None:
+                        if progress_callback:
+                            progress_callback("skipped", dataset, season, completed, len(work))
+                        continue
+                    manifests_by_index[index] = manifest
+                    if progress_callback:
+                        progress_callback("downloaded", dataset, season, completed, len(work))
+                    if manifest_callback:
+                        manifest_callback(manifest)
+
+        manifests = [manifests_by_index[index] for index in sorted(manifests_by_index)]
         if not manifests and not any((dataset, season) in skipped for season, dataset in work):
             raise ValueError(
                 "none of the selected NBA datasets are available for the selected seasons; choose a supported season or include a core dataset"

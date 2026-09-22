@@ -13,9 +13,15 @@ class PersistenceBackend(Protocol):
 
     def read_bytes(self, key: str) -> bytes | None: ...
 
+    def read_versioned_bytes(self, key: str) -> tuple[bytes | None, str | None]: ...
+
     def download_file(self, key: str, destination: Path) -> bool: ...
 
     def write_bytes(self, key: str, payload: bytes, content_type: str = "application/octet-stream") -> None: ...
+
+    def write_bytes_if_version(
+        self, key: str, payload: bytes, version: str | None, content_type: str = "application/octet-stream"
+    ) -> bool: ...
 
     def upload_file(self, key: str, source: Path) -> None: ...
 
@@ -43,6 +49,11 @@ class LocalPersistenceBackend:
         return None
 
     @staticmethod
+    def read_versioned_bytes(key: str) -> tuple[bytes | None, str | None]:
+        del key
+        return None, None
+
+    @staticmethod
     def download_file(key: str, destination: Path) -> bool:
         del key, destination
         return False
@@ -50,6 +61,13 @@ class LocalPersistenceBackend:
     @staticmethod
     def write_bytes(key: str, payload: bytes, content_type: str = "application/octet-stream") -> None:
         del key, payload, content_type
+
+    @staticmethod
+    def write_bytes_if_version(
+        key: str, payload: bytes, version: str | None, content_type: str = "application/octet-stream"
+    ) -> bool:
+        del key, payload, version, content_type
+        return True
 
     @staticmethod
     def upload_file(key: str, source: Path) -> None:
@@ -76,6 +94,13 @@ class S3PersistenceBackend:
         if settings.object_storage_region:
             options["region_name"] = settings.object_storage_region
         self.client = boto3.client("s3", **options)
+        transfer_module = __import__("boto3.s3.transfer", fromlist=["TransferConfig"])
+        self.transfer_config = transfer_module.TransferConfig(
+            multipart_threshold=8 * 1024 * 1024,
+            multipart_chunksize=8 * 1024 * 1024,
+            max_concurrency=settings.object_storage_transfer_concurrency,
+            use_threads=True,
+        )
         self.bucket = settings.object_storage_bucket
         self.prefix = settings.object_storage_prefix.strip("/")
 
@@ -114,11 +139,21 @@ class S3PersistenceBackend:
             raise
         return response["Body"].read()
 
+    def read_versioned_bytes(self, key: str) -> tuple[bytes | None, str | None]:
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=self._remote_key(key))
+        except Exception as error:
+            code = str(getattr(error, "response", {}).get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None, None
+            raise
+        return response["Body"].read(), str(response.get("ETag") or "") or None
+
     def download_file(self, key: str, destination: Path) -> bool:
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_suffix(f"{destination.suffix}.part")
         try:
-            self.client.download_file(self.bucket, self._remote_key(key), str(temporary))
+            self.client.download_file(self.bucket, self._remote_key(key), str(temporary), Config=self.transfer_config)
         except Exception as error:
             temporary.unlink(missing_ok=True)
             code = str(getattr(error, "response", {}).get("Error", {}).get("Code", ""))
@@ -131,8 +166,29 @@ class S3PersistenceBackend:
     def write_bytes(self, key: str, payload: bytes, content_type: str = "application/octet-stream") -> None:
         self.client.put_object(Bucket=self.bucket, Key=self._remote_key(key), Body=payload, ContentType=content_type)
 
+    def write_bytes_if_version(
+        self, key: str, payload: bytes, version: str | None, content_type: str = "application/octet-stream"
+    ) -> bool:
+        condition = {"IfMatch": version} if version else {"IfNoneMatch": "*"}
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=self._remote_key(key),
+                Body=payload,
+                ContentType=content_type,
+                **condition,
+            )
+        except Exception as error:
+            response = getattr(error, "response", {})
+            code = str(response.get("Error", {}).get("Code", ""))
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in {"PreconditionFailed", "412"} or status == 412:
+                return False
+            raise
+        return True
+
     def upload_file(self, key: str, source: Path) -> None:
-        self.client.upload_file(str(source), self.bucket, self._remote_key(key))
+        self.client.upload_file(str(source), self.bucket, self._remote_key(key), Config=self.transfer_config)
 
     def delete_prefix(self, prefix: str) -> None:
         keys = self.list_keys(prefix)

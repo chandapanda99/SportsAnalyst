@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from sports_analyst.api import _event_stream, create_app
 from sports_analyst.config import Settings
-from sports_analyst.jobs import LeaseLost, SQLiteJobStore
+from sports_analyst.jobs import LeaseLost, QueueFull, SQLiteJobStore
 from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.object_jobs import ObjectJobStore
 from sports_analyst.service import AnalystApplication
@@ -23,6 +23,7 @@ class MemoryPersistence:
 
     def __init__(self):
         self.objects: dict[str, bytes] = {}
+        self.versions: dict[str, int] = {}
 
     def list_keys(self, prefix: str) -> list[str]:
         return sorted(key for key in self.objects if key.startswith(prefix))
@@ -30,9 +31,22 @@ class MemoryPersistence:
     def read_bytes(self, key: str) -> bytes | None:
         return self.objects.get(key)
 
+    def read_versioned_bytes(self, key: str) -> tuple[bytes | None, str | None]:
+        return self.objects.get(key), str(self.versions[key]) if key in self.versions else None
+
     def write_bytes(self, key: str, payload: bytes, content_type: str = "application/octet-stream") -> None:
         del content_type
         self.objects[key] = payload
+        self.versions[key] = self.versions.get(key, 0) + 1
+
+    def write_bytes_if_version(
+        self, key: str, payload: bytes, version: str | None, content_type: str = "application/octet-stream"
+    ) -> bool:
+        current = str(self.versions[key]) if key in self.versions else None
+        if current != version:
+            return False
+        self.write_bytes(key, payload, content_type)
+        return True
 
     def download_file(self, key: str, destination: Path) -> bool:
         payload = self.objects.get(key)
@@ -48,23 +62,44 @@ class MemoryPersistence:
     def delete_prefix(self, prefix: str) -> None:
         for key in [key for key in self.objects if key.startswith(prefix)]:
             del self.objects[key]
+            self.versions.pop(key, None)
 
 
 def test_object_job_ledger_preserves_requests_progress_and_dispatch_recovery():
     persistence = MemoryPersistence()
     store = ObjectJobStore(persistence)
     store.enqueue("sync-one", "sync", {"sport": "nba", "seasons": [2025]}, max_active=1)
+    with pytest.raises(QueueFull):
+        store.enqueue("sync-two", "sync", {"sport": "nfl", "seasons": [2025]}, max_active=1)
     assert store.request("sync-one")["payload"]["sport"] == "nba"
     attempt = store.reserve_dispatch("sync-one", startup_seconds=900)
     assert attempt == 1 and store.reserve_dispatch("sync-one", startup_seconds=900) is None
     store.complete_dispatch("sync-one", attempt, True, startup_seconds=900)
+    assert store.status("sync-one")["message"] == "Your data download is about to begin"
     assert store.reserve_dispatch("sync-one", startup_seconds=0) is None
     store.emit("sync-one", "downloading", "Downloading Play By Play", 0.4, dataset="play_by_play")
     status = store.status("sync-one")
     assert status["stage"] == "downloading" and status["dataset"] == "play_by_play"
     events = store.events("sync-one")
     assert [event["stage"] for event in events] == ["queued", "dispatching", "provisioning", "downloading"]
+    assert [event["message"] for event in events[:3]] == [
+        "Waiting to begin your data download",
+        "Getting your data download ready",
+        "Your data download is about to begin",
+    ]
     assert json.loads(persistence.objects["jobs/sync-one/request.json"])["kind"] == "sync"
+
+
+def test_polling_object_jobs_coalesce_progress_without_event_object_churn():
+    persistence = MemoryPersistence()
+    store = ObjectJobStore(persistence, record_events=False, status_min_interval=60)
+    store.enqueue("sync-poll", "sync", {"sport": "nfl", "seasons": [2025]})
+    store.emit("sync-poll", "downloading", "Downloading package", 0.2)
+    store.emit("sync-poll", "processing", "Processing package", 0.205)
+    assert store.status("sync-poll")["stage"] == "downloading"
+    assert not any("/events/" in key for key in persistence.objects)
+    store.emit("sync-poll", "complete", "Ready", 1)
+    assert [event["stage"] for event in store.events("sync-poll")] == ["complete"]
 
 
 def test_object_cloud_dispatch_routes_syncs_and_analyses_separately(tmp_path, monkeypatch):

@@ -163,11 +163,12 @@ def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, s
 def execute_object_job(settings: Settings, key: str) -> None:
     """Execute one R2-backed request; Cloud Run owns process retries."""
     from sports_analyst.models import AnalysisRequest
-    from sports_analyst.object_jobs import ObjectJobStore
     from sports_analyst.service import AnalystApplication
 
     application = AnalystApplication(settings)
-    jobs = ObjectJobStore(application.store.persistence)
+    jobs = application.jobs
+    if jobs is None:
+        raise RuntimeError("Durable object jobs are not configured")
     request = jobs.request(key)
     if request is None:
         raise KeyError(f"job not found: {key}")

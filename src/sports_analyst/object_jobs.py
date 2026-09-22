@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any
 
 from sports_analyst.job_common import QueueFull
@@ -15,10 +16,20 @@ class ObjectJobStore:
 
     durable = True
 
-    def __init__(self, persistence: PersistenceBackend) -> None:
+    def __init__(
+        self,
+        persistence: PersistenceBackend,
+        *,
+        record_events: bool = True,
+        status_min_interval: float = 0.0,
+    ) -> None:
         if not persistence.durable:
             raise ValueError("Object jobs require durable object storage")
         self.persistence = persistence
+        self.record_events = record_events
+        self.status_min_interval = max(0.0, status_min_interval)
+        self._last_status: dict[str, tuple[float, float]] = {}
+        self._status_lock = Lock()
 
     @staticmethod
     def _request_key(key: str) -> str:
@@ -32,6 +43,10 @@ class ObjectJobStore:
     def _event_key(key: str, sequence: int) -> str:
         return normalize_object_key(f"jobs/{key}/events/{sequence:020d}.json")
 
+    @staticmethod
+    def _active_key() -> str:
+        return "jobs/active.json"
+
     def _read_json(self, key: str) -> dict[str, Any] | None:
         payload = self.persistence.read_bytes(key)
         return None if payload is None else json.loads(payload)
@@ -43,19 +58,42 @@ class ObjectJobStore:
             "application/json",
         )
 
+    def _mutate_active(self, key: str, *, add: bool, limit: int = 0) -> None:
+        reader = getattr(self.persistence, "read_versioned_bytes", None)
+        conditional_write = getattr(self.persistence, "write_bytes_if_version", None)
+        active_key = self._active_key()
+        for attempt in range(8):
+            if reader is None:
+                payload, version = self.persistence.read_bytes(active_key), None
+            else:
+                payload, version = reader(active_key)
+            candidates = set(json.loads(payload).get("jobs", [])) if payload else set()
+            # The compact registry stays bounded by the admission limit. Clean
+            # interrupted or completed entries with at most a handful of GETs.
+            active = {
+                candidate
+                for candidate in candidates
+                if (status := self.status(candidate)) is not None and status.get("stage") not in {"complete", "failed"}
+            }
+            if add:
+                if limit and key not in active and len(active) >= limit:
+                    raise QueueFull("The analysis queue is full. Wait for an active job to finish and try again.")
+                active.add(key)
+            else:
+                active.discard(key)
+            document = json.dumps({"jobs": sorted(active)}, separators=(",", ":")).encode()
+            if conditional_write is None:
+                self.persistence.write_bytes(active_key, document, "application/json")
+                return
+            if conditional_write(active_key, document, version, "application/json"):
+                return
+            time.sleep(0.025 * (attempt + 1))
+        raise RuntimeError("active job admission contention did not settle")
+
     def enqueue(self, key: str, kind: str, payload: dict, max_attempts: int = 2, *, max_active: int = 0) -> None:
         if self.request(key) is not None:
             return
-        if max_active:
-            active = 0
-            for status_key in self.persistence.list_keys("jobs/"):
-                if not status_key.endswith("/status.json"):
-                    continue
-                status = self._read_json(status_key)
-                if status and status.get("stage") not in {"complete", "failed"}:
-                    active += 1
-            if active >= max_active:
-                raise QueueFull("The analysis queue is full. Wait for an active job to finish and try again.")
+        self._mutate_active(key, add=True, limit=max_active)
         self._write_json(
             self._request_key(key),
             {
@@ -76,6 +114,9 @@ class ObjectJobStore:
         return self._read_json(self._status_key(key))
 
     def events(self, key: str, after: int = 0) -> list[dict[str, Any]]:
+        if not self.record_events:
+            status = self.status(key)
+            return [status] if status is not None and int(status.get("sequence", 0)) > after else []
         events = []
         for event_key in self.persistence.list_keys(f"jobs/{key}/events/"):
             try:
@@ -90,6 +131,18 @@ class ObjectJobStore:
         return sorted(events, key=lambda event: int(event["sequence"]))[:200]
 
     def emit(self, key: str, stage: str, message: str, progress: float, **extra: object) -> None:
+        now = time.monotonic()
+        force = stage in {"queued", "dispatching", "provisioning", "retrying", "complete", "failed"}
+        with self._status_lock:
+            previous_time, previous_progress = self._last_status.get(key, (float("-inf"), -1.0))
+            if (
+                not self.record_events
+                and not force
+                and now - previous_time < self.status_min_interval
+                and progress < previous_progress + 0.01
+            ):
+                return
+            self._last_status[key] = now, progress
         sequence = time.time_ns()
         event = {
             **extra,
@@ -99,8 +152,11 @@ class ObjectJobStore:
             "message": message,
             "progress": progress,
         }
-        self._write_json(self._event_key(key, sequence), event)
+        if self.record_events:
+            self._write_json(self._event_key(key, sequence), event)
         self._write_json(self._status_key(key), event)
+        if stage in {"complete", "failed"}:
+            self._mutate_active(key, add=False)
 
     def reserve_dispatch(self, key: str, startup_seconds: int = 900) -> int | None:
         status = self.status(key)
@@ -124,10 +180,12 @@ class ObjectJobStore:
             except ValueError:
                 pass
         attempt = int(status.get("dispatch_attempt", 0)) + 1
+        kind = (self.request(key) or {}).get("kind", "investigation")
+        subject = "data download" if kind == "sync" else "analysis"
         self.emit(
             key,
             "dispatching",
-            "Requesting analysis capacity",
+            f"Getting your {subject} ready",
             max(0.01, float(status.get("progress", 0))),
             dispatch_attempt=attempt,
             dispatch_lease_expires_at=(now + timedelta(seconds=startup_seconds)).isoformat(),
@@ -144,10 +202,17 @@ class ObjectJobStore:
         startup_seconds: int = 900,
     ) -> None:
         now = datetime.now(UTC)
+        kind = (self.request(key) or {}).get("kind", "investigation")
+        subject = "data download" if kind == "sync" else "analysis"
+        message = (
+            f"Your {subject} is about to begin"
+            if success
+            else f"Your {subject} is taking a little longer to start · trying again shortly"
+        )
         self.emit(
             key,
             "provisioning" if success else "queued",
-            "Worker requested · waiting for capacity" if success else "Worker launch delayed · retrying shortly",
+            message,
             0.02 if success else 0.01,
             dispatch_attempt=attempt,
             dispatch_lease_expires_at=(now + timedelta(
@@ -155,8 +220,10 @@ class ObjectJobStore:
             )).isoformat(),
         )
 
-    def catalog_version(self) -> None:
-        return None
+    def catalog_version(self) -> str | None:
+        payload = self.persistence.read_bytes("metadata/catalog/version.json")
+        return payload.decode() if payload is not None else None
 
     def delete(self, key: str) -> None:
+        self._mutate_active(key, add=False)
         self.persistence.delete_prefix(f"jobs/{key}/")

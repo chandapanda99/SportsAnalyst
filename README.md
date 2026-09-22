@@ -105,7 +105,7 @@ when the application starts again. The command-line development server keeps the
 Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:
 
 ```powershell
-./packaging/windows/build.ps1 -Version 1.0.0
+./packaging/windows/build.ps1 -Version 0.1.0
 ```
 
 The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
@@ -124,8 +124,8 @@ The `Windows desktop installer` GitHub Actions workflow produces the same instal
 Push a version tag containing `alpha`, `beta`, or `rc` to build and publish a GitHub prerelease automatically:
 
 ```powershell
-git tag v1.0.0-beta.1
-git push origin v1.0.0-beta.1
+git tag v0.1.0-beta.1
+git push origin v0.1.0-beta.1
 ```
 
 The workflow attaches the versioned Windows x64 installer and its SHA-256 checksum to the release. Other `v*` tags publish normal releases. A manual workflow run creates a
@@ -135,7 +135,7 @@ separate public distribution repository instead.
 ## Google Cloud Run deployment (recommended cloud hosting)
 
 Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero and R2 storage. A public Cloud Run service serves the web app, a private service
-handles dataset syncs through Cloud Tasks, and an on-demand Cloud Run Job handles investigations and follow-ups. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
+handles concurrent package acquisition through Cloud Tasks, and an on-demand Cloud Run Job handles investigations and follow-ups. Compact versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
 and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
 
 ## Model providers

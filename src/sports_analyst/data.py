@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import logging
 import shutil
 import urllib.request
 from collections import OrderedDict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 
 import nflreadpy as nfl
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import DatasetManifest, stable_id
+
+logger = logging.getLogger("sports_analyst.data")
 
 SOURCE_TEMPLATES = {
     "play_by_play": "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet",
@@ -114,12 +119,19 @@ class NFLVerseConnector:
         if not work:
             raise ValueError("none of the selected datasets are available for the selected seasons")
         skipped = skip or set()
-        manifests = []
+        manifests_by_index: dict[int, DatasetManifest] = {}
+        pending: list[tuple[int, int, str]] = []
+        completed = 0
         for index, (season, dataset) in enumerate(work):
             if (dataset, season) in skipped:
+                completed += 1
                 if progress_callback:
-                    progress_callback("available", dataset, season, index + 1, len(work))
+                    progress_callback("available", dataset, season, completed, len(work))
                 continue
+            pending.append((index, season, dataset))
+
+        def acquire(index: int, season: int, dataset: str) -> tuple[int, DatasetManifest]:
+            item_started_at = perf_counter()
             if progress_callback:
                 progress_callback("downloading", dataset, season, index, len(work))
             path = self.settings.raw_dir / (f"{dataset}.parquet" if season == 0 else f"{dataset}_{season}.parquet")
@@ -132,11 +144,33 @@ class NFLVerseConnector:
                     progress_callback("processing", dataset, season, index, len(work))
                 frame.write_parquet(path)
             manifest = self.manifest_for(path, season, frame, dataset)
-            manifests.append(manifest)
-            if progress_callback:
-                progress_callback("downloaded", dataset, season, index + 1, len(work))
-            if manifest_callback:
-                manifest_callback(manifest)
+            logger.info(
+                "dataset_item_acquired sport=nfl dataset=%s season=%s bytes=%d duration_ms=%d",
+                dataset,
+                season,
+                path.stat().st_size,
+                round((perf_counter() - item_started_at) * 1000),
+            )
+            return index, manifest
+
+        workers = min(self.settings.dataset_sync_concurrency, len(pending))
+        if workers:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="nfl-sync") as executor:
+                futures = {
+                    executor.submit(acquire, index, season, dataset): (season, dataset)
+                    for index, season, dataset in pending
+                }
+                for future in as_completed(futures):
+                    season, dataset = futures[future]
+                    index, manifest = future.result()
+                    manifests_by_index[index] = manifest
+                    completed += 1
+                    if progress_callback:
+                        progress_callback("downloaded", dataset, season, completed, len(work))
+                    if manifest_callback:
+                        manifest_callback(manifest)
+
+        manifests = [manifests_by_index[index] for index in sorted(manifests_by_index)]
         return manifests
 
     @staticmethod

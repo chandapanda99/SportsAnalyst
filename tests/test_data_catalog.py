@@ -13,12 +13,18 @@ class MemoryPersistence:
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.versions: dict[str, int] = {}
+        self.list_calls: list[str] = []
 
     def list_keys(self, prefix: str) -> list[str]:
+        self.list_calls.append(prefix)
         return sorted(key for key in self.objects if key.startswith(prefix))
 
     def read_bytes(self, key: str) -> bytes | None:
         return self.objects.get(key)
+
+    def read_versioned_bytes(self, key: str) -> tuple[bytes | None, str | None]:
+        return self.objects.get(key), str(self.versions[key]) if key in self.versions else None
 
     def download_file(self, key: str, destination: Path) -> bool:
         payload = self.objects.get(key)
@@ -31,6 +37,16 @@ class MemoryPersistence:
     def write_bytes(self, key: str, payload: bytes, content_type: str = "application/octet-stream") -> None:
         del content_type
         self.objects[key] = payload
+        self.versions[key] = self.versions.get(key, 0) + 1
+
+    def write_bytes_if_version(
+        self, key: str, payload: bytes, version: str | None, content_type: str = "application/octet-stream"
+    ) -> bool:
+        current = str(self.versions[key]) if key in self.versions else None
+        if current != version:
+            return False
+        self.write_bytes(key, payload, content_type)
+        return True
 
     def upload_file(self, key: str, source: Path) -> None:
         self.objects[key] = source.read_bytes()
@@ -38,6 +54,7 @@ class MemoryPersistence:
     def delete_prefix(self, prefix: str) -> None:
         for key in [key for key in self.objects if key.startswith(prefix)]:
             del self.objects[key]
+            self.versions.pop(key, None)
 
 
 def test_resync_supersedes_the_previous_package_manifest(tmp_path: Path) -> None:
@@ -117,6 +134,9 @@ def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_p
         fallback_used=True,
     )
     source_store.save_investigation(bundle)
+    assert "metadata/catalog/datasets.json" in persistence.objects
+    assert "metadata/catalog/investigations.json" in persistence.objects
+    assert "metadata/catalog/version.json" in persistence.objects
 
     # This store represents a warm replica whose local catalog was initialized
     # before another replica committed the dataset and investigation to storage.
@@ -125,7 +145,9 @@ def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_p
     assert stale_store.get_investigation(investigation_id).summary == "Efficiency improved."
 
     restored_settings = Settings(data_dir=tmp_path / "restored", foundry_endpoint="")
+    persistence.list_calls.clear()
     restored_store = LocalStore(restored_settings, persistence)
+    assert not persistence.list_calls  # Compact catalogs avoid per-record R2 listings.
     restored_manifest = restored_store.manifest_for_season(2025)
     assert not Path(restored_manifest.local_path).exists()
     materialized = restored_store.materialize_manifest(restored_manifest)

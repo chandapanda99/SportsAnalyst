@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -8,7 +9,6 @@ from typing import Any
 
 import polars as pl
 
-from sports_analyst.agents import EvidenceBoundAgent
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.log_config import configure_logging
@@ -31,19 +31,34 @@ from sports_analyst.models import (
 from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
 from sports_analyst.persistence import PersistenceBackend
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
-from sports_analyst.providers import provider_ids
 from sports_analyst.sql import execute_read_only_sql
 from sports_analyst.storage import EventRegistry, LocalStore
-from sports_analyst.telemetry import LangSmithTelemetry
 
 logger = logging.getLogger("sports_analyst.service")
 
 
+class _DisabledTelemetry:
+    @staticmethod
+    def span(*_args, **_kwargs):
+        return nullcontext(None)
+
+    @staticmethod
+    def add_outputs(*_args, **_kwargs) -> None:
+        return None
+
+
 class AnalystApplication:
-    def __init__(self, settings: Settings | None = None, persistence: PersistenceBackend | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        persistence: PersistenceBackend | None = None,
+        *,
+        restore_durable_index: bool = True,
+        analysis_runtime: bool = True,
+    ) -> None:
         self.settings = settings or get_settings()
         configure_logging(self.settings.log_level)
-        self.store = LocalStore(self.settings, persistence)
+        self.store = LocalStore(self.settings, persistence, restore_durable_index=restore_durable_index)
         nfl_connector = NFLVerseConnector(self.settings)
         nfl_plugin = NFLPlugin()
         self.connectors: dict[str, Any] = {
@@ -55,7 +70,15 @@ class AnalystApplication:
         # application through these public attributes.
         self.connector = nfl_connector
         self.plugin = nfl_plugin
-        self.agent = EvidenceBoundAgent(self.settings)
+        if analysis_runtime:
+            from sports_analyst.agents import EvidenceBoundAgent
+            from sports_analyst.telemetry import LangSmithTelemetry
+
+            self.agent = EvidenceBoundAgent(self.settings)
+            self.telemetry = LangSmithTelemetry(self.settings)
+        else:
+            self.agent = None
+            self.telemetry = _DisabledTelemetry()
         self.events = EventRegistry()
         self.jobs = None
         if self.settings.job_backend == "sqlite":
@@ -65,14 +88,18 @@ class AnalystApplication:
         elif self.settings.job_backend == "object":
             from sports_analyst.object_jobs import ObjectJobStore
 
-            self.jobs = ObjectJobStore(self.store.persistence)
-        self.telemetry = LangSmithTelemetry(self.settings)
+            polling = self.settings.job_progress_transport == "poll"
+            self.jobs = ObjectJobStore(
+                self.store.persistence,
+                record_events=not polling,
+                status_min_interval=0.5 if polling else 0,
+            )
 
     def capabilities(self) -> RuntimeCapabilities:
         configured = self.settings.model_provider == "ollama" or bool(self.settings.foundry_endpoint)
         return RuntimeCapabilities(
             job_progress_transport=self.settings.job_progress_transport,
-            providers=provider_ids(),
+            providers=["azure_foundry", "ollama"],
             configured_provider=self.settings.model_provider,
             model_configured=configured,
             custom_analysis=False,
@@ -188,78 +215,9 @@ class AnalystApplication:
     def sync(
             self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl"
     ) -> list[DatasetManifest]:
-        connector, _plugin = self._sport(sport)
-        selected_datasets = datasets or (["play_by_play"] if sport == "nfl" else None)
-        key = job_id or stable_id(
-            "sync", {"sport": sport, "seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)}
-        )
-        started_at = perf_counter()
-        logger.info(
-            "dataset_sync_started job_id=%s seasons=%s datasets=%s",
-            key,
-            ",".join(str(season) for season in sorted(seasons)),
-            ",".join(selected_datasets or []),
-        )
-        self.events.emit(key, "starting", f"Preparing selected {sport.upper()} datasets", 0.03)
+        from sports_analyst.sync_service import run_dataset_sync
 
-        existing = {(manifest.dataset, manifest.season) for manifest in self.store.manifests(sport=sport)}
-        registered: set[str] = set()
-        last_sync_progress = 0.08
-
-        def report_sync(phase: str, dataset: str, season: int, completed: int, total: int) -> None:
-            nonlocal last_sync_progress
-            if total <= 0:
-                return
-            label = dataset.replace("_", " ").title()
-            season_label = "reference data" if season == 0 else (
-                f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season)
-            )
-            offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
-            unit_progress = min(total, completed + offsets.get(phase, 0.0))
-            progress = 0.08 + 0.68 * unit_progress / total
-            last_sync_progress = max(last_sync_progress, progress)
-            messages = {
-                "downloading": f"Downloading {label} for {season_label} · {completed + 1} of {total}",
-                "processing": f"Processing {label} for {season_label} · {completed + 1} of {total}",
-                "downloaded": f"Downloaded {label} for {season_label} · {completed} of {total}",
-                "skipped": f"Skipped unavailable {label} for {season_label} · {completed} of {total}",
-                "available": f"Already downloaded {label} for {season_label} · {completed} of {total}",
-            }
-            self.events.emit(key, phase, messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress)
-
-        def register_manifest(manifest: DatasetManifest) -> None:
-            label = manifest.dataset.replace("_", " ").title()
-            self.events.emit(key, "uploading", f"Saving {label} {manifest.season} to the data library", last_sync_progress)
-            self.store.save_manifest(manifest)
-            registered.add(manifest.manifest_id)
-            self.events.emit(
-                key,
-                "registering",
-                f"Registered {manifest.dataset} {manifest.season}",
-                last_sync_progress,
-            )
-
-        manifests = connector.sync(
-            seasons,
-            selected_datasets,
-            progress_callback=report_sync,
-            manifest_callback=register_manifest,
-            skip=existing,
-        )
-        # Connector test doubles and third-party-compatible implementations may
-        # return manifests without invoking the incremental callback.
-        for manifest in manifests:
-            if manifest.manifest_id not in registered:
-                register_manifest(manifest)
-        connector.clear_cache()
-        self.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
-        logger.info(
-            "dataset_sync_completed job_id=%s manifests=%d duration_ms=%d",
-            key,
-            len(manifests),
-            round((perf_counter() - started_at) * 1000),
-        )
-        return manifests
+        return run_dataset_sync(self, seasons, job_id, datasets, sport)
 
     def dataset_sync_timeout_seconds(
             self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"

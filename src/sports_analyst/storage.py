@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from collections.abc import Callable
@@ -15,9 +16,21 @@ from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import DatasetManifest, InvestigationBundle, InvestigationSummary
 from sports_analyst.persistence import PersistenceBackend, create_persistence_backend, normalize_object_key
 
+logger = logging.getLogger("sports_analyst.storage")
+
 
 class LocalStore:
-    def __init__(self, settings: Settings | None = None, persistence: PersistenceBackend | None = None) -> None:
+    DATASET_CATALOG_KEY = "metadata/catalog/datasets.json"
+    INVESTIGATION_CATALOG_KEY = "metadata/catalog/investigations.json"
+    CATALOG_VERSION_KEY = "metadata/catalog/version.json"
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        persistence: PersistenceBackend | None = None,
+        *,
+        restore_durable_index: bool = True,
+    ) -> None:
         self.settings = settings or get_settings()
         self.persistence = persistence or create_persistence_backend(self.settings)
         self._persistence_lock = RLock()
@@ -28,7 +41,7 @@ class LocalStore:
             # prevents stale cache state from outranking durable metadata.
             self.settings.database_path.unlink(missing_ok=True)
         self._initialize()
-        if self.persistence.durable:
+        if self.persistence.durable and restore_durable_index:
             self._restore_durable_index()
 
     def connect(self, read_only: bool = False) -> duckdb.DuckDBPyConnection:
@@ -166,33 +179,141 @@ class LocalStore:
                 register(payload, db)
         return True
 
+    @staticmethod
+    def _catalog_payload(records: list[dict]) -> bytes:
+        return json.dumps({"format": 1, "records": records}, separators=(",", ":"), default=str).encode()
+
+    def _read_catalog(self, key: str) -> tuple[list[dict], str | None, bool]:
+        reader = getattr(self.persistence, "read_versioned_bytes", None)
+        if reader is None:
+            payload, version = self.persistence.read_bytes(key), None
+        else:
+            payload, version = reader(key)
+        if payload is None:
+            return [], version, False
+        document = json.loads(payload)
+        return list(document.get("records", [])), version, True
+
+    def _mutate_catalog(self, key: str, mutate: Callable[[list[dict]], list[dict]]) -> None:
+        conditional_write = getattr(self.persistence, "write_bytes_if_version", None)
+        for attempt in range(8):
+            records, version, _exists = self._read_catalog(key)
+            updated = mutate(records)
+            payload = self._catalog_payload(updated)
+            if conditional_write is None:
+                self.persistence.write_bytes(key, payload, "application/json")
+                break
+            if conditional_write(key, payload, version, "application/json"):
+                break
+            time.sleep(0.025 * (attempt + 1))
+        else:
+            raise RuntimeError(f"catalog update contention did not settle: {key}")
+        self._publish_catalog_version()
+
+    def _publish_catalog_version(self) -> None:
+        payload = json.dumps({"generation": time.time_ns()}, separators=(",", ":")).encode()
+        self.persistence.write_bytes(self.CATALOG_VERSION_KEY, payload, "application/json")
+
+    def catalog_version(self) -> str | None:
+        payload = self.persistence.read_bytes(self.CATALOG_VERSION_KEY) if self.persistence.durable else None
+        return payload.decode() if payload is not None else None
+
+    @staticmethod
+    def _dataset_catalog_record(manifest: DatasetManifest, object_path: str) -> dict:
+        return {"manifest": manifest.model_dump(mode="json"), "object_path": object_path}
+
+    @staticmethod
+    def _dataset_record_key(record: dict) -> tuple[str, str, int]:
+        manifest = record["manifest"]
+        return str(manifest.get("sport", "nfl")), str(manifest["dataset"]), int(manifest["season"])
+
+    def publish_dataset_catalog(self, manifests: list[DatasetManifest]) -> None:
+        if not self.persistence.durable or not manifests:
+            return
+        replacements = {
+            (manifest.sport, manifest.dataset, manifest.season): self._dataset_catalog_record(
+                manifest, self._managed_relative_path(Path(manifest.local_path))
+            )
+            for manifest in manifests
+        }
+
+        def merge(records: list[dict]) -> list[dict]:
+            merged = {self._dataset_record_key(record): record for record in records}
+            merged.update(replacements)
+            return [merged[key] for key in sorted(merged)]
+
+        self._mutate_catalog(self.DATASET_CATALOG_KEY, merge)
+
+    def refresh_durable_datasets(self, sport: str, seasons: list[int], datasets: list[str]) -> None:
+        """Restore only packages relevant to one sync instead of scanning the whole bucket."""
+        if not self.persistence.durable:
+            return
+        keys = {
+            self._dataset_metadata_lookup_key(sport, dataset, season)
+            for dataset in datasets
+            for season in {*seasons, 0}
+        }
+        with self._persistence_lock, self.connect() as db:
+            for key in sorted(keys):
+                payload = self.persistence.read_bytes(key)
+                if payload is not None:
+                    self._register_durable_dataset(payload, db)
+
     def _restore_durable_index(self) -> None:
+        started_at = time.perf_counter()
+        dataset_records, _dataset_version, has_dataset_catalog = self._read_catalog(self.DATASET_CATALOG_KEY)
+        investigation_records, _investigation_version, has_investigation_catalog = self._read_catalog(
+            self.INVESTIGATION_CATALOG_KEY
+        )
         with self._persistence_lock, self.connect() as db:
             db.execute("BEGIN TRANSACTION")
             db.execute("DELETE FROM datasets")
             db.execute("DELETE FROM investigations")
-            for key in self.persistence.list_keys("metadata/datasets/"):
-                payload = self.persistence.read_bytes(key)
-                if payload is None:
-                    continue
-                self._register_durable_dataset(payload, db)
-            for key in self.persistence.list_keys("metadata/investigations/"):
-                payload = self.persistence.read_bytes(key)
-                if payload is None:
-                    continue
-                self._register_durable_investigation(payload, db)
+            if has_dataset_catalog:
+                for record in dataset_records:
+                    self._register_durable_dataset(json.dumps(record).encode(), db)
+            else:
+                for key in self.persistence.list_keys("metadata/datasets/"):
+                    payload = self.persistence.read_bytes(key)
+                    if payload is not None:
+                        self._register_durable_dataset(payload, db)
+                        dataset_records.append(json.loads(payload))
+            if has_investigation_catalog:
+                for record in investigation_records:
+                    self._register_durable_investigation(json.dumps(record).encode(), db)
+            else:
+                for key in self.persistence.list_keys("metadata/investigations/"):
+                    payload = self.persistence.read_bytes(key)
+                    if payload is not None:
+                        self._register_durable_investigation(payload, db)
+                        investigation_records.append(json.loads(payload))
             db.execute("COMMIT")
+        # Upgrade legacy per-record metadata lazily. Conditional creation keeps
+        # simultaneous cold starts from overwriting one another.
+        if not has_dataset_catalog and dataset_records:
+            self._mutate_catalog(self.DATASET_CATALOG_KEY, lambda _records: dataset_records)
+        if not has_investigation_catalog and investigation_records:
+            self._mutate_catalog(self.INVESTIGATION_CATALOG_KEY, lambda _records: investigation_records)
+        logger.info(
+            "durable_catalog_restored datasets=%d investigations=%d compact=%s duration_ms=%d",
+            len(dataset_records),
+            len(investigation_records),
+            has_dataset_catalog and has_investigation_catalog,
+            round((time.perf_counter() - started_at) * 1000),
+        )
 
-    def save_manifest(self, manifest: DatasetManifest) -> None:
+    def save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True) -> None:
         with self.publication_guard():
-            self._save_manifest(manifest)
+            self._save_manifest(manifest, publish_catalog=publish_catalog)
 
-    def _save_manifest(self, manifest: DatasetManifest) -> None:
+    def _save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True) -> None:
         source = Path(manifest.local_path)
         object_path = self._managed_relative_path(source)
+        if self.persistence.durable:
+            # Managed transfers can overlap across package workers; only the
+            # small local catalog transaction needs process-level serialization.
+            self.persistence.upload_file(object_path, source)
         with self._persistence_lock:
-            if self.persistence.durable:
-                self.persistence.upload_file(object_path, source)
             with self.connect() as db:
                 db.execute("BEGIN TRANSACTION")
                 db.execute(
@@ -222,6 +343,8 @@ class LocalStore:
                     json.dumps(metadata, separators=(",", ":")).encode(),
                     "application/json",
                 )
+        if publish_catalog:
+            self.publish_dataset_catalog([manifest])
 
     def manifests(self, dataset: str | None = None, sport: str | None = None) -> list[DatasetManifest]:
         with self.connect(read_only=True) as db:
@@ -321,6 +444,12 @@ class LocalStore:
                     json.dumps(metadata, separators=(",", ":")).encode(),
                     "application/json",
                 )
+                def merge(records: list[dict]) -> list[dict]:
+                    retained = [record for record in records if record.get("investigation_id") != bundle.run.investigation_id]
+                    retained.append(metadata)
+                    return sorted(retained, key=lambda record: str(record.get("created_at", "")), reverse=True)
+
+                self._mutate_catalog(self.INVESTIGATION_CATALOG_KEY, merge)
         return path
 
     def _materialize_file(self, path: Path, object_path: str | None) -> Path:
@@ -441,6 +570,12 @@ class LocalStore:
                     self.persistence.delete_prefix(f"investigations/{identifier}/")
         with self.connect() as db:
             db.executemany("DELETE FROM investigations WHERE investigation_id = ?", [[identifier] for identifier, _ in directories])
+        if self.persistence.durable:
+            removed = {identifier for identifier, _directory in directories}
+            self._mutate_catalog(
+                self.INVESTIGATION_CATALOG_KEY,
+                lambda records: [record for record in records if record.get("investigation_id") not in removed],
+            )
         for _identifier, directory in directories:
             if directory.exists():
                 shutil.rmtree(directory)

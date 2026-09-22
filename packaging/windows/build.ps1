@@ -251,7 +251,7 @@ try
     {
         & "$scriptDirectory\sign.ps1" -Path $installer
     }
-    Write-Host "Windows Installer BUILT!"
+    Write-Host "Windows Installer BUILT!" -ForegroundColor Green -BackgroundColor White
 }
 finally
 {

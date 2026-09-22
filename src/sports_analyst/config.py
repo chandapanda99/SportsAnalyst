@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     sql_row_limit: int = Field(default=10_000, ge=1, le=100_000)
     event_stream_timeout_seconds: int = Field(default=120, ge=30, le=3_600)
     dataset_cache_mb: int = Field(default=384, ge=0, le=4_096)
+    dataset_sync_concurrency: int = Field(default=1, ge=1, le=8)
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     persistence_backend: str = "local"
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     object_storage_prefix: str = "open-sports-analyst"
     object_storage_endpoint_url: str = ""
     object_storage_region: str = ""
+    object_storage_transfer_concurrency: int = Field(default=4, ge=1, le=16)
     log_level: str = "INFO"
     langsmith_tracing: bool = False
     langsmith_endpoint: str = "https://api.smith.langchain.com"

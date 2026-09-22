@@ -40,8 +40,12 @@ echo "[deploy] Detailed logs: ${build_url}"
 
 stage_label() {
   case "$1" in
-    build-image) echo "Building the Linux application image" ;;
-    push-image) echo "Uploading the image to Artifact Registry" ;;
+    build-analysis-image) echo "Building the analysis image" ;;
+    push-analysis-image) echo "Uploading the analysis image" ;;
+    build-sync-image) echo "Building the lightweight dataset-sync image" ;;
+    push-sync-image) echo "Uploading the dataset-sync image" ;;
+    build-api-image) echo "Building the lightweight API and frontend image" ;;
+    push-api-image) echo "Uploading the API and frontend image" ;;
     deploy-analysis) echo "Deploying the long-running analysis job" ;;
     deploy-sync) echo "Deploying the private dataset-sync service" ;;
     deploy-service) echo "Deploying the API and frontend" ;;

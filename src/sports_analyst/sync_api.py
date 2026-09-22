@@ -2,19 +2,31 @@
 from __future__ import annotations
 
 import logging
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request
 
 from sports_analyst.config import get_settings
 from sports_analyst.job_common import retryable_job_error
 from sports_analyst.log_config import configure_logging
-from sports_analyst.object_jobs import ObjectJobStore
-from sports_analyst.service import AnalystApplication
+from sports_analyst.sync_service import DatasetSyncApplication
 
 logger = logging.getLogger("sports_analyst.sync_api")
 settings = get_settings()
 configure_logging(settings.log_level)
 app = FastAPI(title="Open Sports Analyst Sync Worker", docs_url=None, redoc_url=None, openapi_url=None)
+_application: DatasetSyncApplication | None = None
+_application_lock = Lock()
+
+
+def sync_application() -> DatasetSyncApplication:
+    """Create one lightweight catalog per warm sync container and reuse it."""
+    global _application
+    if _application is None:
+        with _application_lock:
+            if _application is None:
+                _application = DatasetSyncApplication(settings)
+    return _application
 
 
 @app.get("/health")
@@ -25,8 +37,10 @@ def health() -> dict[str, str]:
 @app.post("/internal/jobs/{job_id}")
 def execute_sync(job_id: str, request: Request) -> dict[str, str]:
     """Run one authenticated Cloud Task and return non-2xx to request a retry."""
-    application = AnalystApplication(settings)
-    jobs = ObjectJobStore(application.store.persistence)
+    application = sync_application()
+    jobs = application.jobs
+    if jobs is None:
+        raise HTTPException(503, "Durable job storage is unavailable")
     job = jobs.request(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")

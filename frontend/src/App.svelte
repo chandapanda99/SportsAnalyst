@@ -617,8 +617,12 @@
         } else {
           await streamInvestigation(pollingStream(pending));
         }
-      } catch (problem) { error = String(problem); }
-      finally { busy = false; syncing = false; }
+      } catch (problem) {
+        error = String(problem);
+      } finally {
+        busy = false;
+        syncing = false;
+      }
     });
   });
 
@@ -1422,7 +1426,8 @@
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
-  class ReportedInvestigationFailure extends Error {}
+  class ReportedInvestigationFailure extends Error {
+  }
 
   function isMetricRowChart(specification: Record<string, unknown>) {
     return (specification.usermeta as { chartKind?: string } | undefined)?.chartKind === 'metric-rows';
@@ -1515,8 +1520,8 @@
       await wait(2_500);
     }
     throw new Error(
-      `Live updates could not be restored within an hour. Your job ID is ${investigationId}. ` +
-      `A queued job may still finish; check Recent analyses before submitting again. ${String(lastError)}`
+        `Live updates could not be restored within an hour. Your job ID is ${investigationId}. ` +
+        `A queued job may still finish; check Recent analyses before submitting again. ${String(lastError)}`
     );
   }
 
@@ -1666,7 +1671,7 @@
     if (!syncSeasons.length || !syncDatasets.length) return;
     const offeredDatasets = new Set(analysisOptions?.syncable_datasets ?? []);
     const requestedDatasets = syncDatasets.filter((dataset) =>
-      offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons) && missingSyncSeasons(dataset).length
+        offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons) && missingSyncSeasons(dataset).length
     );
     const requestedSeasons = syncSeasons.map(Number).filter((season) => Number.isInteger(season));
     if (!requestedSeasons.length || !requestedDatasets.length) return;
@@ -1677,9 +1682,7 @@
     stage = 'Preparing data sync';
     progress = 0.03;
     try {
-      const missingSeasons = [...new Set(requestedDatasets.flatMap(
-        dataset => missingSyncSeasons(dataset, requestedSeasons)
-      ))];
+      const missingSeasons = [...new Set(requestedDatasets.flatMap(dataset => missingSyncSeasons(dataset, requestedSeasons)))];
       const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets);
       await streamDatasetSync(stream);
       await refresh();
@@ -1934,7 +1937,7 @@
         <div class="intro-grid">
           <div class="ask-copy"><span class="eyebrow">Your Next Question, Answered</span>
             <h2>See what changed. Understand why.</h2>
-            <p>Compare a team or player across time, then explore the numbers and plays behind the answer.</p>
+            <p>Ask about the growth or decline of a team or player across time, then explore the numbers and plays behind the answer.</p>
           </div>
           {#if showGuidance}
             <section class="getting-started" id="getting-started" tabindex="-1" aria-label="How it works">

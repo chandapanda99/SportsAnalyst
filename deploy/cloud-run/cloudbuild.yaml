@@ -11,12 +11,24 @@ substitutions:
   _MODEL: gpt-5.6-luna
   _LANGSMITH_TRACING: 'false'
 steps:
-  - id: build-image
+  - id: build-analysis-image
     name: gcr.io/cloud-builders/docker
-    args: ['build', '--platform=linux/amd64', '--target=cloud-run', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID', '.']
-  - id: push-image
+    args: ['build', '--platform=linux/amd64', '--target=cloud-analysis', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID', '.']
+  - id: push-analysis-image
     name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID']
+  - id: build-sync-image
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '--platform=linux/amd64', '--target=cloud-sync', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID', '.']
+  - id: push-sync-image
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID']
+  - id: build-api-image
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '--platform=linux/amd64', '--target=cloud-api', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID', '.']
+  - id: push-api-image
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID']
   - id: deploy-analysis
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -24,7 +36,7 @@ steps:
       - 'PROJECT_ID=$PROJECT_ID'
       - 'REGION=${_REGION}'
       - 'APP=${_APP}'
-      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID'
       - 'R2_ENDPOINT=${_R2_ENDPOINT}'
       - 'R2_BUCKET=${_R2_BUCKET}'
       - 'R2_PREFIX=${_R2_PREFIX}'
@@ -39,7 +51,7 @@ steps:
       - 'PROJECT_ID=$PROJECT_ID'
       - 'REGION=${_REGION}'
       - 'APP=${_APP}'
-      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID'
       - 'R2_ENDPOINT=${_R2_ENDPOINT}'
       - 'R2_BUCKET=${_R2_BUCKET}'
       - 'R2_PREFIX=${_R2_PREFIX}'
@@ -54,7 +66,7 @@ steps:
       - 'PROJECT_ID=$PROJECT_ID'
       - 'REGION=${_REGION}'
       - 'APP=${_APP}'
-      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID'
       - 'R2_ENDPOINT=${_R2_ENDPOINT}'
       - 'R2_BUCKET=${_R2_BUCKET}'
       - 'R2_PREFIX=${_R2_PREFIX}'
@@ -69,7 +81,7 @@ steps:
       - 'PROJECT_ID=$PROJECT_ID'
       - 'REGION=${_REGION}'
       - 'APP=${_APP}'
-      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/app:$BUILD_ID'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID'
       - 'R2_ENDPOINT=${_R2_ENDPOINT}'
       - 'R2_BUCKET=${_R2_BUCKET}'
       - 'R2_PREFIX=${_R2_PREFIX}'
