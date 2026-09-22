@@ -247,8 +247,7 @@ Follow-up questions reuse the saved investigation context. History can be filter
 Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
 both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
-Recommended Cloud Run deployments use `JOB_BACKEND=object`: R2 stores request/progress records, Cloud Tasks invokes a private low-latency sync service, and a Cloud Run Job
-executes each investigation or follow-up. See [Cloud Run Deployment](cloud-run.md). The desktop uses an AppData-backed SQLite queue and a managed sibling worker; command-line
+Recommended Cloud Run deployments use `JOB_BACKEND=object`: R2 stores request/progress records, and Cloud Tasks invokes private sync and analysis services. A Cloud Run Job remains available as a fallback for analyses that cannot fit the 30-minute request limit. See [Cloud Run Deployment](cloud-run.md). The desktop uses an AppData-backed SQLite queue and a managed sibling worker; command-line
 development retains in-process execution.
 Progress survives web replica restarts, and both investigation and sync streams have frontend status recovery.
 Workers renew leases, retry temporary failures, and reuse already-published investigation results after a crash.

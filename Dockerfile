@@ -1,15 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-bookworm-slim AS frontend-build
-
-WORKDIR /build/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
-
-FROM python:3.13-slim-bookworm AS python-runtime
+FROM python:3.13-slim-bookworm AS python-build
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.13 /uv /uvx /bin/
 
@@ -17,7 +8,6 @@ ENV DATA_DIR=/var/lib/open-sports-analyst \
     PATH=/app/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SPORTS_ANALYST_FRONTEND_DIR=/app/frontend/dist \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
@@ -37,12 +27,48 @@ COPY --chown=analyst:analyst pyproject.toml uv.lock README.md LICENSE NOTICE ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=analyst:analyst src/ ./src/
-COPY --chown=analyst:analyst --from=frontend-build /build/frontend/dist/ ./frontend/dist/
 
 RUN uv sync --frozen --no-dev --no-editable \
     && JOB_BACKEND=local PERSISTENCE_BACKEND=local DATA_DIR=/tmp/container-smoke sports-analyst capabilities \
     && python -c "import sports_analyst.worker"
 
+# Build the complete, locked analysis environment without pulling in the
+# frontend stage. The deployed Job only needs the installed Python environment.
+FROM python-build AS cloud-analysis-build
+RUN uv sync --frozen --no-dev --no-editable --extra cloud-run
+
+FROM python:3.13-slim-bookworm AS cloud-analysis
+ENV DATA_DIR=/tmp/open-sports-analyst
+ENV PATH=/app/.venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 analyst \
+    && useradd --uid 10001 --gid analyst --create-home analyst \
+    && mkdir -p /app "$DATA_DIR" \
+    && chown -R analyst:analyst /app "$DATA_DIR"
+
+WORKDIR /app
+COPY --from=cloud-analysis-build --chown=analyst:analyst /app/.venv/ /app/.venv/
+RUN python -c "import boto3, google.auth, vl_convert; import sports_analyst.service, sports_analyst.worker, sports_analyst.reports, sports_analyst.analysis_api"
+USER analyst
+
+
+FROM node:24-bookworm-slim AS frontend-build
+
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+
+FROM python-build AS runtime
+COPY --chown=analyst:analyst --from=frontend-build /build/frontend/dist/ ./frontend/dist/
+ENV SPORTS_ANALYST_FRONTEND_DIR=/app/frontend/dist
 USER analyst
 EXPOSE 8080
 
@@ -50,14 +76,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
 
 CMD ["sports-analyst", "serve", "--host", "0.0.0.0", "--port", "8080"]
-
-FROM python-runtime AS runtime
-
-FROM python-runtime AS cloud-analysis
-USER root
-RUN uv sync --frozen --no-dev --no-editable --extra cloud-run
-ENV DATA_DIR=/tmp/open-sports-analyst
-USER analyst
 
 
 # The public API and sync target intentionally omit model-provider, tracing,
@@ -108,6 +126,9 @@ ENV SPORTS_ANALYST_FRONTEND_DIR=/app/frontend/dist \
     SPORTS_ANALYST_RUNTIME_ROLE=api
 CMD ["sports-analyst", "serve", "--host", "0.0.0.0", "--port", "8080"]
 
-# Preserve the original target name for external self-hosting scripts while
-# Cloud Build deploys the three role-specific images above.
-FROM cloud-analysis AS cloud-run
+# Preserve the original all-in-one target for external self-hosting scripts.
+FROM runtime AS cloud-run
+USER root
+RUN uv sync --frozen --no-dev --no-editable --extra cloud-run
+ENV DATA_DIR=/tmp/open-sports-analyst
+USER analyst

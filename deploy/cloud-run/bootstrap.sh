@@ -109,6 +109,14 @@ else
     --max-attempts=3 --max-retry-duration=3600s --max-concurrent-dispatches=1 --max-dispatches-per-second=1
 fi
 
+if gcloud tasks queues describe "${APP}-analysis" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud tasks queues update "${APP}-analysis" --location="$REGION" --project="$PROJECT_ID" \
+    --max-attempts=2 --max-retry-duration=3600s --max-concurrent-dispatches=1 --max-dispatches-per-second=1
+else
+  gcloud tasks queues create "${APP}-analysis" --location="$REGION" --project="$PROJECT_ID" \
+    --max-attempts=2 --max-retry-duration=3600s --max-concurrent-dispatches=1 --max-dispatches-per-second=1
+fi
+
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${APP}-deploy@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role=roles/cloudbuild.builds.editor

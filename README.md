@@ -135,7 +135,7 @@ separate public distribution repository instead.
 ## Google Cloud Run deployment (recommended cloud hosting)
 
 Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero and R2 storage. A public Cloud Run service serves the web app, a private service
-handles concurrent package acquisition through Cloud Tasks, and an on-demand Cloud Run Job handles investigations and follow-ups. Compact versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
+handles concurrent package acquisition through Cloud Tasks, and a private Cloud Run analysis service invoked by Cloud Tasks handles investigations and follow-ups. Compact versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
 and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
 
 ## Model providers

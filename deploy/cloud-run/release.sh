@@ -12,11 +12,23 @@ if [ "${LANGSMITH_TRACING:-false}" = true ]; then
 fi
 
 deploy_analysis() {
-  echo "[release] Deploying long-running analysis job"
+  echo "[release] Deploying fallback long-running analysis job"
   gcloud run jobs deploy "${APP}-analysis" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
     --service-account="${APP}-analysis@${PROJECT_ID}.iam.gserviceaccount.com" \
     --command=sports-analyst-worker --args=--object-job --tasks=1 --parallelism=1 --max-retries=1 \
     --task-timeout=21600s --cpu=1 --memory=4Gi --set-env-vars="$analysis_env" --set-secrets="$analysis_secrets"
+}
+
+deploy_analysis_service() {
+  echo "[release] Deploying private low-latency analysis service"
+  service_analysis_env="${analysis_env/JOB_TIMEOUT_SECONDS=21600/JOB_TIMEOUT_SECONDS=1800}"
+  gcloud run deploy "${APP}-analysis-service" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
+    --service-account="${APP}-analysis@${PROJECT_ID}.iam.gserviceaccount.com" --no-allow-unauthenticated \
+    --command=uvicorn --args=sports_analyst.analysis_api:app,--host,0.0.0.0,--port,8080 \
+    --port=8080 --cpu=1 --memory=4Gi --concurrency=1 --min=0 --max=1 --timeout=1800s --cpu-boost \
+    --set-env-vars="$service_analysis_env" --set-secrets="$analysis_secrets"
+  gcloud run services add-iam-policy-binding "${APP}-analysis-service" --project="$PROJECT_ID" --region="$REGION" \
+    --member="serviceAccount:${APP}-tasks@${PROJECT_ID}.iam.gserviceaccount.com" --role=roles/run.invoker
 }
 
 deploy_sync() {
@@ -33,10 +45,11 @@ deploy_sync() {
 deploy_service() {
   echo "[release] Deploying public API and frontend service"
   sync_url=$(gcloud run services describe "${APP}-sync" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')
+  analysis_url=$(gcloud run services describe "${APP}-analysis-service" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')
   gcloud run deploy "$APP" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
     --service-account="${APP}-api@${PROJECT_ID}.iam.gserviceaccount.com" --allow-unauthenticated \
     --port=8080 --cpu=2 --memory=4Gi --concurrency=8 --min=0 --max=1 --timeout=300s --cpu-boost \
-    --set-env-vars="${storage},JOB_DISPATCH_BACKEND=cloud_run,JOB_DISPATCH_RETRY_SECONDS=30,JOB_DISPATCH_STARTUP_SECONDS=900,CLOUD_RUN_PROJECT=${PROJECT_ID},CLOUD_RUN_REGION=${REGION},CLOUD_RUN_WORKER_JOB=${APP}-analysis,CLOUD_RUN_SYNC_SERVICE_URL=${sync_url},CLOUD_TASKS_QUEUE=${APP}-sync,CLOUD_TASKS_SERVICE_ACCOUNT=${APP}-tasks@${PROJECT_ID}.iam.gserviceaccount.com,MAX_ACTIVE_JOBS=3,FOUNDRY_ENDPOINT=${FOUNDRY_ENDPOINT},MODEL=${MODEL}" \
+    --set-env-vars="${storage},JOB_DISPATCH_BACKEND=cloud_run,JOB_DISPATCH_RETRY_SECONDS=30,JOB_DISPATCH_STARTUP_SECONDS=900,CLOUD_RUN_PROJECT=${PROJECT_ID},CLOUD_RUN_REGION=${REGION},CLOUD_RUN_WORKER_JOB=${APP}-analysis,CLOUD_RUN_SYNC_SERVICE_URL=${sync_url},CLOUD_RUN_ANALYSIS_SERVICE_URL=${analysis_url},CLOUD_TASKS_QUEUE=${APP}-sync,CLOUD_TASKS_ANALYSIS_QUEUE=${APP}-analysis,CLOUD_TASKS_SERVICE_ACCOUNT=${APP}-tasks@${PROJECT_ID}.iam.gserviceaccount.com,MAX_ACTIVE_JOBS=3,FOUNDRY_ENDPOINT=${FOUNDRY_ENDPOINT},MODEL=${MODEL}" \
     --set-secrets="$storage_secrets"
 }
 
@@ -50,11 +63,13 @@ smoke_test() {
 
 case "$phase" in
   analysis) deploy_analysis ;;
+  analysis-service) deploy_analysis_service ;;
   sync) deploy_sync ;;
   service) deploy_service ;;
   smoke) smoke_test ;;
   all)
     deploy_analysis
+    deploy_analysis_service
     deploy_sync
     deploy_service
     smoke_test

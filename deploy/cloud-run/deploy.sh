@@ -46,7 +46,8 @@ stage_label() {
     push-sync-image) echo "Uploading the dataset-sync image" ;;
     build-api-image) echo "Building the lightweight API and frontend image" ;;
     push-api-image) echo "Uploading the API and frontend image" ;;
-    deploy-analysis) echo "Deploying the long-running analysis job" ;;
+    deploy-analysis) echo "Deploying the fallback analysis job" ;;
+    deploy-analysis-service) echo "Deploying the private analysis service" ;;
     deploy-sync) echo "Deploying the private dataset-sync service" ;;
     deploy-service) echo "Deploying the API and frontend" ;;
     smoke-test) echo "Verifying health and frontend responses" ;;

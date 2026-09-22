@@ -162,7 +162,6 @@ def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, s
 
 def execute_object_job(settings: Settings, key: str) -> None:
     """Execute one R2-backed request; Cloud Run owns process retries."""
-    from sports_analyst.models import AnalysisRequest
     from sports_analyst.service import AnalystApplication
 
     application = AnalystApplication(settings)
@@ -182,20 +181,8 @@ def execute_object_job(settings: Settings, key: str) -> None:
     jobs.emit(key, "starting", "Starting your analysis" if kind != "sync" else "Starting your data download", 0.03)
     logger.info("object_job_started job_id=%s kind=%s", key, kind)
     try:
-        if kind == "investigation":
-            try:
-                application.store.get_investigation(key)
-            except KeyError:
-                application.investigate(AnalysisRequest.model_validate(payload), key)
-            else:
-                jobs.emit(key, "complete", "Investigation ready", 1, investigation_id=key)
-        elif kind == "follow_up":
-            try:
-                application.store.get_investigation(key)
-            except KeyError:
-                application.follow_up(payload["parent_id"], payload["question"], key)
-            else:
-                jobs.emit(key, "complete", "Follow-up ready", 1, investigation_id=key)
+        if kind in {"investigation", "follow_up"}:
+            run_object_analysis(application, key, kind, payload)
         elif kind == "sync":
             application.sync(payload["seasons"], key, payload.get("datasets"), payload["sport"])
         else:
@@ -215,6 +202,27 @@ def execute_object_job(settings: Settings, key: str) -> None:
             raise
         return
     logger.info("object_job_completed job_id=%s kind=%s", key, kind)
+
+
+def run_object_analysis(application, key: str, kind: str, payload: dict) -> None:
+    """Execute an analysis once, reusing an R2 result after a delivery retry."""
+    from sports_analyst.models import AnalysisRequest
+
+    if kind not in {"investigation", "follow_up"}:
+        raise ValueError(f"unsupported analysis kind: {kind}")
+    try:
+        application.store.get_investigation(key)
+    except KeyError:
+        if kind == "investigation":
+            application.investigate(AnalysisRequest.model_validate(payload), key)
+        elif kind == "follow_up":
+            application.follow_up(payload["parent_id"], payload["question"], key)
+    else:
+        jobs = application.jobs
+        if jobs is None:
+            raise RuntimeError("Durable object jobs are not configured")
+        jobs.emit(key, "complete", "Investigation ready" if kind == "investigation" else "Follow-up ready", 1,
+                  investigation_id=key)
 
 
 def main() -> None:

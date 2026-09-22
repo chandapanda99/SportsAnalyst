@@ -105,17 +105,51 @@ def test_polling_object_jobs_coalesce_progress_without_event_object_churn():
 def test_object_cloud_dispatch_routes_syncs_and_analyses_separately(tmp_path, monkeypatch):
     from sports_analyst import cloud_dispatch
 
-    settings = Settings(_env_file=None, data_dir=tmp_path).model_copy(update={"job_backend": "object"})
+    settings = Settings(_env_file=None, data_dir=tmp_path).model_copy(update={
+        "job_backend": "object", "cloud_run_analysis_service_url": "https://private.example",
+    })
     sync = MagicMock()
     analysis = MagicMock()
+    analysis_task = MagicMock()
     monkeypatch.setattr(cloud_dispatch, "launch_sync", sync)
     monkeypatch.setattr(cloud_dispatch, "launch_analysis", analysis)
+    monkeypatch.setattr(cloud_dispatch, "launch_analysis_task", analysis_task)
 
     cloud_dispatch.launch(settings, "sync-job", "sync")
     cloud_dispatch.launch(settings, "analysis-job", "investigation")
+    cloud_dispatch.launch(settings, "follow-up-job", "follow_up")
 
     sync.assert_called_once_with(settings, "sync-job")
-    analysis.assert_called_once_with(settings, "analysis-job")
+    assert [call.args[1] for call in analysis_task.call_args_list] == ["analysis-job", "follow-up-job"]
+    analysis.assert_not_called()
+    cloud_dispatch.launch(settings.model_copy(update={"cloud_run_analysis_service_url": ""}), "legacy-job", "investigation")
+    analysis.assert_called_once()
+
+
+def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypatch):
+    from sports_analyst import analysis_api
+
+    application = MagicMock()
+    application.jobs.request.return_value = {"kind": "investigation", "payload": {}, "max_attempts": 2}
+    application.jobs.status.return_value = {"stage": "queued"}
+    monkeypatch.setattr(analysis_api, "analysis_application", lambda: application)
+    run = MagicMock(side_effect=[TimeoutError("model temporarily unavailable"), None, None])
+    monkeypatch.setattr(analysis_api, "run_object_analysis", run)
+    client = TestClient(analysis_api.app)
+
+    assert client.post("/internal/jobs/job-1").status_code == 503
+    assert client.post("/internal/jobs/job-1", headers={"X-CloudTasks-TaskRetryCount": "1"}).json() == {
+        "status": "complete"
+    }
+    application.jobs.status.return_value = {"stage": "complete"}
+    assert client.post("/internal/jobs/job-1").json() == {"status": "complete"}
+    assert run.call_count == 2
+    application.jobs.request.return_value = {"kind": "follow_up", "payload": {"parent_id": "parent"}}
+    application.jobs.status.return_value = {"stage": "queued"}
+    assert client.post("/internal/jobs/job-2").json() == {"status": "complete"}
+    assert run.call_args.args[2] == "follow_up"
+    application.jobs.request.return_value = {"kind": "sync", "payload": {}}
+    assert client.post("/internal/jobs/job-1").status_code == 409
 
 
 def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):

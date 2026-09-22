@@ -13,22 +13,22 @@ substitutions:
 steps:
   - id: build-analysis-image
     name: gcr.io/cloud-builders/docker
-    args: ['build', '--platform=linux/amd64', '--target=cloud-analysis', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID', '.']
+    args: [ 'build', '--platform=linux/amd64', '--target=cloud-analysis', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID', '.' ]
   - id: push-analysis-image
     name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID']
+    args: [ 'push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID' ]
   - id: build-sync-image
     name: gcr.io/cloud-builders/docker
-    args: ['build', '--platform=linux/amd64', '--target=cloud-sync', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID', '.']
+    args: [ 'build', '--platform=linux/amd64', '--target=cloud-sync', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID', '.' ]
   - id: push-sync-image
     name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID']
+    args: [ 'push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/sync:$BUILD_ID' ]
   - id: build-api-image
     name: gcr.io/cloud-builders/docker
-    args: ['build', '--platform=linux/amd64', '--target=cloud-api', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID', '.']
+    args: [ 'build', '--platform=linux/amd64', '--target=cloud-api', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID', '.' ]
   - id: push-api-image
     name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID']
+    args: [ 'push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/api:$BUILD_ID' ]
   - id: deploy-analysis
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -43,7 +43,22 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'analysis']
+    args: [ 'deploy/cloud-run/release.sh', 'analysis' ]
+  - id: deploy-analysis-service
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    env:
+      - 'PROJECT_ID=$PROJECT_ID'
+      - 'REGION=${_REGION}'
+      - 'APP=${_APP}'
+      - 'IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_APP}/analysis:$BUILD_ID'
+      - 'R2_ENDPOINT=${_R2_ENDPOINT}'
+      - 'R2_BUCKET=${_R2_BUCKET}'
+      - 'R2_PREFIX=${_R2_PREFIX}'
+      - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
+      - 'MODEL=${_MODEL}'
+      - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
+    args: [ 'deploy/cloud-run/release.sh', 'analysis-service' ]
   - id: deploy-sync
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -58,7 +73,7 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'sync']
+    args: [ 'deploy/cloud-run/release.sh', 'sync' ]
   - id: deploy-service
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -73,7 +88,7 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'service']
+    args: [ 'deploy/cloud-run/release.sh', 'service' ]
   - id: smoke-test
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -88,4 +103,4 @@ steps:
       - 'FOUNDRY_ENDPOINT=${_FOUNDRY_ENDPOINT}'
       - 'MODEL=${_MODEL}'
       - 'LANGSMITH_TRACING=${_LANGSMITH_TRACING}'
-    args: ['deploy/cloud-run/release.sh', 'smoke']
+    args: [ 'deploy/cloud-run/release.sh', 'smoke' ]

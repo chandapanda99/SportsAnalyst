@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     cloud_run_region: str = "us-central1"
     cloud_run_worker_job: str = ""
     cloud_run_sync_service_url: str = ""
+    cloud_run_analysis_service_url: str = ""
     cloud_tasks_queue: str = ""
+    cloud_tasks_analysis_queue: str = ""
     cloud_tasks_service_account: str = ""
     job_dispatch_retry_seconds: int = Field(default=30, ge=5, le=300)
     job_dispatch_startup_seconds: int = Field(default=900, ge=60, le=3_600)
@@ -79,6 +81,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Object jobs require CLOUD_RUN_SYNC_SERVICE_URL, CLOUD_TASKS_QUEUE and CLOUD_TASKS_SERVICE_ACCOUNT"
                 )
+            if bool(self.cloud_run_analysis_service_url) != bool(self.cloud_tasks_analysis_queue):
+                raise ValueError("CLOUD_RUN_ANALYSIS_SERVICE_URL and CLOUD_TASKS_ANALYSIS_QUEUE must be set together")
         if self.job_backend not in {"local", "sqlite", "object"}:
             raise ValueError("JOB_BACKEND must be local, sqlite or object")
         if self.job_backend == "object" and self.persistence_backend != "s3":

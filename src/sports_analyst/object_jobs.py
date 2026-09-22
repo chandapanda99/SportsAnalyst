@@ -201,6 +201,13 @@ class ObjectJobStore:
         retry_seconds: int = 30,
         startup_seconds: int = 900,
     ) -> None:
+        # The task may have started before the enqueue API receives the Cloud
+        # Tasks acknowledgement. Never replace worker progress with "waiting".
+        current = self.status(key)
+        if current is None or current.get("stage") not in {"queued", "dispatching"}:
+            return
+        if int(current.get("dispatch_attempt", 0)) != attempt:
+            return
         now = datetime.now(UTC)
         kind = (self.request(key) or {}).get("kind", "investigation")
         subject = "data download" if kind == "sync" else "analysis"

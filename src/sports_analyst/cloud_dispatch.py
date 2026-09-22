@@ -41,12 +41,21 @@ def launch_analysis(settings: Settings, key: str) -> None:
 
 def launch_sync(settings: Settings, key: str) -> None:
     """Create an authenticated Cloud Task targeting the private sync service."""
+    _launch_task(settings, key, settings.cloud_tasks_queue, settings.cloud_run_sync_service_url)
+
+
+def launch_analysis_task(settings: Settings, key: str) -> None:
+    """Create an authenticated Cloud Task targeting the private analysis service."""
+    _launch_task(settings, key, settings.cloud_tasks_analysis_queue, settings.cloud_run_analysis_service_url)
+
+
+def _launch_task(settings: Settings, key: str, queue_name: str, service_url: str) -> None:
     project = quote(settings.cloud_run_project, safe="")
     region = quote(settings.cloud_run_region, safe="")
-    queue = quote(settings.cloud_tasks_queue, safe="")
+    queue = quote(queue_name, safe="")
     task_id = quote(key, safe="")
     parent = f"projects/{project}/locations/{region}/queues/{queue}"
-    url = f"{settings.cloud_run_sync_service_url.rstrip('/')}/internal/jobs/{quote(key, safe='')}"
+    url = f"{service_url.rstrip('/')}/internal/jobs/{quote(key, safe='')}"
     with _authorized_session() as session:
         response = session.post(
             f"https://cloudtasks.googleapis.com/v2/{parent}/tasks",
@@ -61,7 +70,7 @@ def launch_sync(settings: Settings, key: str) -> None:
                         "body": base64.b64encode(b"{}").decode(),
                         "oidcToken": {
                             "serviceAccountEmail": settings.cloud_tasks_service_account,
-                            "audience": settings.cloud_run_sync_service_url.rstrip("/"),
+                            "audience": service_url.rstrip("/"),
                         },
                     },
                 }
@@ -76,6 +85,8 @@ def launch_sync(settings: Settings, key: str) -> None:
 def launch(settings: Settings, key: str, kind: str) -> None:
     if settings.job_backend == "object" and kind == "sync":
         launch_sync(settings, key)
+    elif settings.job_backend == "object" and kind in {"investigation", "follow_up"} and settings.cloud_run_analysis_service_url:
+        launch_analysis_task(settings, key)
     else:
         launch_analysis(settings, key)
 

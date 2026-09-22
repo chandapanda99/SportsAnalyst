@@ -1,14 +1,13 @@
 # Google Cloud Run deployment
 
-Cloud Run is the recommended managed hosting path. It keeps the Windows desktop build independent and uses four managed pieces:
+Cloud Run is the recommended managed hosting path. It keeps the Windows desktop build independent and uses these managed pieces:
 
 - the public `open-sports-analyst` service for the compiled frontend and API;
 - the private `open-sports-analyst-sync` service, invoked by Cloud Tasks for low-latency dataset downloads;
-- the `open-sports-analyst-analysis` Cloud Run Job for long investigations and follow-ups;
+- the private `open-sports-analyst-analysis-service`, invoked by its own Cloud Tasks queue for investigations and follow-ups;
 - Cloudflare R2 for datasets, reports, request records, and current job progress.
 
-The cloud path does **not** require Neon, PostgreSQL, Alembic migrations, Redis, or a continuously running worker. Cloud Tasks retries sync requests, while Cloud Run Jobs
-provide the longer execution window required by investigations.
+The cloud path does **not** require Neon, PostgreSQL, Alembic migrations, Redis, or a continuously running worker. Cloud Tasks retries transient sync and analysis failures. The older `open-sports-analyst-analysis` Job remains deployed as a rollback path but is not used when the analysis service is configured. Both private services have zero minimum instances.
 
 ## First deployment
 
@@ -24,7 +23,7 @@ ENV_FILE=.env bash deploy/cloud-run/bootstrap.sh
 ENV_FILE=.env bash deploy/cloud-run/deploy.sh
 ```
 
-Bootstrap enables Cloud Run, Cloud Build, Cloud Tasks, Artifact Registry, Secret Manager, and IAM; creates narrowly scoped service accounts; creates the sync queue and image
+Bootstrap enables Cloud Run, Cloud Build, Cloud Tasks, Artifact Registry, Secret Manager, and IAM; creates narrowly scoped service accounts; creates the sync and analysis queues and image
 repository; and imports an explicit credential allowlist from `.env`. It imports only the R2 credentials, model-provider key, and optional LangSmith key. The dotenv file is
 parsed as data and is never executed as shell code.
 
@@ -37,23 +36,23 @@ export R2_PREFIX=cloud-run-trial
 ENV_FILE=.env bash deploy/cloud-run/deploy.sh
 ```
 
-Cloud Build creates separate Linux AMD64 API, sync, and analysis images, deploys the analysis job, deploys the private sync service, deploys the public service, and performs
-health and frontend smoke checks. The API and sync images omit model-provider, tracing, report-rendering, and desktop dependencies. There is no database migration stage.
+Cloud Build creates separate Linux AMD64 API, sync, and analysis images, deploys the fallback analysis job, both private services, the public service, and performs
+health and frontend smoke checks. The API and sync images omit model-provider, tracing, report-rendering, and desktop dependencies. The analysis image contains the locked
+Python analysis environment without the frontend bundle or build tools. There is no database migration stage.
 
 ## Runtime behavior
 
 - The API writes a small job request and initial progress record to R2.
 - A sync request becomes an authenticated Cloud Task. Cloud Tasks calls the private sync service and retries transient failures. Its 30-minute HTTP deadline is suitable for
   ordinary package/season sync units; completed manifests are published incrementally, so a retry skips already stored data.
-- An investigation or follow-up starts one Cloud Run Job execution with its R2 job ID supplied as an execution override. Cloud Run retries the task once for transient
-  failures.
+- An investigation or follow-up becomes an authenticated Cloud Task targeting the private analysis service. The service reads its request from R2, reuses a previously saved result on retry, and Cloud Tasks retries a transient failure once. The task and service request deadlines are 30 minutes.
 - The browser polls durable R2-backed status and survives API scale-to-zero, refreshes, and replica replacement.
 - Dataset and investigation discovery use compact, versioned R2 catalogs rather than listing and downloading every metadata object during each cold start. Existing per-record
   metadata is upgraded automatically on first use.
 - Polling deployments retain one current status object instead of writing a historical R2 object for every progress update. Package acquisition uses bounded concurrency and
   overlaps source downloads with R2 publication.
 - R2 is authoritative. `/tmp` on each Cloud Run instance is only a bounded disposable cache.
-- Accepted Cloud Tasks and Job executions are not re-dispatched by browser polling. Google Cloud owns their delivery after acceptance.
+- Accepted Cloud Tasks are not re-dispatched by browser polling. Google Cloud owns their delivery after acceptance.
 
 Current deployment limits are intentionally conservative for a personal project:
 
@@ -61,13 +60,16 @@ Current deployment limits are intentionally conservative for a personal project:
 |---------------------:|:--------------:|-------------------------------------------------------------|
 |  Public API/frontend | 2 vCPU / 4 GiB | concurrency 8, 0–1 instances, 5 minutes, startup CPU boost  |
 | Private sync service | 1 vCPU / 4 GiB | concurrency 1, 0–1 instances, 30 minutes, startup CPU boost |
-|         Analysis job | 1 vCPU / 4 GiB | one task, one retry, 6 hours                                |
+| Private analysis service | 1 vCPU / 4 GiB | concurrency 1, 0–1 instances, 30 minutes, startup CPU boost |
+| Fallback analysis job | 1 vCPU / 4 GiB | one task, one retry, 6 hours; idle unless selected |
 
 The first sync request may still incur a normal service cold start, but startup CPU boost and the smaller sync image reduce it without paying for an idle minimum instance. Two
-package acquisitions and up to four multipart R2 transfer parts may run concurrently. Analyses remain Jobs because they can exceed the Cloud Tasks request deadline.
+package acquisitions and up to four multipart R2 transfer parts may run concurrently. Analyses normally take 1–2 minutes; if one ever exceeds 30 minutes, it needs the fallback Job path or a split into shorter tasks.
 
 The public URL has no authentication. Anyone with the URL can submit work or view reports. `MAX_ACTIVE_JOBS=3`, one API instance, one sync instance, payload validation, and
 queue rate limits reduce accidental abuse but are not access control or a hard spending cap.
+
+After upgrading an existing deployment, rerun `bootstrap.sh` once before `deploy.sh` to create the analysis queue. Subsequent code-only releases need only `deploy.sh`.
 
 ## GitHub deployment
 
@@ -84,8 +86,9 @@ Useful diagnostics:
 
 ```bash
 gcloud run services logs read open-sports-analyst-sync --project="$PROJECT_ID" --region="$REGION" --limit=100
-gcloud run jobs executions list --job=open-sports-analyst-analysis --project="$PROJECT_ID" --region="$REGION"
+gcloud run services logs read open-sports-analyst-analysis-service --project="$PROJECT_ID" --region="$REGION" --limit=100
 gcloud tasks queues describe open-sports-analyst-sync --project="$PROJECT_ID" --location="$REGION"
+gcloud tasks queues describe open-sports-analyst-analysis --project="$PROJECT_ID" --location="$REGION"
 ```
 
 Keep the old deployment and any existing Neon resources until these checks pass. Afterward, the old `open-sports-analyst-worker` and `open-sports-analyst-migrate` Jobs, their
