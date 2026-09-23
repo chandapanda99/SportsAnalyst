@@ -76,9 +76,7 @@ def run_dataset_sync(
             if total <= 0:
                 return
             label = dataset.replace("_", " ").title()
-            season_label = "reference data" if season == 0 else (
-                f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season)
-            )
+            season_label = "reference data" if season == 0 else (f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season))
             offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
             unit_progress = min(total, completed + offsets.get(phase, 0.0))
             progress = 0.08 + 0.68 * unit_progress / total
