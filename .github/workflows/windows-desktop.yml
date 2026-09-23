@@ -2,11 +2,6 @@ name: Windows desktop installer
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Installer version
-        required: true
-        default: 0.1.0
   push:
     tags:
       - "v*"
@@ -49,9 +44,12 @@ jobs:
         env:
           WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
         run: |
-          $version = "${{ inputs.version }}"
-          if (-not $version) { $version = "${{ github.ref_name }}".TrimStart("v") }
-          ./packaging/windows/build.ps1 -Version $version
+          if ("${{ github.ref }}" -like "refs/tags/v*") {
+            $version = "${{ github.ref_name }}".Substring(1)
+            ./packaging/windows/build.ps1 -Version $version
+          } else {
+            ./packaging/windows/build.ps1
+          }
       - name: Create installer checksum
         shell: powershell
         run: |
@@ -87,11 +85,13 @@ jobs:
             exit 0
           }
 
+          $releaseTitle = "Open Sports Analyst $tag"
+          if ($tag -eq "v1.0.0") { $releaseTitle = "Open Sports Analyst v1.0.0 - Windows Desktop Release" }
           $arguments = @(
             "release", "create", $tag,
             $installer.FullName, $checksum,
             "--verify-tag",
-            "--title", "Open Sports Analyst $tag",
+            "--title", $releaseTitle,
             "--generate-notes"
           )
           if ($tag -match "(?i)-(alpha|beta|rc)(?:[.-]|$)") { $arguments += "--prerelease" }

@@ -105,7 +105,7 @@ when the application starts again. The command-line development server keeps the
 Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:
 
 ```powershell
-./packaging/windows/build.ps1 -Version 0.1.0
+./packaging/windows/build.ps1
 ```
 
 The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
@@ -116,19 +116,23 @@ Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInsta
 For Authenticode signing, set either `WINDOWS_SIGNING_PFX_PATH` (and optionally `WINDOWS_SIGNING_PFX_PASSWORD`) or `WINDOWS_SIGNING_CERT_THUMBPRINT` before building. The build
 signs and verifies both the executable and installer. Unsigned local builds work, but Windows may display a SmartScreen warning when they are distributed.
 
+The version is set once in `pyproject.toml`. Python package metadata, the API, and the installer build use that value. The private frontend package has no separate application
+version. A release tag must match the project version (for example, `v1.0.0` for `1.0.0`); `-alpha`, `-beta`, and `-rc` suffixes are supported for prereleases.
+
 The `Windows desktop installer` GitHub Actions workflow produces the same installer for version tags and manual runs. Add repository secrets
 `WINDOWS_SIGNING_PFX_BASE64` and `WINDOWS_SIGNING_PFX_PASSWORD` to sign CI artifacts; without them, the workflow intentionally produces an unsigned artifact.
 
-### Publish a beta with GitHub Releases
+### Publish with GitHub Releases
 
-Push a version tag containing `alpha`, `beta`, or `rc` to build and publish a GitHub prerelease automatically:
+Push the matching version tag to build and publish a GitHub release automatically:
 
 ```powershell
-git tag v0.1.0-beta.1
-git push origin v0.1.0-beta.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The workflow attaches the versioned Windows x64 installer and its SHA-256 checksum to the release. Other `v*` tags publish normal releases. A manual workflow run creates a
+The workflow attaches the versioned Windows x64 installer and its SHA-256 checksum to the release and generates notes that you can edit in GitHub. Tags with `-alpha`,
+`-beta`, or `-rc` publish prereleases. A manual workflow run creates a
 downloadable Actions artifact for verification but does not publish a release. Public downloads require a public repository; for a private source repository, publish from a
 separate public distribution repository instead.
 

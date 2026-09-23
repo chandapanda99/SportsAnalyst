@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.0",
+    [string] $Version,
     [switch] $SkipFrontend,
     [switch] $SkipInstaller
 )
@@ -16,6 +16,21 @@ $webViewInstaller = Join-Path $vendorDirectory "MicrosoftEdgeWebview2Setup.exe"
 Push-Location $projectRoot
 try
 {
+    $projectVersion = & python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])'
+    if ($LASTEXITCODE -ne 0 -or -not $projectVersion)
+    {
+        throw "Could not read the application version from pyproject.toml"
+    }
+    if (-not $Version)
+    {
+        $Version = $projectVersion
+    }
+    $validPrerelease = $Version -match ('^{0}-(?:alpha|beta|rc)(?:[.-]\d+)?$' -f [Regex]::Escape($projectVersion))
+    if ($Version -ne $projectVersion -and -not $validPrerelease)
+    {
+        throw "Installer version $Version does not match project version $projectVersion"
+    }
+
     if (-not $SkipFrontend)
     {
         # Do not run npm ci in the development checkout. On Windows, an active
@@ -106,6 +121,11 @@ try
     if ($LASTEXITCODE -ne 0)
     {
         throw "Desktop dependencies could not be synchronized"
+    }
+    $installedVersion = & uv run --frozen python -c 'import importlib.metadata; print(importlib.metadata.version("open-sports-analyst"))'
+    if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $projectVersion)
+    {
+        throw "Installed package version $installedVersion does not match project version $projectVersion"
     }
     Write-Host "Desktop dependencies: SYNCHRONIZED"
 
