@@ -36,6 +36,31 @@
   let evidenceLoading = false;
   let evidenceError = '';
   let evidenceRequestVersion = 0;
+  let appShellElement: HTMLDivElement | null = null;
+  let railWidth = 300;
+  let resizingRail = false;
+  const minRailWidth = 240;
+
+  function maxRailWidth() {
+    return Math.min(window.innerWidth * 0.34, 416);
+  }
+
+  function resizeRailFromPointer(event: PointerEvent) {
+    if (!resizingRail || !appShellElement) return;
+    const left = appShellElement.getBoundingClientRect().left;
+    railWidth = Math.max(minRailWidth, Math.min(maxRailWidth(), event.clientX - left));
+  }
+
+  function resizeRailFromKeyboard(event: KeyboardEvent) {
+    const delta = event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0;
+    if (delta) {
+      railWidth = Math.max(minRailWidth, Math.min(maxRailWidth(), railWidth + delta));
+      event.preventDefault();
+    } else if (event.key === 'Home' || event.key === 'End') {
+      railWidth = event.key === 'Home' ? minRailWidth : maxRailWidth();
+      event.preventDefault();
+    }
+  }
   type QuestionBank = Record<string, Record<'team' | 'player', Record<string, string[]>>>;
   const questionBanks: QuestionBank = {
     nfl: {
@@ -1849,7 +1874,7 @@
 
 <svelte:head><title>Open Sports Analyst</title></svelte:head>
 
-<div class="app-shell" class:nba-theme={activeSport === 'nba'}>
+<div class="app-shell" class:nba-theme={activeSport === 'nba'} bind:this={appShellElement} style={`--rail-width: ${railWidth}px`}>
   <aside class="rail" class:mobile-history-open={mobileHistoryOpen}>
     <div class="brand"><img class="mark" src="/favicon.svg" alt="" aria-hidden="true"/>
       <div><strong>Open Sports</strong><span>Analyst</span></div>
@@ -1901,6 +1926,22 @@
         <strong>{capabilities?.configured_provider || 'Loading'}</strong><span>{capabilities?.model_configured ? 'Model READY' : 'Deterministic Mode'}</span>
       </div>
     </div>
+    <button class="rail-resizer" type="button"
+            aria-label={`Resize navigation panel, currently ${Math.round(railWidth)} pixels wide. Use left and right arrow keys.`}
+            on:pointerdown={(event) => {
+              resizingRail = true;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              resizeRailFromPointer(event);
+              event.preventDefault();
+            }}
+            on:pointermove={resizeRailFromPointer}
+            on:pointerup={(event) => {
+              resizingRail = false;
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            on:pointercancel={() => resizingRail = false}
+            on:lostpointercapture={() => resizingRail = false}
+            on:keydown={resizeRailFromKeyboard}></button>
   </aside>
 
   <main class={`sport-background ${activeSport}-background`} data-sport-background={activeSport}>
