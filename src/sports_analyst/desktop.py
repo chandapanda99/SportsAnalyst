@@ -73,9 +73,38 @@ input:invalid:not(:placeholder-shown){border-color:#d88b62}button{border:1px sol
 const form=document.querySelector('#setup'), provider=document.querySelector('#provider'), status=document.querySelector('#status');
 function fields(){document.querySelectorAll('[data-provider]').forEach(group=>{const active=group.dataset.provider===provider.value;group.hidden=!active;group.querySelectorAll('input, select').forEach(control=>control.disabled=!active)})}
 provider.addEventListener('change',fields);fields();
-async function save(payload){status.textContent='Starting the local analysis service…';try{const result=await window.pywebview.api.save_configuration(payload);if(!result.ok)throw new Error(result.error);location.replace(result.url)}catch(error){status.textContent=String(error)}}
+async function save(payload){status.textContent='Starting the local analysis service…';try{const result=await window.pywebview.api.save_configuration(payload);if(!result.ok)throw new Error(result.error);location.replace(`${result.url}/?desktop=1`)}catch(error){status.textContent=String(error)}}
 form.addEventListener('submit',event=>{event.preventDefault();save(Object.fromEntries(new FormData(form).entries()))});
 document.querySelector('#skip').addEventListener('click',()=>save({MODEL_PROVIDER:'azure_foundry',MODEL:'',CHAT_MODEL:'',FOUNDRY_ENDPOINT:''}));
+</script></body></html>
+""".replace("__SETUP_ICON_DATA_URI__", SETUP_ICON_DATA_URI)
+
+
+STARTUP_HTML = """
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Opening Open Sports Analyst</title><style>
+:root{color-scheme:dark;font-family:Segoe UI,system-ui,sans-serif;background:#06131f;color:#edf7ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:radial-gradient(circle at 75% 0,#15394a 0,transparent 42%),#06131f}
+main{width:min(620px,100%);padding:clamp(24px,5vw,48px);border:1px solid #29495d;background:#0a1c2c;box-shadow:0 24px 80px #0008}
+.brand{display:flex;align-items:center;gap:16px;margin-bottom:34px}.brand img{width:64px;height:64px}.brand strong{display:block;font-size:21px}.brand span{display:block;color:#a7bfd0;letter-spacing:.13em;text-transform:uppercase}
+.eyebrow{color:#68e0c3;font:12px Consolas,monospace;letter-spacing:.12em}h1{font-size:clamp(27px,4vw,38px);line-height:1.15;margin:12px 0 12px}p{color:#a7bfd0;line-height:1.5;margin:0 0 28px}
+.track{height:6px;background:#1c3041;overflow:hidden}.track span{display:block;width:8%;height:100%;background:#68e0c3;transition:width .3s ease}
+#status{min-height:3em;margin:20px 0 0;color:#dbe8ee;line-height:1.5}button{margin-top:16px;padding:10px 16px;border:1px solid #68e0c3;background:#10283a;color:#edf7ff;cursor:pointer}[hidden]{display:none!important}
+</style></head><body><main role="status" aria-live="polite">
+<div class="brand"><img src="__SETUP_ICON_DATA_URI__" alt=""><div><strong>Open Sports</strong><span>Analyst</span></div></div>
+<span class="eyebrow">Getting Ready</span><h1>Preparing your workspace</h1>
+<p>Opening your sports library and setting up the tools for your next analysis.</p>
+<div class="track" aria-hidden="true"><span id="bar"></span></div>
+<div id="status">Starting Open Sports Analyst…</div>
+<button id="retry" type="button" hidden>Try Again</button>
+</main><script>
+const status=document.querySelector('#status'),bar=document.querySelector('#bar'),retry=document.querySelector('#retry');
+let polling=false,timer;
+async function update(){if(polling)return;polling=true;try{const state=await window.pywebview.api.startup_status();status.textContent=state.message;bar.style.width=`${Math.min(95,8+state.step*18)}%`}catch{}finally{polling=false}}
+async function launch(){retry.hidden=true;status.textContent='Starting Open Sports Analyst…';timer=setInterval(update,350);try{const result=await window.pywebview.api.start_desktop();clearInterval(timer);if(!result.ok)throw new Error(result.error);status.textContent='Opening your workspace…';bar.style.width='100%';location.replace(`${result.url}/?desktop=1`)}catch(error){clearInterval(timer);status.textContent=`Could not open the app: ${error.message||error}`;retry.hidden=false}}
+retry.addEventListener('click',launch);
+window.addEventListener('pywebviewready',launch,{once:true});
 </script></body></html>
 """.replace("__SETUP_ICON_DATA_URI__", SETUP_ICON_DATA_URI)
 
@@ -97,6 +126,22 @@ class DesktopController:
         self.worker_process: Any = None
         self.worker_stop: Any = None
         self.url = ""
+        self.startup_step = 0
+        self.startup_message = "Starting Open Sports Analyst…"
+
+    def _set_startup_stage(self, message: str) -> None:
+        self.startup_step += 1
+        self.startup_message = message
+
+    def startup_status(self) -> dict[str, str | int]:
+        return {"step": self.startup_step, "message": self.startup_message}
+
+    def start_desktop(self) -> dict[str, str | bool]:
+        try:
+            return {"ok": True, "url": self.start_server()}
+        except Exception as error:
+            self.startup_message = "Startup could not finish"
+            return {"ok": False, "error": str(error)}
 
     def start_server(self) -> str:
         if self.url:
@@ -110,7 +155,10 @@ class DesktopController:
 
         # Desktop jobs always use the private AppData SQLite ledger. Ignore
         # cloud/self-hosting backend variables inherited from a developer shell.
+        self._set_startup_stage("Reading your desktop settings")
         settings = get_settings().model_copy(update={"job_backend": "sqlite", "persistence_backend": "local"})
+        application = AnalystApplication(settings, startup_progress=self._set_startup_stage)
+        self._set_startup_stage("Starting the local app")
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -119,7 +167,7 @@ class DesktopController:
         port = int(listener.getsockname()[1])
         server = uvicorn.Server(
             uvicorn.Config(
-                create_app(AnalystApplication(settings)),
+                create_app(application),
                 host="127.0.0.1",
                 port=port,
                 log_level="info",
@@ -135,7 +183,9 @@ class DesktopController:
         self.url = f"http://127.0.0.1:{port}"
         thread.start()
         self._wait_until_ready()
+        self._set_startup_stage("Starting background analysis")
         self._start_worker_if_configured(settings)
+        self._set_startup_stage("Opening your workspace")
         return self.url
 
     def _start_worker_if_configured(self, settings: Any) -> None:
@@ -181,6 +231,8 @@ class DesktopController:
             with suppress(ValueError):
                 self.worker_process.close()
         self.worker_process = self.worker_stop = None
+        self.server = self.server_thread = self.socket = None
+        self.url = ""
 
     def _wait_until_ready(self, timeout: float = 30) -> None:
         deadline = time.monotonic() + timeout
@@ -228,9 +280,7 @@ def main(argv: list[str] | None = None) -> None:
 
     import webview
 
-    initial_content: dict[str, str] = (
-        {"url": controller.start_server()} if config_store.setup_complete and not arguments.configure else {"html": SETUP_HTML}
-    )
+    initial_content: dict[str, str] = {"html": STARTUP_HTML if config_store.setup_complete and not arguments.configure else SETUP_HTML}
     window = webview.create_window(
         APPLICATION_TITLE,
         js_api=controller,

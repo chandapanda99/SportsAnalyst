@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+import types
 from pathlib import Path
 
 from sports_analyst.api import bundled_frontend_directory
+from sports_analyst import desktop
 from sports_analyst.desktop import DesktopController, _run_desktop_worker
 from sports_analyst.desktop_config import DesktopConfigStore
 
@@ -104,3 +106,43 @@ def test_desktop_owns_appdata_worker_lifecycle(tmp_path: Path) -> None:
     controller.stop()
     assert first_process.kwargs["args"][1].stopped is True
     assert first_process.closed is True
+
+
+def test_desktop_opens_startup_screen_before_starting_service(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FakeConfigStore:
+        setup_complete = True
+
+        def load_environment(self) -> None:
+            pass
+
+    class FakeController:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def start_server(self) -> str:
+            events.append("service started")
+            return "http://127.0.0.1:1234"
+
+        def stop(self) -> None:
+            pass
+
+    class FakeClosedEvent:
+        def __iadd__(self, callback):
+            return self
+
+    class FakeWindow:
+        events = types.SimpleNamespace(closed=FakeClosedEvent())
+
+    def create_window(*args, **kwargs):
+        assert "Preparing your workspace" in kwargs["html"]
+        assert "url" not in kwargs
+        events.append("window created")
+        return FakeWindow()
+
+    monkeypatch.setattr(desktop, "DesktopConfigStore", FakeConfigStore)
+    monkeypatch.setattr(desktop, "DesktopController", FakeController)
+    monkeypatch.setitem(sys.modules, "webview", types.SimpleNamespace(create_window=create_window, start=lambda **kwargs: None))
+    desktop.main([])
+    assert events == ["window created"]

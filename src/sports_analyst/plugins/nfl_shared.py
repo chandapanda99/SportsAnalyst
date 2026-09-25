@@ -21,7 +21,7 @@ from sports_analyst.models import (
     stable_id,
 )
 
-LATEST_SYNCABLE_SEASON = 2025
+LATEST_SYNCABLE_SEASON = 2026
 
 NFL_TEAMS = {
     "ARI": "Arizona Cardinals",

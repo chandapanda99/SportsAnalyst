@@ -358,6 +358,26 @@ describe('Open Sports Analyst workbench', () => {
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
   });
 
+  it('offers the 2026 NFL season and syncs its current snapshot', async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/sports/nfl/options')) {
+        const options = await (await defaultFetch(input, init)).json();
+        options.syncable_seasons = [2026, ...options.syncable_seasons];
+        return new Response(JSON.stringify(options));
+      }
+      return defaultFetch(input, init);
+    });
+    render(App);
+    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
+    expect((screen.getByRole('checkbox', {name: '2026 season'}) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/2026 is still in progress/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Download or Refresh 1 sources for 2 seasons'}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))).toBe(true));
+    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
+    expect(JSON.parse(String(syncCall?.[1]?.body))).toEqual({seasons: [2026], datasets: ['play_by_play']});
+  });
+
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {
     render(App);
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');

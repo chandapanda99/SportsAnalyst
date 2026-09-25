@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,9 +56,12 @@ class AnalystApplication:
         *,
         restore_durable_index: bool = True,
         analysis_runtime: bool = True,
+        startup_progress: Callable[[str], None] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         configure_logging(self.settings.log_level)
+        if startup_progress:
+            startup_progress("Loading your saved sports data...")
         self.store = LocalStore(self.settings, persistence, restore_durable_index=restore_durable_index)
         nfl_connector = NFLVerseConnector(self.settings)
         nfl_plugin = NFLPlugin()
@@ -71,6 +75,8 @@ class AnalystApplication:
         self.connector = nfl_connector
         self.plugin = nfl_plugin
         if analysis_runtime:
+            if startup_progress:
+                startup_progress("Preparing analysis tools")
             from sports_analyst.agents import EvidenceBoundAgent
             from sports_analyst.telemetry import LangSmithTelemetry
 

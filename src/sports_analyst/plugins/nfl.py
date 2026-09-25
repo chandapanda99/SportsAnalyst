@@ -364,7 +364,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 ComparisonWindowOption(
                     value="full_seasons",
                     label="Full season range",
-                    description="Analyze every complete season from the selected start through end season.",
+                    description="Analyze available games in every season from the selected start through end season.",
                 ),
                 ComparisonWindowOption(value="week_ranges", label="Custom week ranges", description="Compare two inclusive week ranges."),
                 ComparisonWindowOption(

@@ -73,14 +73,10 @@ class Settings(BaseSettings):
         if self.job_dispatch_backend == "cloud_run":
             if self.job_backend != "object" or not self.cloud_run_project or not self.cloud_run_worker_job:
                 raise ValueError("Cloud Run dispatch requires durable jobs, CLOUD_RUN_PROJECT and CLOUD_RUN_WORKER_JOB")
-            if self.job_backend == "object" and not all((
-                self.cloud_run_sync_service_url,
-                self.cloud_tasks_queue,
-                self.cloud_tasks_service_account,
-            )):
-                raise ValueError(
-                    "Object jobs require CLOUD_RUN_SYNC_SERVICE_URL, CLOUD_TASKS_QUEUE and CLOUD_TASKS_SERVICE_ACCOUNT"
-                )
+            if (self.job_backend == "object" and
+                    not all((self.cloud_run_sync_service_url, self.cloud_tasks_queue, self.cloud_tasks_service_account))
+            ):
+                raise ValueError("Object jobs require CLOUD_RUN_SYNC_SERVICE_URL, CLOUD_TASKS_QUEUE and CLOUD_TASKS_SERVICE_ACCOUNT")
             if bool(self.cloud_run_analysis_service_url) != bool(self.cloud_tasks_analysis_queue):
                 raise ValueError("CLOUD_RUN_ANALYSIS_SERVICE_URL and CLOUD_TASKS_ANALYSIS_QUEUE must be set together")
         if self.job_backend not in {"local", "sqlite", "object"}:

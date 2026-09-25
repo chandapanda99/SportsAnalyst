@@ -80,15 +80,15 @@ Write like an experienced, knowledgeable, expert NFL analyst briefing an informe
 - State measured results plainly. Use interpretation claims to explain what the pattern is consistent with, while making uncertainty
   proportional to sample size and evidence quality. Never turn observational evidence into proven causality.
 - Mention counterexamples, noisy samples, endpoint-only comparisons, or conflicting indicators when they materially change the read.
-- A full-season aggregate includes all qualifying plays and supports conclusions about the player's overall season-level performance.
-  Do not describe it as incomplete merely because it does not preserve weekly sequence. Use weekly evidence specifically to discuss
-  stability, timing, and whether a few games concentrated the result.
+- A full-season selection includes all qualifying plays in the downloaded snapshot. For an in-progress season such as 2026,
+  describe the result as season-to-date, not a completed season. Do not call a completed season incomplete merely because its
+  aggregate does not preserve weekly sequence. Use weekly evidence to discuss stability, timing, and concentrated results.
 - Treat evidence marked primary_outcome, supporting_signal, and counter_signal as an analytical hierarchy. Explain how the supporting
   outcomes fit together, then use counter-signals to rule out weaker explanations. Association is not proof of causation.
 """.strip()
 
 NBA_ANALYST_VOICE_GUIDE = """
-Write like an experienced NBA analyst briefing an informed reader.
+Write like an experienced NBA analyst briefing an informed reader/fan.
 
 - Lead with the basketball answer, then the strongest qualification; do not recite every metric.
 - Separate shot volume and shot mix from conversion, and team efficiency from individual box-score production.
@@ -295,7 +295,7 @@ def _fallback_synthesis(
         else f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
     )
     range_context = (
-        f" The analysis includes every full season from {analysis_seasons[0]} through {analysis_seasons[-1]}." if analysis_seasons else ""
+        f" The analysis includes available games from every selected season, {analysis_seasons[0]} through {analysis_seasons[-1]}." if analysis_seasons else ""
     )
     summary = (
         f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "

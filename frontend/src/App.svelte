@@ -396,6 +396,9 @@
   let workspaceLoading = true;
   let workspaceLoadError = '';
   let backendReady = false;
+  const desktopMode = new URLSearchParams(window.location.search).has('desktop');
+  let initialWorkspaceReady = false;
+  let initialWorkspaceError = '';
   type DraftState = {
     question: string; team: string; teamInput: string; baseline: number; comparison: number;
     baselineStartWeek: number; baselineEndWeek: number; comparisonStartWeek: number; comparisonEndWeek: number;
@@ -691,6 +694,8 @@
       datasets = nextDatasets;
       history = nextHistory;
       initializeSelections();
+      initialWorkspaceReady = true;
+      initialWorkspaceError = '';
       const unresolvedPlayerHistory = nextHistory.some((item) => item.run.subject?.type === 'player' && !item.run.subject.display_name);
       if (subjectType === 'player' || unresolvedPlayerHistory) void loadPlayers();
     } catch (problem) {
@@ -706,6 +711,7 @@
       }
       workspaceLoadError = String(problem);
       error = workspaceLoadError;
+      initialWorkspaceError = workspaceLoadError;
     } finally {
       if (requestVersion === workspaceRequestVersion && sport === activeSport) workspaceLoading = false;
     }
@@ -813,10 +819,7 @@
     }
     if (!initializedSelections) {
       selectedMetrics = [...analysisOptions.default_metrics];
-      const localSeasons = [...analysisOptions.available_seasons].sort((left, right) => right - left);
-      syncSeasons = localSeasons.length
-          ? localSeasons.slice(0, 2)
-          : analysisOptions.syncable_seasons.filter(season => {
+      syncSeasons = analysisOptions.syncable_seasons.filter(season => {
             const required = analysisOptions?.data_setup?.required_datasets ?? ['play_by_play'];
             return required.every(source => eligibleSelectedSeasons(source, [season]).length);
           }).slice(0, 2);
@@ -1401,7 +1404,9 @@
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => (item.sport ?? 'nfl') === activeSport && item.dataset === dataset) ? [] : selectedSeasons.slice(0, 1);
     }
-    return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) => !syncedPackages(season).has(dataset));
+    const currentNflSeason = activeSport === 'nfl' ? 2026 : null;
+    return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
+        season === currentNflSeason || !syncedPackages(season).has(dataset));
   }
 
   function seasonLabel(season: number) {
@@ -1437,7 +1442,7 @@
       return `${seasonLabel(baselineWindow.season)} ${baselineWindow.segment?.replaceAll('_', ' ') ?? ''} → ${seasonLabel(comparisonWindow.season)} ${comparisonWindow.segment?.replaceAll('_', ' ') ?? ''}`;
     }
     return item.run.scope.comparison_design === 'full_seasons'
-        ? `Full Seasons ${baselineWindow.season}–${comparisonWindow.season}`
+        ? `Season Range ${baselineWindow.season}–${comparisonWindow.season}`
         : `${baselineWindow.season} W${baselineWindow.weeks[0]}–${baselineWindow.weeks[1]} → ${comparisonWindow.season} W${comparisonWindow.weeks[0]}–${comparisonWindow.weeks[1]}`;
   }
 
@@ -2080,7 +2085,7 @@
                         <label class:selected={syncSeasons.includes(season)}>
                           <input type="checkbox" aria-label={`${season} season`} checked={syncSeasons.includes(season)}
                                  on:change={() => toggleSyncSeason(season)}/>
-                          <strong>{seasonLabel(season)}</strong>
+                          <strong>{seasonLabel(season)}{activeSport === 'nfl' && season === 2026 ? ' · Current' : ''}</strong>
                           <small>{seasonPackageStatus(season)}</small>
                         </label>
                       {/each}
@@ -2113,8 +2118,11 @@
                     </div>
                   </fieldset>
                 </div>
+                {#if activeSport === 'nfl' && syncSeasons.includes(2026)}
+                  <p class="current-season-note">2026 is still in progress. Analyses use games in your latest downloaded snapshot; refresh it as nflverse publishes new results. For like-for-like comparisons, select matching week ranges.</p>
+                {/if}
                 <button class="download-data-button" disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>
-                  Download {syncDatasets.filter(source => packageEligible(source)).length} sources for {syncSeasons.length} seasons
+                  {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length} sources for {syncSeasons.length} seasons
                   <Icon name="database-import" size={20}/>
                 </button>
               {/if}
@@ -2356,6 +2364,9 @@
                   </div>
                   {#if comparisonMode === 'full_seasons' && windowsDiffer}
                     <p class="range-summary">{`Includes every season from ${baseline} through ${comparison}: ${requiredSeasons.join(', ')}.`}</p>
+                  {/if}
+                  {#if activeSport === 'nfl' && requiredSeasons.includes(2026)}
+                    <p class="current-season-note">The current season is incomplete. Results reflect only games in the downloaded 2026 snapshot; use matching week ranges to compare equivalent portions of past seasons.</p>
                   {/if}
                   {#if !windowsDiffer}
                     <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
@@ -2774,3 +2785,20 @@
     {/if}
   </main>
 </div>
+{#if desktopMode && !initialWorkspaceReady}
+  <div class="desktop-startup-overlay" role="status" aria-live="polite">
+    <div class="desktop-startup-card">
+      <div class="desktop-startup-brand"><Icon name="sports-analyst" size={56}/><span>Open Sports <strong>Analyst</strong></span></div>
+      <span class="desktop-startup-kicker">Getting Ready</span>
+      <h1>Preparing your workspace</h1>
+      <p>Loading your sports library and analysis settings.</p>
+      <div class="desktop-startup-track" aria-hidden="true"><span></span></div>
+      {#if initialWorkspaceError}
+        <p class="desktop-startup-error">We couldn't finish opening your workspace. {initialWorkspaceError}</p>
+        <button type="button" on:click={() => { initialWorkspaceError = ''; void refresh(); }}>Try Again</button>
+      {:else}
+        <p class="desktop-startup-status">{backendReady ? 'Checking your sports data and analysis tools…' : 'Connecting to the local app…'}</p>
+      {/if}
+    </div>
+  </div>
+{/if}

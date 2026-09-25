@@ -130,6 +130,7 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
     )
     options = plugin.analysis_options([*manifests.values(), manifest(0, directory.columns, "players")])
     assert options.available_seasons == [2024, 2025]
+    assert options.syncable_seasons[0] == 2026
     assert all(0 not in metric.available_seasons for metric in options.metrics)
     alias_result = plugin.analyze(
         request.model_copy(update={"subject": AnalysisSubject(type="player", id="MahoPa00", team_id="KC")}),

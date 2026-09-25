@@ -12,6 +12,7 @@ from sports_analyst.data import NFLVerseConnector
 from sports_analyst.models import DatasetManifest, stable_id
 from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.object_jobs import ObjectJobStore
+from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
 from sports_analyst.storage import LocalStore
 
 logger = logging.getLogger("sports_analyst.service")
@@ -66,6 +67,10 @@ def run_dataset_sync(
 
     application.store.refresh_durable_datasets(sport, seasons, selected_datasets)
     existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport)}
+    if sport == "nfl":
+        # In-season nflverse packages change after games and stat corrections.
+        # Keep older local seasons, but replace selected current-season snapshots.
+        existing = {(dataset, season) for dataset, season in existing if season != LATEST_SYNCABLE_SEASON}
     registered: set[str] = set()
     last_sync_progress = 0.08
     progress_lock = Lock()

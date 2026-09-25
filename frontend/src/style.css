@@ -21,6 +21,38 @@ button, input, textarea, select {
     min-height: 100vh
 }
 
+.desktop-startup-overlay {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: radial-gradient(circle at 75% 0, #15394a 0, transparent 42%), #06131f;
+    color: #edf7ff;
+}
+
+.desktop-startup-card {
+    width: min(620px, 100%);
+    padding: clamp(24px, 5vw, 48px);
+    border: 1px solid #29495d;
+    background: #0a1c2c;
+    box-shadow: 0 24px 80px #0008;
+}
+
+.desktop-startup-brand { display: flex; align-items: center; gap: 16px; margin-bottom: 34px; font-size: 20px; font-weight: 700; }
+.desktop-startup-brand strong { display: block; color: #a7bfd0; font-size: 16px; font-weight: 400; letter-spacing: .13em; text-transform: uppercase; }
+.desktop-startup-kicker { color: #68e0c3; font: 12px Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+.desktop-startup-card h1 { margin: 12px 0; font-size: clamp(27px, 4vw, 38px); line-height: 1.15; }
+.desktop-startup-card p { color: #a7bfd0; line-height: 1.5; }
+.desktop-startup-track { height: 6px; margin: 28px 0 20px; overflow: hidden; background: #1c3041; }
+.desktop-startup-track span { display: block; width: 35%; height: 100%; background: #68e0c3; animation: desktop-startup-progress 1.7s ease-in-out infinite alternate; }
+.desktop-startup-card .desktop-startup-error { color: #ffb6a9; }
+.desktop-startup-card button { padding: 10px 16px; border: 1px solid #68e0c3; background: #10283a; color: #edf7ff; cursor: pointer; }
+.current-season-note { margin: 12px 0; padding: 10px 14px; border-left: 3px solid var(--color-border-interactive); background: var(--color-surface-raised, #10283a); color: var(--color-text-secondary, #c9d8e2); line-height: 1.5; }
+@keyframes desktop-startup-progress { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .desktop-startup-track span { animation: none; width: 100%; } }
+
 .rail {
     position: sticky;
     top: 0;

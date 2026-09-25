@@ -16,7 +16,7 @@ def _window_label(window) -> str:
 
 def _scope_label(scope) -> str:
     if scope.comparison_design == "full_seasons":
-        return f"Full seasons {scope.baseline.season}–{scope.comparison.season} (inclusive)"
+        return f"Season range {scope.baseline.season}–{scope.comparison.season} (available games)"
     baseline = _window_label(scope.baseline)
     comparison = _window_label(scope.comparison)
     return f"{baseline} → {comparison}"

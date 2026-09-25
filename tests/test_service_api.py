@@ -321,4 +321,4 @@ def test_service_loads_every_season_in_a_full_season_range(tmp_path: Path, pbp_p
         2024,
         2025,
     }
-    assert "every full season from 2022 through 2025" in bundle.summary
+    assert "available games from every selected season, 2022 through 2025" in bundle.summary

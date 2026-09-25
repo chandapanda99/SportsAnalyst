@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import polars as pl
 
@@ -6,6 +8,7 @@ from sports_analyst.config import Settings
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.models import AnalysisPlan, AnalysisScope, InvestigationBundle, InvestigationRun, RunStatus
 from sports_analyst.storage import LocalStore
+from sports_analyst.sync_service import run_dataset_sync
 
 
 class MemoryPersistence:
@@ -98,6 +101,21 @@ def test_large_nfl_syncs_stream_parquet_without_loading_the_remote_frame(tmp_pat
     assert manifests[0].columns == ["season", "posteam", "epa"]
     assert Path(manifests[0].local_path).read_bytes() == source.read_bytes()
     assert manifests[1].dataset == "weekly_rosters"
+
+
+def test_current_nfl_season_is_refreshed_while_past_seasons_are_reused() -> None:
+    connector = MagicMock()
+    connector.sync.return_value = []
+    store = MagicMock()
+    store.manifests.return_value = [
+        SimpleNamespace(dataset="play_by_play", season=2025),
+        SimpleNamespace(dataset="play_by_play", season=2026),
+    ]
+    application = SimpleNamespace(connectors={"nfl": connector}, store=store, events=MagicMock())
+
+    run_dataset_sync(application, [2025, 2026], "test-sync", ["play_by_play"], "nfl")
+
+    assert connector.sync.call_args.kwargs["skip"] == {("play_by_play", 2025)}
 
 
 def test_durable_store_restores_metadata_and_lazily_materializes_artifacts(tmp_path: Path) -> None:
