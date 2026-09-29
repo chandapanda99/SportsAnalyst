@@ -55,6 +55,8 @@ POSITIVE_IS_BETTER.update(
     }
 )
 LOWER_IS_BETTER.update({"defensive_rating", "turnovers_per_game", "lineup_def_rating"})
+POSITIVE_IS_BETTER.update({"points_per_match", "win_rate", "goals_for_per_match"})
+LOWER_IS_BETTER.update({"goals_against_per_match", "loss_rate", "cards"})
 
 
 def _sample_confidence(sample_size: int) -> Literal["low", "medium", "high"]:
@@ -99,6 +101,14 @@ Write like an experienced NBA analyst briefing an informed reader/fan.
 - Make uncertainty proportional to games, possessions, and data coverage. A descriptive confidence interval is not causal evidence.
 - Mention counterexamples and extreme games when they reveal instability. Do not claim that endpoint movement proves a steady trend.
 - Use active, natural prose. Do not mention tools, prompts, evidence keys, or the report-generation process.
+""".strip()
+
+SOCCER_ANALYST_VOICE_GUIDE = """
+Write like a soccer analyst briefing an informed supporter.
+- Lead with the measured change in results, goals, attacking volume, or player involvement.
+- Use match and competition terminology. Separate recorded events from tactical inference.
+- Explain sample size and missing match sections when they limit the comparison.
+- Do not claim expected goals, player positions, or ball paths unless recorded.
 """.strip()
 
 
@@ -259,6 +269,7 @@ def _fallback_synthesis(
         conversation_context: list[dict[str, str]] | None = None,
         analysis_domain: str = "passing",
         sport: str = "nfl",
+        competition: str | None = None,
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     preferred_metric = {
@@ -284,22 +295,29 @@ def _fallback_synthesis(
     else:
         improved = change > 0 if primary.metric in POSITIVE_IS_BETTER else change < 0
         direction = "improved" if improved else "declined"
-    baseline_label = (
-        f"{baseline.season} {baseline.segment.replace('_', ' ')}"
-        if baseline.segment
-        else f"{baseline.season} weeks {baseline.weeks[0]}–{baseline.weeks[1]}"
-    )
-    comparison_label = (
-        f"{comparison.season} {comparison.segment.replace('_', ' ')}"
-        if comparison.segment
-        else f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
-    )
+    if sport == "soccer":
+        from sports_analyst.soccer_data import SOCCER_COMPETITIONS, soccer_season_label
+
+        season_label = lambda year: soccer_season_label(competition, year) if competition in SOCCER_COMPETITIONS else str(year)
+        baseline_label = f"{baseline.start_date} to {baseline.end_date}" if baseline.start_date else f"{season_label(baseline.season)} season"
+        comparison_label = f"{comparison.start_date} to {comparison.end_date}" if comparison.start_date else f"{season_label(comparison.season)} season"
+    else:
+        baseline_label = (
+            f"{baseline.season} {baseline.segment.replace('_', ' ')}"
+            if baseline.segment
+            else f"{baseline.season} weeks {baseline.weeks[0]}–{baseline.weeks[1]}"
+        )
+        comparison_label = (
+            f"{comparison.season} {comparison.segment.replace('_', ' ')}"
+            if comparison.segment
+            else f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
+        )
     range_context = (
         f" The analysis includes available games from every selected season, {analysis_seasons[0]} through {analysis_seasons[-1]}." if analysis_seasons else ""
     )
     summary = (
         f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "
-        f"The findings below separate measured changes from {('basketball' if sport == 'nba' else 'football')} interpretation "
+        f"The findings below separate measured changes from {('basketball' if sport == 'nba' else 'soccer' if sport == 'soccer' else 'football')} interpretation "
         "and link each statement to reproducible evidence."
     )
     if conversation_context:
@@ -403,6 +421,7 @@ class EvidenceBoundAgent:
             sport: str = "nfl",
             progress_callback: Callable[[str, float], None] | None = None,
             trace_metadata: dict[str, Any] | None = None,
+            competition: str | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -417,7 +436,7 @@ class EvidenceBoundAgent:
 
         report_progress("Organizing the validated evidence", 0.76)
         fallback = _fallback_synthesis(
-            question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context, analysis_domain, sport
+            question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context, analysis_domain, sport, competition
         )
         logger.debug(
             "synthesis_requested provider=%s aggregate_count=%d play_count=%d",
@@ -504,9 +523,9 @@ class EvidenceBoundAgent:
                 return json.dumps(filtered[: max(1, min(limit, 25))], indent=2, default=str)
 
             tools: list[Any] = [inspect_aggregate_evidence, inspect_representative_plays]
-            sport_label = "NBA" if sport == "nba" else "NFL"
-            sport_noun = "basketball" if sport == "nba" else "football"
-            voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else ANALYST_VOICE_GUIDE
+            sport_label = {"nba": "NBA", "soccer": "Soccer", "nfl": "NFL"}.get(sport, sport.upper())
+            sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football"}.get(sport, sport)
+            voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
             common = (
                     "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
                     f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
@@ -514,13 +533,16 @@ class EvidenceBoundAgent:
                     "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" +
                     voice_guide
             )
+            if sport == "soccer" and competition:
+                common += f" Competition code: {competition}. Use match and season terminology, not plays or weeks."
             if analysis_seasons:
-                common += (
-                    f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
-                    "not only the first and final seasons. Full-season endpoints summarize every qualifying play and support an overall "
-                    "season-level conclusion. Distinguish that conclusion from the separate weekly question of stability or timing, and "
-                    "only raise a temporal limitation when it materially affects the answer."
-                )
+                common += (f" This is an inclusive full-season range containing {analysis_seasons}; compare recorded matches, "
+                           "and do not infer a season-by-season trend without intermediate-season measurements."
+                           if sport == "soccer" else
+                           f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
+                           "not only the first and final seasons. Full-season endpoints summarize every qualifying play and support an overall "
+                           "season-level conclusion. Distinguish that conclusion from the separate weekly question of stability or timing, and "
+                           "only raise a temporal limitation when it materially affects the answer.")
             if conversation_context:
                 common += (
                     " This is a follow-up in an existing investigation thread. Use the prior conversation only as context, answer the "

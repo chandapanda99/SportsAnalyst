@@ -1,8 +1,9 @@
 export type DatasetManifest = {
   source_url?: string; package_version?: string; attribution?: string; license?: string;
-  manifest_id: string; sport: string; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
+  manifest_id: string; sport: string; competition?: string | null; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
+  coverage?: {completed_matches?: number; expected_matches?: number; recorded_matches?: number; fetched_intervals?: number; expected_intervals?: number};
 };
-export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string };
+export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string };
 export type TeamOption = { value: string; label: string };
 export type PlayerOption = {
   player_id: string;
@@ -46,7 +47,7 @@ export type InvestigationRequest = {
   subject: AnalysisSubject;
   question: string;
   analysis_domain: string;
-  scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: string };
+  scope: { team: string; competition?: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: string };
   metrics: string[];
   splits: string[];
 };
@@ -84,6 +85,7 @@ export type PlayVisualization = {
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
   shot_x?: number; shot_y?: number; shot_coordinate_system?: string; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
   game_date?: string; home_team_name?: string; away_team_name?: string;
+  soccer_timeline?: Array<{clock: string; text: string; type: string}>;
   quarter_seconds_remaining?: number; game_seconds_remaining?: number;
   secondary_player_name?: string; secondary_player_role?: string; tertiary_player_name?: string; tertiary_player_role?: string;
 };
@@ -92,7 +94,7 @@ export type Chart = { chart_id: string; title: string; specification: Record<str
 export type Investigation = {
   dataset_manifests?: DatasetManifest[];
   executions?: Array<{tool: string; version?: string; duration_ms?: number; parameters?: Record<string, unknown>; dataset_manifest_ids?: string[]; sql?: string | null}>;
-  run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
+  run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; competition?: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };

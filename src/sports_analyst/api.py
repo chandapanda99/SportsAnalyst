@@ -32,6 +32,7 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.service import AnalystApplication
+from sports_analyst.soccer_data import SOCCER_COMPETITIONS
 
 logger = logging.getLogger("sports_analyst.api")
 
@@ -51,6 +52,7 @@ class SyncRequest(BaseModel):
     # bounded payload without rejecting a valid full-catalog selection.
     seasons: list[int] = Field(min_length=1, max_length=64)
     datasets: list[str] | None = Field(default=None, min_length=1, max_length=64)
+    competition: str | None = None
 
 
 class FollowUpRequest(BaseModel):
@@ -131,10 +133,10 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         return service.sport_options()
 
     @api.get("/api/sports/{sport}/options", response_model=AnalysisOptions)
-    def analysis_options(sport: str) -> AnalysisOptions:
+    def analysis_options(sport: str, competition: str | None = None) -> AnalysisOptions:
         refresh_catalog()
         try:
-            return service.analysis_options(sport)
+            return service.analysis_options(sport, competition)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -153,10 +155,10 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.get("/api/sports/{sport}/players", response_model=list[PlayerOption])
-    def players(sport: str, query: str = "") -> list[PlayerOption]:
+    def players(sport: str, query: str = "", competition: str | None = None) -> list[PlayerOption]:
         refresh_catalog()
         try:
-            return service.resolve_players(query, sport)
+            return service.resolve_players(query, sport, competition)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -166,9 +168,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             service._sport(sport)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        if sport == "soccer" and request.competition not in SOCCER_COMPETITIONS:
+            raise HTTPException(status_code=422, detail="Select a supported soccer competition")
         job_id = stable_id(
             "sync",
-            {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
 
@@ -178,7 +182,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
         def execute() -> None:
             try:
-                service.sync(request.seasons, job_id, request.datasets, sport)
+                service.sync(request.seasons, job_id, request.datasets, sport, request.competition)
             except Exception as error:
                 logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
                 logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
@@ -194,9 +198,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             service._sport(sport)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        if sport == "soccer" and request.competition not in SOCCER_COMPETITIONS:
+            raise HTTPException(status_code=422, detail="Select a supported soccer competition")
         job_id = stable_id(
             "sync",
-            {"sport": sport, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
         if service.jobs is not None:
@@ -207,7 +213,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                          "X-Job-Timeout-Seconds": str(timeout_seconds)},
             )
         return StreamingResponse(
-            _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds),
+            _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds, request.competition),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -480,12 +486,13 @@ async def _dataset_sync_stream(
         seasons: list[int],
         datasets: list[str] | None,
         timeout_seconds: float,
+        competition: str | None = None,
 ):
     """Run a blocking dataset sync while its SSE response keeps the hosting instance active."""
 
     def execute() -> None:
         try:
-            service.sync(seasons, job_id, datasets, sport)
+            service.sync(seasons, job_id, datasets, sport, competition)
         except Exception as error:
             logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
             logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)

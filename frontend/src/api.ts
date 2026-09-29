@@ -96,8 +96,8 @@ export const api = {
     return result;
   },
   sports: () => json<SportOption[]>('/api/sports'),
-  analysisOptions: (sport = 'nfl') => json<AnalysisOptions>(`/api/sports/${sport}/options`),
-  players: (sport: string, query = '') => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}`),
+  analysisOptions: (sport = 'nfl', competition?: string) => json<AnalysisOptions>(`/api/sports/${sport}/options${competition ? `?competition=${encodeURIComponent(competition)}` : ''}`),
+  players: (sport: string, query = '', competition?: string) => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}`),
   datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),
   investigations: (limit?: number, offset = 0, sport?: string) => {
     const params = new URLSearchParams();
@@ -119,12 +119,12 @@ export const api = {
   evidenceBatch: (id: string, evidenceIds: string[]) => json<Evidence[]>(`/api/investigations/${id}/evidence/batch`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ evidence_ids: evidenceIds })
   }),
-  sync: (sport: string, seasons: number[], datasets: string[]) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
+  sync: (sport: string, seasons: number[], datasets: string[], competition?: string) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition })
   }),
-  syncStream: (sport: string, seasons: number[], datasets: string[]) =>
+  syncStream: (sport: string, seasons: number[], datasets: string[], competition?: string) =>
     eventStream(`/api/datasets/${sport}/sync-stream`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets })
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition })
     }, 'Dataset'),
   investigate: (request: InvestigationRequest) =>
     json<{ investigation_id: string }>('/api/investigations', {

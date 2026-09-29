@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -30,6 +30,7 @@ class DatasetManifest(BaseModel):
     model_config = ConfigDict(frozen=True)
     manifest_id: str
     sport: str = "nfl"
+    competition: str | None = None
     dataset: str = "play_by_play"
     season: int = Field(ge=0, le=2100, description="NFL season, or 0 for a shared reference table")
     source_url: str
@@ -44,6 +45,7 @@ class DatasetManifest(BaseModel):
     local_path: str
     file_size: int | None = Field(default=None, ge=0)
     modified_ns: int | None = Field(default=None, ge=0)
+    coverage: dict[str, int] = Field(default_factory=dict)
 
 
 class AnalysisWindow(BaseModel):
@@ -51,6 +53,15 @@ class AnalysisWindow(BaseModel):
     season: int = Field(ge=1999, le=2100)
     weeks: tuple[int, int] = (1, 22)
     segment: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date(cls, value: str | None) -> str | None:
+        if value is not None:
+            date.fromisoformat(value)
+        return value
 
     @field_validator("weeks", mode="before")
     @classmethod
@@ -76,6 +87,8 @@ class AnalysisWindow(BaseModel):
 
     @property
     def period_type(self) -> str:
+        if self.start_date or self.end_date:
+            return "date_range"
         return "season_segment" if self.segment else "week_range"
 
 
@@ -97,11 +110,12 @@ class AnalysisSubject(BaseModel):
 
 class AnalysisScope(BaseModel):
     model_config = ConfigDict(frozen=True)
-    team: str = Field(min_length=2, max_length=64)
+    team: str = Field(min_length=1, max_length=64)
+    competition: str | None = None
     baseline: AnalysisWindow
     comparison: AnalysisWindow
     season_type: Literal["REG", "POST", "ALL"] = "REG"
-    comparison_design: Literal["full_seasons", "week_ranges", "before_after", "season_segments", "before_after_milestone"] = "week_ranges"
+    comparison_design: Literal["full_seasons", "week_ranges", "before_after", "season_segments", "before_after_milestone", "date_ranges"] = "week_ranges"
 
     @model_validator(mode="before")
     @classmethod
@@ -140,6 +154,13 @@ class AnalysisScope(BaseModel):
     def validate_windows(self) -> AnalysisScope:
         if self.baseline == self.comparison:
             raise ValueError("comparison windows must differ")
+        if self.comparison_design == "date_ranges" and any(
+            not window.start_date or not window.end_date for window in (self.baseline, self.comparison)
+        ):
+            raise ValueError("date-range comparisons require a start and end date for both windows")
+        for window in (self.baseline, self.comparison):
+            if window.start_date and window.end_date and window.start_date > window.end_date:
+                raise ValueError("window start_date must be on or before end_date")
         if self.comparison_design == "full_seasons":
             if (
                 self.baseline.segment is None
@@ -448,6 +469,7 @@ class PlayVisualization(BaseModel):
     away_team_name: str | None = None
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
+    soccer_timeline: list[dict[str, str]] = Field(default_factory=list)
     secondary_player_name: str | None = None
     secondary_player_role: str | None = None
     tertiary_player_name: str | None = None

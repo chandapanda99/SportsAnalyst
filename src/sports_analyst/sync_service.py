@@ -11,6 +11,7 @@ from sports_analyst.config import Settings
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.models import DatasetManifest, stable_id
 from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
+from sports_analyst.soccer_data import SOCCER_DEFAULT_DATASETS, SportsDataverseSoccerConnector, soccer_season_label
 from sports_analyst.object_jobs import ObjectJobStore
 from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
 from sports_analyst.storage import LocalStore
@@ -27,6 +28,7 @@ class DatasetSyncApplication:
         self.connectors = {
             "nfl": NFLVerseConnector(settings),
             "nba": SportsDataverseNBAConnector(settings),
+            "soccer": SportsDataverseSoccerConnector(settings),
         }
         polling = settings.job_progress_transport == "poll"
         self.jobs = ObjectJobStore(
@@ -37,9 +39,9 @@ class DatasetSyncApplication:
         self.events = self.jobs
 
     def sync(
-            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl"
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None
     ) -> list[DatasetManifest]:
-        return run_dataset_sync(self, seasons, job_id, datasets, sport)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition)
 
 
 def run_dataset_sync(
@@ -48,13 +50,14 @@ def run_dataset_sync(
         job_id: str | None = None,
         datasets: list[str] | None = None,
         sport: str = "nfl",
+        competition: str | None = None,
 ) -> list[DatasetManifest]:
     if sport not in application.connectors:
         raise ValueError(f"unsupported sport {sport!r}")
     connector = application.connectors[sport]
-    selected_datasets = list(datasets or (["play_by_play"] if sport == "nfl" else NBA_DEFAULT_DATASETS))
+    selected_datasets = list(datasets or (["play_by_play"] if sport == "nfl" else SOCCER_DEFAULT_DATASETS if sport == "soccer" else NBA_DEFAULT_DATASETS))
     key = job_id or stable_id(
-        "sync", {"sport": sport, "seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)}
+        "sync", {"sport": sport, "competition": competition, "seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)}
     )
     started_at = perf_counter()
     logger.info(
@@ -65,8 +68,14 @@ def run_dataset_sync(
     )
     application.events.emit(key, "starting", f"Preparing selected {sport.upper()} datasets", 0.05)
 
-    application.store.refresh_durable_datasets(sport, seasons, selected_datasets)
-    existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport)}
+    application.store.refresh_durable_datasets(sport, seasons, selected_datasets, competition)
+    existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)}
+    if sport == "soccer":
+        incomplete = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)
+                      if (manifest.coverage.get("fetched_intervals", 0) < manifest.coverage.get("expected_intervals", 0)
+                          if manifest.dataset == "play_by_play" else
+                          manifest.coverage.get("completed_matches", 0) < manifest.coverage.get("expected_matches", 0))}
+        existing -= incomplete
     if sport == "nfl":
         # In-season nflverse packages change after games and stat corrections.
         # Keep older local seasons, but replace selected current-season snapshots.
@@ -81,7 +90,7 @@ def run_dataset_sync(
             if total <= 0:
                 return
             label = dataset.replace("_", " ").title()
-            season_label = "reference data" if season == 0 else (f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season))
+            season_label = "reference data" if season == 0 else (soccer_season_label(competition, season) if sport == "soccer" else f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season))
             offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
             unit_progress = min(total, completed + offsets.get(phase, 0.0))
             progress = 0.08 + 0.68 * unit_progress / total
@@ -113,11 +122,12 @@ def run_dataset_sync(
             round((perf_counter() - upload_started_at) * 1000),
         )
 
-    manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing)
+    sync_kwargs = {"competition": competition} if sport == "soccer" else {}
+    manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)
-    application.store.publish_dataset_catalog(application.store.manifests(sport=sport))
+    application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
     connector.clear_cache()
     application.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
     logger.info(

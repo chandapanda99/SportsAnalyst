@@ -30,6 +30,8 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
+from sports_analyst.soccer_data import SportsDataverseSoccerConnector
+from sports_analyst.plugins.soccer import SoccerPlugin
 from sports_analyst.persistence import PersistenceBackend
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
 from sports_analyst.sql import execute_read_only_sql
@@ -68,8 +70,9 @@ class AnalystApplication:
         self.connectors: dict[str, Any] = {
             "nfl": nfl_connector,
             "nba": SportsDataverseNBAConnector(self.settings),
+            "soccer": SportsDataverseSoccerConnector(self.settings),
         }
-        self.plugins: dict[str, Any] = {"nfl": nfl_plugin, "nba": NBAPlugin()}
+        self.plugins: dict[str, Any] = {"nfl": nfl_plugin, "nba": NBAPlugin(), "soccer": SoccerPlugin()}
         # Compatibility aliases for integrations that still customize the NFL
         # application through these public attributes.
         self.connector = nfl_connector
@@ -123,6 +126,7 @@ class AnalystApplication:
                 live_available=live,
                 live_message=None if live else "Install the nba-live extra to enable live NBA Stats fallbacks.",
             ),
+            SportOption(value="soccer", label="Soccer", available=True),
         ]
 
     def _sport(self, sport: str) -> tuple[Any, Any]:
@@ -176,9 +180,13 @@ class AnalystApplication:
                 predicate &= pl.col("qb_spike").fill_null(0) != 1
         return predicate
 
-    def analysis_options(self, sport: str = "nfl") -> AnalysisOptions:
+    def analysis_options(self, sport: str = "nfl", competition: str | None = None) -> AnalysisOptions:
         connector, plugin = self._sport(sport)
         manifests = self.store.manifests(sport=sport)
+        if sport == "soccer":
+            competition = competition or "eng.1"
+            schedules = {item.season: self._load_dataset(connector, item) for item in self.store.manifests("play_by_play", sport, competition)}
+            return plugin.analysis_options(manifests, {"competition": competition, "schedules": schedules})
         if sport == "nfl":
             team_manifests = self.store.manifests("teams", sport)
             context = self._load_dataset(connector, team_manifests[0]) if team_manifests else None
@@ -197,8 +205,12 @@ class AnalystApplication:
     def tool_definitions(self, sport: str = "nfl") -> list[ToolDefinition]:
         return self._sport(sport)[1].tools()
 
-    def resolve_players(self, query: str, sport: str = "nfl") -> list[PlayerOption]:
+    def resolve_players(self, query: str, sport: str = "nfl", competition: str | None = None) -> list[PlayerOption]:
         connector, plugin = self._sport(sport)
+        if sport == "soccer":
+            manifests = self.store.manifests("lineups", sport, competition)
+            sources = [(manifest.season, self._load_dataset(connector, manifest)) for manifest in manifests]
+            return plugin.resolve_players(query, sources)
         allowed = (
             {"play_by_play", "rosters", "weekly_rosters", "player_stats", "players"}
             if sport == "nfl"
@@ -219,17 +231,19 @@ class AnalystApplication:
         return plugin.resolve_players(query, sources)
 
     def sync(
-            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl"
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None
     ) -> list[DatasetManifest]:
         from sports_analyst.sync_service import run_dataset_sync
 
-        return run_dataset_sync(self, seasons, job_id, datasets, sport)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition)
 
     def dataset_sync_timeout_seconds(
             self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
     ) -> int:
         """Size the inactivity timeout to the selected bulk-download workload."""
         baseline = self.settings.event_stream_timeout_seconds
+        if sport == "soccer":
+            return max(baseline, 3600)
         if sport != "nba":
             return baseline
         selected = list(dict.fromkeys(datasets or ["play_by_play", "schedules", "team_boxscores", "player_boxscores"]))
@@ -338,7 +352,7 @@ class AnalystApplication:
             self.telemetry.add_outputs(plan_span, {"planned_tool_count": len(plan.calls)})
         with self.telemetry.span("sports-analyst.load-datasets", metadata=trace_metadata, parent=root_span, run_type="tool") as load_span:
             manifests = {
-                season: self.store.manifest_for_season(season, "play_by_play", request.sport) for season in request.scope.included_seasons
+                season: self.store.manifest_for_season(season, "play_by_play", request.sport, request.scope.competition) for season in request.scope.included_seasons
             }
             pbp_columns = plugin.required_play_by_play_columns(request)
             datasets = {
@@ -353,7 +367,7 @@ class AnalystApplication:
             required_supplemental = plugin.required_supplemental_datasets(request)
             endpoint_seasons = {request.scope.baseline_season, request.scope.comparison_season}
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
-            for manifest in self.store.manifests(sport=request.sport):
+            for manifest in self.store.manifests(sport=request.sport, competition=request.scope.competition):
                 if manifest.dataset in {"play_by_play", "teams"}:
                     continue
                 if manifest.dataset not in required_supplemental:
@@ -365,6 +379,20 @@ class AnalystApplication:
                 dataset: {season: self._load_dataset(connector, manifest) for season, manifest in season_manifests.items()}
                 for dataset, season_manifests in supplemental_manifests.items()
             }
+            if request.sport == "soccer" and request.subject and request.subject.type == "player" and "assists" in request.metrics:
+                for season in endpoint_seasons:
+                    try:
+                        dataset_name = f"player_game_logs_{request.subject.id}"
+                        try:
+                            manifest = self.store.manifest_for_season(season, dataset_name, "soccer", request.scope.competition)
+                        except KeyError:
+                            manifest = connector.player_game_log_manifest(request.scope.competition, season, request.subject.id)
+                            self.store.save_manifest(manifest)
+                        supplemental_manifests.setdefault("player_game_logs", {})[season] = manifest
+                        supplemental.setdefault("player_game_logs", {})[season] = self._load_dataset(connector, manifest)
+                    except (OSError, ValueError) as error:
+                        logger.warning("soccer_player_gamelog_unavailable competition=%s season=%s player=%s error=%s",
+                                       request.scope.competition, season, request.subject.id, error)
             self.telemetry.add_outputs(
                 load_span,
                 {
@@ -422,6 +450,7 @@ class AnalystApplication:
                 request.sport,
                 progress_callback=lambda message, progress: self.events.emit(identifier, "synthesizing", message, progress),
                 trace_metadata=trace_metadata,
+                competition=request.scope.competition,
             )
             self.telemetry.add_outputs(
                 synthesis_span,
@@ -563,6 +592,7 @@ class AnalystApplication:
                 root.run.sport,
                 progress_callback=lambda message, progress: self.events.emit(identifier, "synthesizing", message, progress),
                 trace_metadata=trace_metadata,
+                competition=root.run.scope.competition,
             )
             self.telemetry.add_outputs(
                 synthesis_span,

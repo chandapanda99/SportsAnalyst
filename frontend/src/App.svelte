@@ -6,6 +6,7 @@
   import SupportingEvidence from './SupportingEvidence.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
   import BasketballPlayTablet from './BasketballPlayTablet.svelte';
+  import SoccerMatchTablet from './SoccerMatchTablet.svelte';
   import Icon from './Icon.svelte';
   import PlayTablet from './PlayTablet.svelte';
   import type {
@@ -25,6 +26,20 @@
   let capabilities: Capabilities | null = null;
   let sports: SportOption[] = [];
   let activeSport = 'nfl';
+  const soccerCompetitions = [
+    {value: 'eng.1', label: 'Premier League', calendar: false},
+    {value: 'usa.1', label: 'MLS', calendar: true},
+    {value: 'esp.1', label: 'La Liga', calendar: false},
+    {value: 'ger.1', label: 'Bundesliga', calendar: false},
+    {value: 'ita.1', label: 'Serie A', calendar: false},
+    {value: 'fra.1', label: 'Ligue 1', calendar: false},
+    {value: 'usa.nwsl', label: 'NWSL', calendar: true}
+  ];
+  let selectedCompetition = 'eng.1';
+  let baselineStartDate = '';
+  let baselineEndDate = '';
+  let comparisonStartDate = '';
+  let comparisonEndDate = '';
   let analysisOptions: AnalysisOptions | null = null;
   let datasets: DatasetManifest[] = [];
   let history: InvestigationSummary[] = [];
@@ -109,6 +124,19 @@
           "Did increased workload come with better efficiency, diminishing returns, or no meaningful change?",
           "Which carries best represent the runner's efficiency trend and its counterexamples?"
         ]
+      }
+    },
+    soccer: {
+      team: {
+        results: ['Did this team improve its points per match, and was the change driven by scoring or defending?'],
+        attack: ['Did this team create more shots and shots on target as its goals per match changed?'],
+        defense: ['Did the team concede fewer goals consistently across the selected matches?'],
+        control: ['Did possession change alongside the team’s results and attacking output?']
+      },
+      player: {
+        usage: ['Did this player feature and start more often across these periods?'],
+        scoring: ['Did this player score more often across the selected matches?'],
+        discipline: ['Did this player receive more cards across these periods?']
       }
     },
     nba: {
@@ -407,6 +435,7 @@
     playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
     selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[]; dataManagerOpen: boolean;
     customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean;
+    selectedCompetition: string; baselineStartDate: string; baselineEndDate: string; comparisonStartDate: string; comparisonEndDate: string;
   };
   const sportDrafts: Record<string, DraftState> = {};
   let showGuidance = true;
@@ -431,7 +460,7 @@
   $: setup = analysisOptions?.data_setup;
   $: requiredSources = setup?.required_datasets?.length ? setup.required_datasets : ['play_by_play'];
   $: suggestedSources = [...new Set([...requiredSources, ...(setup?.recommended_datasets ?? [])])];
-  $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source)).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
+  $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
   $: dataReady = Boolean(analysisOptions && requiredSeasons.length && !sourceGaps.length);
   $: readiness = [
     {ready: dataReady, label: dataReady ? 'Required data downloaded' : 'Prepare required data', target: 'data-setup'},
@@ -461,10 +490,14 @@
     baselineStartWeek,
     baselineEndWeek,
     comparisonStartWeek,
-    comparisonEndWeek
+    comparisonEndWeek,
+    baselineStartDate,
+    baselineEndDate,
+    comparisonStartDate,
+    comparisonEndDate
   });
   $: if (!metricsEdited && analysisOptions) selectedMetrics = availableMetrics.filter(metric => recommendedMetricIds.includes(metric.value)).map(metric => metric.value);
-  $: if (analysisOptions && !workspaceLoading) updateReadiness(`${activeSport}:${requiredSeasons.join(',')}:${sourceGaps.join(',')}`, dataReady);
+  $: if (analysisOptions && !workspaceLoading) updateReadiness(`${activeSport}:${selectedCompetition}:${requiredSeasons.join(',')}:${sourceGaps.join(',')}`, dataReady);
 
   function updateReadiness(key: string, ready: boolean) {
     if (key === readinessKey) return;
@@ -529,7 +562,11 @@
     baselineStartWeek: number;
     baselineEndWeek: number;
     comparisonStartWeek: number;
-    comparisonEndWeek: number
+    comparisonEndWeek: number;
+    baselineStartDate: string;
+    baselineEndDate: string;
+    comparisonStartDate: string;
+    comparisonEndDate: string
   }) {
     const {
       activeSport,
@@ -542,11 +579,16 @@
       baselineStartWeek,
       baselineEndWeek,
       comparisonStartWeek,
-      comparisonEndWeek
+      comparisonEndWeek,
+      baselineStartDate,
+      baselineEndDate,
+      comparisonStartDate,
+      comparisonEndDate
     } = context;
     if (comparisonMode === 'full_seasons') return `${seasonLabel(baseline)} → ${seasonLabel(comparison)} · every season in this range`;
     if (comparisonMode === 'before_after_milestone') return `${seasonLabel(baseline)} · before vs. after the All-Star break`;
     if (comparisonMode === 'before_after') return `${seasonLabel(baseline)} · weeks 1–${splitWeek - 1} vs. ${splitWeek}–22`;
+    if (activeSport === 'soccer') return `${baselineStartDate}–${baselineEndDate} → ${comparisonStartDate}–${comparisonEndDate}`;
     if (activeSport === 'nba') return `${seasonLabel(baseline)} ${baselineSegment.replaceAll('_', ' ')} → ${seasonLabel(comparison)} ${comparisonSegment.replaceAll('_', ' ')}`;
     return `${baseline} weeks ${baselineStartWeek}–${baselineEndWeek} → ${comparison} weeks ${comparisonStartWeek}–${comparisonEndWeek}`;
   }
@@ -597,6 +639,8 @@
   $: windowsDiffer = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
       || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
+          : activeSport === 'soccer'
+          ? baseline !== comparison || baselineStartDate !== comparisonStartDate || baselineEndDate !== comparisonEndDate
           : baseline !== comparison
           || baselineStartWeek !== comparisonStartWeek
           || baselineEndWeek !== comparisonEndWeek);
@@ -669,7 +713,7 @@
           : Promise.all([api.capabilities(), api.sports()]);
       const [[nextOptions, nextDatasets, nextHistory], nextBootstrap] = await Promise.all([
         Promise.all([
-          api.analysisOptions(sport),
+          api.analysisOptions(sport, sport === 'soccer' ? selectedCompetition : undefined),
           api.datasets(sport),
           api.investigations(undefined, 0, sport)
         ]),
@@ -691,8 +735,8 @@
         ];
       }
       analysisOptions = nextOptions;
-      datasets = nextDatasets;
-      history = nextHistory;
+      datasets = sport === 'soccer' ? nextDatasets.filter(item => item.competition === selectedCompetition) : nextDatasets;
+      history = sport === 'soccer' ? nextHistory.filter(item => item.run.scope.competition === selectedCompetition) : nextHistory;
       initializeSelections();
       initialWorkspaceReady = true;
       initialWorkspaceError = '';
@@ -749,7 +793,8 @@
       selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
       selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
       syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets], dataManagerOpen,
-      customizeSources, customizeMetrics, metricsEdited
+      customizeSources, customizeMetrics, metricsEdited,
+      selectedCompetition, baselineStartDate, baselineEndDate, comparisonStartDate, comparisonEndDate
     };
   }
 
@@ -773,10 +818,11 @@
     splitWeek = 10;
     seasonType = 'REG';
     subjectType = 'team';
-    analysisDomain = sport === 'nba' ? 'offense' : 'passing';
+    analysisDomain = sport === 'nba' ? 'offense' : sport === 'soccer' ? 'results' : 'passing';
     comparisonMode = sport === 'nba' ? 'season_segments' : 'full_seasons';
     baselineSegment = 'regular_season';
     comparisonSegment = 'post_all_star';
+    baselineStartDate = baselineEndDate = comparisonStartDate = comparisonEndDate = '';
     question = examplesFor(sport, subjectType, analysisDomain)[0];
     selectedMetrics = [];
     selectedSplits = [];
@@ -808,6 +854,11 @@
     customizeSources = draft.customizeSources;
     customizeMetrics = draft.customizeMetrics;
     metricsEdited = draft.metricsEdited;
+    selectedCompetition = draft.selectedCompetition;
+    baselineStartDate = draft.baselineStartDate;
+    baselineEndDate = draft.baselineEndDate;
+    comparisonStartDate = draft.comparisonStartDate;
+    comparisonEndDate = draft.comparisonEndDate;
   }
 
   function initializeSelections() {
@@ -889,7 +940,7 @@
     playersLoading = true;
     playerLoadError = '';
     try {
-      const matches = await api.players(sport);
+      const matches = await api.players(sport, '', sport === 'soccer' ? selectedCompetition : undefined);
       if (version === playerSearchVersion && sport === activeSport) players = matches;
     } catch (problem) {
       if (version === playerSearchVersion && sport === activeSport) playerLoadError = String(problem);
@@ -899,7 +950,11 @@
   }
 
   function playerDisplay(player: PlayerOption) {
-    return `${player.name}${player.teams.length ? ` · ${player.teams.join('/')}` : ''}`;
+    return `${player.name}${player.teams.length ? ` · ${player.teams.map(team => playerTeamLabel(team)).join('/')}` : ''}`;
+  }
+
+  function playerTeamLabel(team: string) {
+    return activeSport === 'soccer' ? analysisOptions?.teams.find(option => option.value === team)?.label ?? team : team;
   }
 
   function openPlayerCombobox(event: FocusEvent) {
@@ -1327,7 +1382,7 @@
   }
 
   function syncedPackages(season: number) {
-    return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season).map((dataset) => dataset.dataset));
+    return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season && (activeSport !== 'soccer' || dataset.competition === selectedCompetition)).map((dataset) => dataset.dataset));
   }
 
   function isReferenceDataset(dataset: string) {
@@ -1390,6 +1445,9 @@
     if (!eligibleSeasons.length) return null;
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
+    if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) {
+      return {state: 'partial', label: 'Partial · resume sync'};
+    }
     return local === eligibleSeasons.length
         ? {state: 'installed', label: 'Installed'}
         : {state: 'partial', label: `Local ${local}/${eligibleSeasons.length}`};
@@ -1400,17 +1458,41 @@
     return eligibleSelectedSeasons(dataset, selectedSeasons).length > 0;
   }
 
+  function soccerPackageIncomplete(dataset: string, season: number) {
+    if (activeSport !== 'soccer') return false;
+    const manifest = datasets.find(item => item.sport === 'soccer' && item.competition === selectedCompetition && item.dataset === dataset && item.season === season);
+    const completed = dataset === 'play_by_play' ? manifest?.coverage?.fetched_intervals : manifest?.coverage?.completed_matches;
+    const expected = dataset === 'play_by_play' ? manifest?.coverage?.expected_intervals : manifest?.coverage?.expected_matches;
+    return completed !== undefined && expected !== undefined && completed < expected;
+  }
+
   function missingSyncSeasons(dataset: string, selectedSeasons = syncSeasons) {
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => (item.sport ?? 'nfl') === activeSport && item.dataset === dataset) ? [] : selectedSeasons.slice(0, 1);
     }
     const currentNflSeason = activeSport === 'nfl' ? 2026 : null;
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
-        season === currentNflSeason || !syncedPackages(season).has(dataset));
+        season === currentNflSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
   }
 
   function seasonLabel(season: number) {
+    if (activeSport === 'soccer' && !soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar) return `${season - 1}–${String(season).slice(-2)}`;
     return activeSport === 'nba' ? `${season - 1}–${String(season).slice(-2)}` : String(season);
+  }
+
+  async function selectCompetition(competition: string) {
+    if (competition === selectedCompetition || busy) return;
+    selectedCompetition = competition;
+    workspaceRequestVersion += 1;
+    playerSearchVersion += 1;
+    resetDraft('soccer');
+    analysisOptions = null;
+    datasets = [];
+    history = [];
+    players = [];
+    active = null;
+    clearEvidenceSelection();
+    await refresh();
   }
 
   function availableSegments(season: number) {
@@ -1438,6 +1520,15 @@
   function investigationWindow(item: Investigation | InvestigationSummary) {
     const baselineWindow = item.run.scope.baseline;
     const comparisonWindow = item.run.scope.comparison;
+    if (item.run.sport === 'soccer') {
+      const competition = item.run.scope.competition ?? selectedCompetition;
+      const label = (season: number) => soccerCompetitions.find(entry => entry.value === competition)?.calendar
+          ? String(season) : `${season - 1}–${String(season).slice(-2)}`;
+      if (item.run.scope.comparison_design === 'date_ranges') {
+        return `${baselineWindow.start_date ?? label(baselineWindow.season)}–${baselineWindow.end_date ?? ''} → ${comparisonWindow.start_date ?? label(comparisonWindow.season)}–${comparisonWindow.end_date ?? ''}`;
+      }
+      return `${label(baselineWindow.season)} → ${label(comparisonWindow.season)}`;
+    }
     if (baselineWindow.segment || comparisonWindow.segment) {
       return `${seasonLabel(baselineWindow.season)} ${baselineWindow.segment?.replaceAll('_', ' ') ?? ''} → ${seasonLabel(comparisonWindow.season)} ${comparisonWindow.segment?.replaceAll('_', ' ') ?? ''}`;
     }
@@ -1643,8 +1734,8 @@
     progress = 0.03;
     stage = 'Starting investigation';
     try {
-      let baselineWindow: { season: number; weeks: [number, number]; segment?: string } = {season: baseline, weeks: [1, 22]};
-      let comparisonWindow: { season: number; weeks: [number, number]; segment?: string } = {season: comparison, weeks: [1, 22]};
+      let baselineWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: baseline, weeks: [1, 22]};
+      let comparisonWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: comparison, weeks: [1, 22]};
       if (comparisonMode === 'week_ranges') {
         baselineWindow = {season: baseline, weeks: [baselineStartWeek, baselineEndWeek]};
         comparisonWindow = {season: comparison, weeks: [comparisonStartWeek, comparisonEndWeek]};
@@ -1660,6 +1751,9 @@
       } else if (activeSport === 'nba') {
         baselineWindow = {season: baseline, weeks: [1, 22], segment: 'full_season'};
         comparisonWindow = {season: comparison, weeks: [1, 22], segment: 'full_season'};
+      } else if (activeSport === 'soccer' && comparisonMode === 'date_ranges') {
+        baselineWindow = {...baselineWindow, ...(baselineStartDate ? {start_date: baselineStartDate} : {}), ...(baselineEndDate ? {end_date: baselineEndDate} : {})};
+        comparisonWindow = {...comparisonWindow, ...(comparisonStartDate ? {start_date: comparisonStartDate} : {}), ...(comparisonEndDate ? {end_date: comparisonEndDate} : {})};
       }
       const metrics = selectedMetrics.filter((value) => {
         const option = analysisOptions?.metrics.find((metric) => metric.value === value);
@@ -1680,7 +1774,8 @@
         question: question.trim(),
         analysis_domain: analysisDomain,
         scope: {
-          team: subjectType === 'team' ? resolvedTeam : playerTeamId || (activeSport === 'nba' ? 'NBA' : 'NFL'),
+          team: subjectType === 'team' ? resolvedTeam : playerTeamId || (activeSport === 'nba' ? 'NBA' : activeSport === 'soccer' ? 'SOCCER' : 'NFL'),
+          ...(activeSport === 'soccer' ? {competition: selectedCompetition} : {}),
           baseline: baselineWindow,
           comparison: comparisonWindow,
           season_type: seasonType,
@@ -1713,7 +1808,7 @@
     progress = 0.03;
     try {
       const missingSeasons = [...new Set(requestedDatasets.flatMap(dataset => missingSyncSeasons(dataset, requestedSeasons)))];
-      const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets);
+      const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets, activeSport === 'soccer' ? selectedCompetition : undefined);
       await streamDatasetSync(stream);
       await refresh();
       syncComplete = true;
@@ -1962,7 +2057,7 @@
     </nav>
     <header class="topbar">
       <div><span class="eyebrow">{activeSport.toUpperCase()} · Evidence Workbench</span>
-        <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : 'Football'} analysis`}</h1>
+        <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : 'Football'} analysis`}</h1>
       </div>
       <div class="status-chip">
         <Icon name="database" size={16}/>{indexedSeasonCount} seasons · {datasets.length} data packages
@@ -2053,6 +2148,20 @@
                   </div>
                 {/if}
               </div>
+              {#if activeSport === 'soccer'}
+                <div class="soccer-competition-bar">
+                  <label for="soccer-competition">Competition</label>
+                  <span class="soccer-competition-select">
+                    <select id="soccer-competition" value={selectedCompetition} disabled={busy}
+                            on:change={(event) => void selectCompetition(event.currentTarget.value)}>
+                      {#each soccerCompetitions as competition}
+                        <option value={competition.value}>{competition.label}</option>
+                      {/each}
+                    </select>
+                    <Icon name="chevron-down" size={17}/>
+                  </span>
+                </div>
+              {/if}
               {#if workspaceLoading}
                 <div class="library-loading" role="status" aria-live="polite">
                   <span class="library-spinner" aria-hidden="true"></span>
@@ -2179,7 +2288,7 @@
                                       class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
                                       on:mouseenter={() => activePlayerIndex = index}>
                                 <span>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
-                                <b>{player.teams.join('/')}</b>
+                                <b>{player.teams.map(team => playerTeamLabel(team)).join('/')}</b>
                               </button>
                             {:else}
                               <div class="no-team-results">No players match “{playerFilter}”</div>
@@ -2259,7 +2368,31 @@
 
               <p class="section-help">{analysisOptions?.comparison_windows.find(option => option.value === comparisonMode)?.description ?? ''}</p>
               {#if scopeSeasons.length}
-                {#if activeSport === 'nba'}
+                {#if activeSport === 'soccer'}
+                  <div class="window-grid">
+                    <fieldset>
+                      <legend>Reference period</legend>
+                      <label>Season<select bind:value={baseline}>
+                        {#each scopeSeasons as season}<option value={season}>{seasonLabel(season)}</option>{/each}
+                      </select></label>
+                      {#if comparisonMode === 'date_ranges'}
+                        <label>From date<input type="date" bind:value={baselineStartDate}/></label>
+                        <label>Through date<input type="date" bind:value={baselineEndDate}/></label>
+                      {/if}
+                    </fieldset>
+                    <span class="arrow"><Icon name="arrow-right" size={19}/></span>
+                    <fieldset>
+                      <legend>Comparison period</legend>
+                      <label>Season<select bind:value={comparison}>
+                        {#each scopeSeasons as season}<option value={season}>{seasonLabel(season)}</option>{/each}
+                      </select></label>
+                      {#if comparisonMode === 'date_ranges'}
+                        <label>From date<input type="date" bind:value={comparisonStartDate}/></label>
+                        <label>Through date<input type="date" bind:value={comparisonEndDate}/></label>
+                      {/if}
+                    </fieldset>
+                  </div>
+                {:else if activeSport === 'nba'}
                   <div class="window-grid">
                     <fieldset>
                       <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Reference period'}</legend>
@@ -2383,7 +2516,7 @@
               {:else}
                 <p class="empty-state">{subjectType === 'player' && selectedPlayer
                     ? 'No locally synced seasons overlap this player’s recorded career.'
-                    : `Sync at least one ${activeSport === 'nba' ? 'SportsDataverse NBA' : 'nflverse'} season to configure an investigation.`}</p>
+                    : `Sync at least one ${activeSport === 'nba' ? 'SportsDataverse NBA' : activeSport === 'soccer' ? 'Sports Dataverse soccer' : 'nflverse'} season to configure an investigation.`}</p>
               {/if}
             </section>
 
@@ -2662,17 +2795,17 @@
         </div>
       </section>
       <section class="plays">
-        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : 'Plays'}</span><small>Examples from both periods—not the entire
+        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : 'Plays'}</span><small>Examples from both periods—not the entire
           sample</small>
         </div>
-        <p class="section-help">Select a play to inspect it. Counterexamples show outcomes that run against the overall trend.</p>
+        <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it. Counterexamples show outcomes that run against the overall trend.</p>
         {#if !active.play_evidence.length}<p class="empty-state">No representative plays are available for this analysis. Review the numerical evidence and source
           limitations above.</p>{/if}
         {#each evidenceGroups(active.play_evidence) as group}
           <div class="evidence-window-group">
             <div class="evidence-window-heading">
               <strong>{group.label}</strong>
-              <small>{evidenceCoverage(group.plays, activeSport === 'nba' ? 'possessions' : 'plays')}</small>
+              <small>{evidenceCoverage(group.plays, activeSport === 'nba' ? 'possessions' : activeSport === 'soccer' ? 'matches' : 'plays')}</small>
             </div>
             <div class="play-list">
               {#each group.plays as play}
@@ -2682,7 +2815,7 @@
                         on:click={() => openPlay(play)}><span class="play-tag"
                                                               class:supporting={play.evidence_role ? play.evidence_role !== 'counterexample' : play.supporting}
                                                               class:typical={play.evidence_role === 'typical'}>{evidenceRoleLabel(play)}</span>
-                  <span class="play-reference"><strong>{play.game_id}</strong><small>Play #{play.play_id}</small></span>
+                  <span class="play-reference"><strong>{play.game_id}</strong>{#if activeSport !== 'soccer'}<small>Play #{play.play_id}</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
                       class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
@@ -2692,7 +2825,9 @@
           </div>
         {/each}
         {#if selectedPlay}
-          {#if selectedPlay.visualization?.sport === 'nba'}
+          {#if selectedPlay.visualization?.sport === 'soccer'}
+            <SoccerMatchTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
+          {:else if selectedPlay.visualization?.sport === 'nba'}
             <BasketballPlayTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
           {:else}
             <PlayTablet play={selectedPlay} onclose={() => selectedPlay = null}/>

@@ -54,7 +54,7 @@ def execute_sync(job_id: str, request: Request) -> dict[str, str]:
     payload = job["payload"]
     jobs.emit(job_id, "starting", "Starting your data download", 0.03)
     try:
-        application.sync(payload["seasons"], job_id, payload.get("datasets"), payload["sport"])
+        application.sync(payload["seasons"], job_id, payload.get("datasets"), payload["sport"], payload.get("competition"))
     except Exception as error:
         logger.error("sync_task_failed job_id=%s error_type=%s", job_id, type(error).__name__)
         logger.debug("sync_task_failed_details job_id=%s", job_id, exc_info=True)

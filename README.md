@@ -1,7 +1,8 @@
 # Open Sports Analyst
 
-Open Sports Analyst is a local-first NFL and NBA analysis workbench that turns natural-language questions into reproducible, evidence-linked investigations over locally
-stored [nflverse](https://nflverse.nflverse.com/) and [SportsDataverse](https://py.sportsdataverse.org/docs/nba/) data.
+Open Sports Analyst is a local-first NFL, NBA, and soccer analysis workbench that turns natural-language questions into reproducible, evidence-linked investigations over
+locally
+stored [nflverse](https://nflverse.nflverse.com/), [SportsDataverse](https://py.sportsdataverse.org/docs/nba/), and ESPN soccer match data.
 
 The model plans and explains the investigation. Versioned analytical tools, Polars, and constrained read-only DuckDB SQL calculate the results. Every measured claim must cite
 evidence produced by those tools; the model cannot invent measurements or execute arbitrary Python.
@@ -10,19 +11,22 @@ evidence produced by those tools; the model cannot invent measurements or execut
 
 - Runs NFL team analysis for passing, rushing, and overall offense, plus player analysis for quarterbacks, receivers, and ball carriers.
 - Runs NBA team or player analysis across full seasons and validated season segments, with an optional team-stint filter for traded players.
+- Runs soccer team and player comparisons for the Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, and NWSL. Match scores, team statistics, lineups, and key events
+  are downloaded by competition and season; date-range comparisons and recorded match timelines are available. Missing match sections are disclosed rather than estimated.
 - Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability
   context.
 - Provides NBA v1 box-score comparisons, multi-season trend charts, lineup-rate comparisons when lineup releases are synced, and diversified play/possession evidence from both
   comparison windows.
-- Surfaces NFL evidence in an interactive field schematic and NBA evidence in a basketball tablet with recorded shot, score, and lineup context.
+- Surfaces NFL evidence in an interactive field schematic, NBA evidence in a basketball tablet, and soccer evidence in a recorded match timeline (not a location-based pitch
+  replay).
 - Selects representative evidence deterministically across different games and contexts, labeling typical examples, metric-relevant examples, support for the measured change,
   and counterexamples.
 - Produces evidence-bound findings, charts, methodological caveats, team-themed HTML reports, and Markdown exports.
 - Saves investigations locally, supports follow-up conversations as child investigations, and allows complete investigation threads to be deleted.
 - Remains usable without a configured model by generating a deterministic evidence report.
 
-Open Sports Analyst ships independent NFL and NBA plugins. Persistent sport tabs preserve each sport's unfinished form state while changing its subjects, seasons, periods,
-metrics, datasets, and evidence renderer.
+Open Sports Analyst ships independent NFL, NBA, and soccer plugins. Persistent sport tabs preserve each sport's unfinished form state while changing its subjects, seasons,
+periods, metrics, datasets, and evidence renderer.
 
 ## Application tour
 
@@ -33,7 +37,7 @@ The Svelte workbench provides:
    individual packages, availability, and downloaded badges. Ready data collapses into a status strip.
 3. **Subject → Comparison → Focus → Question** — searchable team/player controls, reference and comparison periods, recommended metrics, and selectable example questions form
    one continuous workbench. **Customize metrics** and **Optional breakdowns** reveal advanced choices; **About** opens each metric's formula, interpretation, sample, and
-   limitations.
+   limitations. On the soccer tab, select a competition before syncing or choosing a subject.
 4. **Analysis brief** — a live summary and actionable readiness checklist explain what will run and what still needs attention. NFL/NBA drafts remain independent, including
    custom metric selections.
 5. **Progress** — downloads show source-level stages; completed syncs offer **Continue building analysis**. Investigation stages describe the work as evidence is produced and
@@ -86,6 +90,12 @@ You do **not** need to run a data-sync command before launching the application.
 button. NFL quick setup includes play-by-play and recommends schedules, player statistics, and rosters. NBA requires play-by-play, schedules, team box scores, and player box
 scores for the guided flow. The application reports whether the optional live transport is installed, but
 current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
+For soccer, select one of the seven competitions, choose seasons, and sync the desired match packages. Soccer data is keyed by competition, so syncing MLS cannot overwrite a
+Premier League season. Completed matches with unavailable summaries remain in the fixture catalog; partial match-detail syncs can be retried from the data library.
+
+The same download can be started from the CLI, for example `uv run sports-analyst data sync soccer --competition eng.1 --season 2025`. For European leagues, the season number
+is its ending year (2025 means 2024–25); MLS and NWSL use the calendar year. Selected-player assist game logs are requested and cached only if that metric is used and ESPN
+provides the log for both windows.
 
 ## Windows desktop application
 
@@ -108,7 +118,8 @@ Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https:
 ./packaging/windows/build.ps1
 ```
 
-The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
+The script verifies that `uv.lock` is current, builds the frontend from an isolated staging copy (so a running Vite server cannot lock packaging dependencies), synchronizes
+the locked `desktop` and `desktop-build` dependency groups, and creates a PyInstaller
 one-directory application. It then runs the frozen executable in an isolated smoke-test mode before downloading Microsoft's WebView2 evergreen bootstrapper and writing the
 installer to `dist/installer/`. The frozen bundle includes the managed SQLite worker while cloud-only R2 and Google dependencies remain outside the desktop package.
 Use `-SkipFrontend` only when `frontend/dist` is already current, or `-SkipInstaller` to stop after producing and smoke-testing the unpackaged desktop application.
@@ -139,7 +150,9 @@ separate public distribution repository instead.
 ## Google Cloud Run deployment (recommended cloud hosting)
 
 Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero and R2 storage. A public Cloud Run service serves the web app, a private service
-handles concurrent package acquisition through Cloud Tasks, and a private Cloud Run analysis service invoked by Cloud Tasks handles investigations and follow-ups. Compact versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
+handles concurrent package acquisition through Cloud Tasks, and a private Cloud Run analysis service invoked by Cloud Tasks handles investigations and follow-ups. Compact
+versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer
+requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
 and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
 
 ## Model providers
@@ -437,7 +450,8 @@ FastAPI exposes:
 |    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
 |    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |
 
-Dataset sync and investigation progress use server-sent events locally or durable status polling on Cloud Run, selected by runtime capabilities. The frontend recovers interrupted work through the status endpoint and validates the complete
+Dataset sync and investigation progress use server-sent events locally or durable status polling on Cloud Run, selected by runtime capabilities. The frontend recovers
+interrupted work through the status endpoint and validates the complete
 bundle and thread before rendering them. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
 
 Interactive OpenAPI documentation is available at [http://127.0.0.1:8767/docs](http://127.0.0.1:8767/docs) while the API is running.

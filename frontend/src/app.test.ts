@@ -82,11 +82,12 @@ describe('Open Sports Analyst workbench', () => {
         }));
       }
       const body = url.endsWith('/capabilities')
-        ? { providers: ['azure_foundry', 'ollama'], configured_provider: 'azure_foundry', model_configured: false, custom_analysis: false, sports: ['nfl', 'nba'] }
+        ? { providers: ['azure_foundry', 'ollama'], configured_provider: 'azure_foundry', model_configured: false, custom_analysis: false, sports: ['nfl', 'nba', 'soccer'] }
         : url.endsWith('/sports')
           ? [
               { value: 'nfl', label: 'NFL', available: true, live_available: false },
-              { value: 'nba', label: 'NBA', available: true, live_available: false }
+              { value: 'nba', label: 'NBA', available: true, live_available: false },
+              { value: 'soccer', label: 'Soccer', available: true, live_available: false }
             ]
         : url.includes('/sports/nfl/players')
           ? [
@@ -98,6 +99,28 @@ describe('Open Sports Analyst workbench', () => {
               { player_id: '4065648', name: 'Jayson Tatum', teams: ['BOS'], positions: ['SF'], seasons: [2024] },
               { player_id: '3917376', name: 'Jaylen Brown', teams: ['BOS'], positions: ['SG'], seasons: [2024, 2025] }
             ]
+        : url.includes('/sports/soccer/players')
+          ? [{ player_id: '10', name: 'Alex Forward', teams: ['1'], positions: ['F'], seasons: [2024, 2025] }]
+        : url.includes('/sports/soccer/options')
+          ? {
+              sport: 'soccer', teams: [{ value: '1', label: 'Home FC' }],
+              available_seasons: url.includes('usa.1') ? [] : [2024, 2025],
+              syncable_seasons: [2025, 2024], syncable_datasets: ['play_by_play', 'team_stats', 'lineups', 'key_events'],
+              dataset_min_seasons: {play_by_play: 2016, team_stats: 2016, lineups: 2016, key_events: 2016},
+              dataset_available_seasons: {play_by_play: [2024, 2025], team_stats: [2024, 2025], lineups: [2024, 2025], key_events: [2024, 2025]},
+              data_setup: {label: 'Soccer match data', description: 'Match data.', required_datasets: ['play_by_play'],
+                           recommended_datasets: ['team_stats', 'lineups', 'key_events'], descriptions: {}},
+              default_metrics: ['points_per_match'], default_metrics_by_domain: {results: ['points_per_match'], usage: ['appearances']},
+              metrics: [
+                {value: 'points_per_match', label: 'Points per match', category: 'Results', analysis_domain: 'results', description: 'Points.', available_seasons: [2024, 2025], subject_types: ['team']},
+                {value: 'appearances', label: 'Appearances', category: 'Usage', analysis_domain: 'usage', description: 'Matches.', available_seasons: [2024, 2025], subject_types: ['player']}
+              ],
+              analysis_domains: [{value: 'results', label: 'Results', description: 'Team results.', subject_type: 'team'},
+                                 {value: 'usage', label: 'Usage', description: 'Player usage.', subject_type: 'player'}],
+              comparison_windows: [{value: 'full_seasons', label: 'Full seasons', description: 'Compare seasons.'},
+                                   {value: 'date_ranges', label: 'Date ranges', description: 'Compare dates.'}],
+              split_dimensions: [], week_values: [], subject_types: [{value: 'team', label: 'Team'}, {value: 'player', label: 'Player'}]
+            }
         : url.endsWith('/sports/nba/options')
           ? {
               sport: 'nba', teams: [{ value: 'BOS', label: 'Boston Celtics' }], available_seasons: [2024, 2025],
@@ -128,7 +151,8 @@ describe('Open Sports Analyst workbench', () => {
               ]
             }
         : url.endsWith('/datasets') || url.includes('/datasets?sport=')
-          ? url.includes('sport=nba') ? [2024, 2025].flatMap(season => ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'].map(dataset => ({dataset, season, sport: 'nba'}))) : [
+          ? url.includes('sport=soccer') ? [2024, 2025].flatMap(season => ['play_by_play', 'team_stats', 'lineups', 'key_events'].map(dataset => ({dataset, season, sport: 'soccer', competition: 'eng.1'})))
+            : url.includes('sport=nba') ? [2024, 2025].flatMap(season => ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'].map(dataset => ({dataset, season, sport: 'nba'}))) : [
               { dataset: 'play_by_play', season: 2024 },
               { dataset: 'rosters', season: 2024 },
               { dataset: 'injuries', season: 2024 },
@@ -626,5 +650,44 @@ describe('Open Sports Analyst workbench', () => {
     expect(evidencePanel.queryByText('Evidence evidence-one')).toBeNull();
     expect(first.getAttribute('aria-pressed')).toBe('false');
     expect(second.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('scopes the soccer tab by competition and opens recorded match evidence', async () => {
+    mockInvestigations = [{
+      run: {investigation_id: 'soccer-report', sport: 'soccer', question: 'How did Home FC change?',
+            created_at: '2026-08-21T12:00:00Z', subject: {type: 'team', id: '1', display_name: 'Home FC'},
+            scope: {team: '1', competition: 'eng.1', comparison_design: 'full_seasons', season_type: 'REG',
+                    baseline: {season: 2024, weeks: [1, 22]}, comparison: {season: 2025, weeks: [1, 22]}}},
+      summary: 'Home FC improved.', claims: [], aggregate_evidence: [], charts: [], methodological_caveats: [], fallback_used: true,
+      play_evidence: [{sport: 'soccer', evidence_id: 'soccer-match', season: 2025, game_id: '501', play_id: 0,
+                       team: '1', description: 'Home FC 2–0 Away FC', supporting: true, window: 'comparison', evidence_role: 'typical',
+                       visualization: {sport: 'soccer', game_date: '2024-09-15', home_team_name: 'Home FC', away_team_name: 'Away FC',
+                                       home_score: 2, away_score: 0,
+                                       soccer_timeline: [{clock: "42'", type: 'Goal', text: 'Alex scores'}]}}]
+    }];
+    render(App);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Soccer'}));
+    const competition = await screen.findByLabelText('Competition');
+    const dataCard = document.getElementById('data-setup');
+    expect(dataCard?.contains(competition)).toBe(true);
+    const subjectCard = screen.getByRole('heading', {name: 'Who do you want to understand?'}).closest('.scope-card');
+    expect(subjectCard?.contains(competition)).toBe(false);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
+    const playerInput = screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement;
+    await fireEvent.focus(playerInput);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Alex Forward/}));
+    expect(playerInput.value).toBe('Alex Forward · Home FC');
+    await fireEvent.change(competition, {target: {value: 'usa.1'}});
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
+      String(input) === '/api/sports/soccer/options?competition=usa.1')).toBe(true));
+    expect(screen.queryByText('How did Home FC change?')).toBeNull();
+    await fireEvent.click(await screen.findByRole('button', {name: /Download \d+ sources for \d+ seasons/}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
+      String(input) === '/api/datasets/soccer/sync-stream' && JSON.parse(String(init?.body)).competition === 'usa.1')).toBe(true));
+    await screen.findByText('Download finished');
+    await fireEvent.change(competition, {target: {value: 'eng.1'}});
+    await fireEvent.click(await screen.findByText('How did Home FC change?'));
+    await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
+    expect(await screen.findByText('Alex scores')).toBeTruthy();
   });
 });
