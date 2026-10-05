@@ -391,26 +391,39 @@ main.nba-background {
         radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%)
 }
 
+main.soccer-background {
+    background-image: url("/Soccer/Background/Desktop.svg"),
+        radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%)
+}
+
 .nba-theme input:not([type="checkbox"]):not([type="radio"]),
 .nba-theme select,
 .nba-theme textarea,
-.nba-theme .season-options {
+.nba-theme .season-options,
+.soccer-theme input:not([type="checkbox"]):not([type="radio"]),
+.soccer-theme select,
+.soccer-theme textarea,
+.soccer-theme .season-options {
     border-color: var(--color-border-control);
     background-color: var(--color-surface-input);
     color: var(--color-text-primary)
 }
 
 .nba-theme input::placeholder,
-.nba-theme textarea::placeholder {
+.nba-theme textarea::placeholder,
+.soccer-theme input::placeholder,
+.soccer-theme textarea::placeholder {
     color: var(--color-text-tertiary);
     opacity: 1
 }
 
-.nba-theme .season-options label {
+.nba-theme .season-options label,
+.soccer-theme .season-options label {
     color: var(--color-text-secondary)
 }
 
-.nba-theme .season-options label.selected {
+.nba-theme .season-options label.selected,
+.soccer-theme .season-options label.selected {
     border-color: color-mix(in srgb, var(--mint) 56%, var(--color-border-control));
     background: color-mix(in srgb, var(--mint) 15%, var(--color-surface-control));
     color: var(--color-text-primary)
@@ -419,7 +432,11 @@ main.nba-background {
 .nba-theme .team-options button:hover,
 .nba-theme .team-options button.active,
 .nba-theme .domain-selector button.active,
-.nba-theme .subject-toggle button.active {
+.nba-theme .subject-toggle button.active,
+.soccer-theme .team-options button:hover,
+.soccer-theme .team-options button.active,
+.soccer-theme .domain-selector button.active,
+.soccer-theme .subject-toggle button.active {
     background: color-mix(in srgb, var(--mint) 13%, var(--color-surface-active))
 }
 

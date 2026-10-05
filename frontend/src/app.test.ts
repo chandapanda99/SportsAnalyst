@@ -667,6 +667,10 @@ describe('Open Sports Analyst workbench', () => {
     }];
     render(App);
     await fireEvent.click(await screen.findByRole('button', {name: 'Soccer'}));
+    expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('soccer');
+    expect(document.querySelector('main')?.classList.contains('soccer-background')).toBe(true);
+    expect(document.querySelector('.app-shell')?.classList.contains('soccer-theme')).toBe(true);
+    expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
     const competition = await screen.findByLabelText('Competition');
     const dataCard = document.getElementById('data-setup');
     expect(dataCard?.contains(competition)).toBe(true);

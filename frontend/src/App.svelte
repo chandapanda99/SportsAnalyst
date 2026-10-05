@@ -1974,7 +1974,7 @@
 
 <svelte:head><title>Open Sports Analyst</title></svelte:head>
 
-<div class="app-shell" class:nba-theme={activeSport === 'nba'} bind:this={appShellElement} style={`--rail-width: ${railWidth}px`}>
+<div class="app-shell" class:nba-theme={activeSport === 'nba'} class:soccer-theme={activeSport === 'soccer'} bind:this={appShellElement} style={`--rail-width: ${railWidth}px`}>
   <aside class="rail" class:mobile-history-open={mobileHistoryOpen}>
     <div class="brand"><img class="mark" src="/favicon.svg" alt="" aria-hidden="true"/>
       <div><strong>Open Sports</strong><span>Analyst</span></div>

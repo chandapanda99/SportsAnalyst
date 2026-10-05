@@ -180,6 +180,45 @@
     --chart-series-4: #9aaa9f;
 }
 
+/* Soccer draws from the artwork's #0BE200 ball linework, softened for legible UI accents. */
+.app-shell.soccer-theme {
+    --color-canvas-glow: #071b0d;
+    --color-sidebar: #07130f;
+    --color-surface-low: #071812;
+    --color-surface: #091b14;
+    --color-surface-raised: #102319;
+    --color-surface-input: #14271d;
+    --color-surface-panel: #172b20;
+    --color-surface-panel-alt: #1b3024;
+    --color-surface-chip: #20362a;
+    --color-surface-hover: #253d2d;
+    --color-surface-evidence: #284130;
+    --color-surface-accented: #294634;
+    --color-surface-active: #1e4828;
+    --color-surface-control: #294934;
+    --color-progress-track: #294433;
+    --color-border-subtle: #294235;
+    --color-border-strong: #365441;
+    --color-border-accent: #43694d;
+    --color-border-control: #4b6c53;
+    --color-border-interactive: #699978;
+    --color-text-primary: #f0f7f0;
+    --color-text-secondary: #bccfbe;
+    --color-text-tertiary: #91ab96;
+    --color-text-soft: #d5e4d6;
+    --color-text-control: #ebf5eb;
+    --color-accent-primary: #7de672;
+    --color-accent-interpretation: #ebaf50;
+    --color-focus-ring: #a2ee98;
+    --mint: var(--color-accent-primary);
+    --gold: var(--color-accent-interpretation);
+    --line: var(--color-border-subtle);
+    --chart-series-1: #68d963;
+    --chart-series-2: #ebaf50;
+    --chart-series-3: #5b9c70;
+    --chart-series-4: #bdd8a7;
+}
+
 * {
     box-sizing: border-box;
 }
