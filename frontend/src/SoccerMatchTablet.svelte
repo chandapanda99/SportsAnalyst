@@ -19,6 +19,9 @@
     <strong>{match?.home_score ?? '–'} : {match?.away_score ?? '–'}</strong>
     <span>{match?.away_team_name ?? 'Away'}</span>
   </div>
+  {#if match?.home_expected_goals != null || match?.away_expected_goals != null}
+    <p class="soccer-match-xg">Expected goals (ESPN): {match?.home_expected_goals?.toFixed(2) ?? 'Unavailable'} : {match?.away_expected_goals?.toFixed(2) ?? 'Unavailable'}</p>
+  {/if}
   <p>{play.description}</p>
   <h4>Recorded match events</h4>
   {#if timeline.length}
@@ -44,6 +47,7 @@
   header button{border:1px solid var(--line);border-radius:7px;background:transparent;color:inherit;font-size:1.5rem;cursor:pointer}
   .soccer-match-score{display:grid;grid-template-columns:1fr auto 1fr;gap:1rem;align-items:center;text-align:center;padding:1.5rem .5rem;margin:1rem 0;border-block:1px solid var(--line)}
   .soccer-match-score strong{font-size:2rem;white-space:nowrap}
+  .soccer-match-xg{text-align:center;font-variant-numeric:tabular-nums;color:var(--accent)}
   h4{margin:1.2rem 0 .5rem}
   ol{padding:0;list-style:none;max-height:21rem;overflow:auto}
   li{display:grid;grid-template-columns:4rem 1fr;gap:.8rem;padding:.65rem 0;border-bottom:1px solid var(--line)}

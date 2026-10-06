@@ -470,6 +470,8 @@ class PlayVisualization(BaseModel):
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
     soccer_timeline: list[dict[str, str]] = Field(default_factory=list)
+    home_expected_goals: float | None = None
+    away_expected_goals: float | None = None
     secondary_player_name: str | None = None
     secondary_player_role: str | None = None
     tertiary_player_name: str | None = None

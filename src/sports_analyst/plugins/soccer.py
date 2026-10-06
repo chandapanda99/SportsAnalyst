@@ -19,6 +19,7 @@ from sports_analyst.models import (
     ToolExecutionRecord, stable_id,
 )
 from sports_analyst.soccer_data import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
+from sports_analyst.soccer_xg import PLAYER_XG_FIELDS, TEAM_XG_FIELDS, numeric
 
 
 @dataclass
@@ -41,19 +42,27 @@ METRICS = {
     "shots_per_match": ("Shots per match", "team_stats", "team", "attack", "shots", "Recorded team shots divided by matches with shot statistics."),
     "shots_on_target_per_match": ("Shots on target per match", "team_stats", "team", "attack", "shots", "Recorded shots on target divided by matches with that statistic."),
     "possession_pct": ("Possession", "team_stats", "team", "control", "percentage", "Mean recorded match possession percentage."),
+    "xg_per_match": ("Expected goals per match", "expected_goals", "team", "attack", "goals", "Mean recorded ESPN xG across covered matches."),
+    "xga_per_match": ("Expected goals against per match", "expected_goals", "team", "defense", "goals", "Mean recorded ESPN xG conceded across covered matches."),
+    "xg_difference_per_match": ("Expected goal difference per match", "expected_goals", "team", "results", "goals", "Mean xG minus xG conceded in matches recording both values."),
+    "non_penalty_xg_per_match": ("Non-penalty xG per match", "expected_goals", "team", "attack", "goals", "Mean recorded ESPN xG excluding penalties."),
+    "goals_minus_xg_per_match": ("Goals minus xG per match", "expected_goals", "team", "attack", "goals", "Mean goals scored minus recorded xG in the same covered matches."),
     "appearances": ("Appearances", "lineups", "player", "usage", "matches", "Matches with a recorded lineup entry for this player."),
     "starts": ("Starts", "lineups", "player", "usage", "matches", "Recorded starting lineup selections."),
     "goals": ("Goals", "key_events", "player", "scoring", "goals", "Scoring events attributed to this player in ESPN key events."),
     "assists": ("Assists", "lineups", "player", "scoring", "assists", "Assists recorded in the selected player's ESPN game log."),
     "cards": ("Cards", "key_events", "player", "discipline", "cards", "Yellow and red card events attributed to this player."),
+    "expected_goals": ("Expected goals", "player_expected_goals", "player", "scoring", "goals", "Recorded ESPN player match xG summed over covered appearances; fetched when selected."),
+    "non_penalty_expected_goals": ("Non-penalty expected goals", "player_expected_goals", "player", "scoring", "goals", "Recorded player xG excluding penalties, summed over covered appearances."),
+    "goals_minus_xg": ("Goals minus xG", "player_expected_goals", "player", "scoring", "goals", "Recorded player goals minus xG across the same covered appearances."),
 }
 DEFAULTS = {
-    "results": ["points_per_match", "win_rate", "goals_for_per_match", "goals_against_per_match"],
-    "attack": ["goals_for_per_match", "shots_per_match", "shots_on_target_per_match"],
-    "defense": ["goals_against_per_match"],
+    "results": ["points_per_match", "win_rate", "goals_for_per_match", "goals_against_per_match", "xg_difference_per_match"],
+    "attack": ["goals_for_per_match", "shots_per_match", "shots_on_target_per_match", "xg_per_match", "non_penalty_xg_per_match", "goals_minus_xg_per_match"],
+    "defense": ["goals_against_per_match", "xga_per_match"],
     "control": ["possession_pct"],
     "usage": ["appearances", "starts"],
-    "scoring": ["goals", "appearances"],
+    "scoring": ["goals", "appearances", "expected_goals", "non_penalty_expected_goals", "goals_minus_xg"],
     "discipline": ["cards", "appearances"],
 }
 
@@ -113,17 +122,30 @@ class SoccerPlugin:
         now = datetime.now(UTC)
         latest = now.year if SOCCER_COMPETITIONS[competition][1] or now.month < 7 else now.year + 1
         years = list(range(2016, latest + 1))
+
+        def metric_seasons(name: str, source: str) -> list[int]:
+            if name in TEAM_XG_FIELDS:
+                return sorted({m.season for m in selected if m.dataset == "expected_goals" and m.season in available
+                               and m.coverage.get(f"{name}_rows", 0) > 0})
+            if name in PLAYER_XG_FIELDS:
+                field = PLAYER_XG_FIELDS[name][0]
+                covered = {m.season for m in selected if m.dataset == "expected_goals"
+                           and m.coverage.get(f"{field}_rows", 0) > 0}
+                return sorted({m.season for m in selected if m.dataset == "lineups" and m.season in available and m.season in covered})
+            return sorted({m.season for m in selected if m.dataset == source and m.season in available})
+
         return AnalysisOptions(
             data_setup={"label": f"{SOCCER_COMPETITIONS[competition][0]} match data",
                         "description": "Download completed fixtures and available match detail before investigating.",
                         "required_datasets": ["play_by_play"],
                         "recommended_datasets": ["team_stats", "lineups", "key_events"],
-                        "descriptions": {"play_by_play": "Fixture scores and dates.", "team_stats": "Per-match team figures.",
-                                         "lineups": "Player appearances and starts.", "key_events": "Goals, cards, and match timeline."}},
+                        "descriptions": {"play_by_play": "Fixture scores and dates.", "team_stats": "Per-match team figures, including recorded ESPN xG, xG against and non-penalty xG where available.",
+                                         "lineups": "Player appearances and starts.", "key_events": "Goals, cards, and match timeline.",
+                                         "expected_goals": "Recorded match xG, xG against, and non-penalty xG. Coverage varies by season; player xG is fetched when requested."}},
             sport="soccer", teams=[TeamOption(value=key, label=value) for key, value in sorted(team_names.items(), key=lambda pair: pair[1])],
             available_seasons=available, syncable_seasons=list(reversed(years)),
             metrics=[MetricOption(value=name, label=info[0], category=info[3].title(), description=info[5],
-                                  analysis_domain=info[3], available_seasons=sorted({m.season for m in selected if m.dataset == info[1] and m.season in available}),
+                                  analysis_domain=info[3], available_seasons=metric_seasons(name, info[1]),
                                   subject_types=[info[2]]) for name, info in METRICS.items()],
             default_metrics=DEFAULTS["results"],
             analysis_domains=[{"value": key, "label": key.title(), "description": f"Compare soccer {key} metrics.",
@@ -173,7 +195,11 @@ class SoccerPlugin:
         return MetricDefinition(value=metric, label=label, category=domain.title(), description=description,
                                 formula=description, qualifying_plays=f"Completed matches with {source} coverage.",
                                 interpretation="Compare both windows and their sample sizes.",
-                                limitations=["ESPN match sections may be absent or incomplete for some competitions and seasons."])
+                                limitations=["ESPN match sections may be absent or incomplete for some competitions and seasons."]
+                                + (["xG measures chance quality before shot outcome; xG on target is a different statistic.",
+                                    "Missing xG is excluded rather than counted as zero. Compare the reported covered-match samples.",
+                                    "Goals minus xG is descriptive; it does not establish a stable finishing skill or forecast future goals."]
+                                   if metric in TEAM_XG_FIELDS or metric in PLAYER_XG_FIELDS else []))
 
     def default_plan(self, request: AnalysisRequest) -> AnalysisPlan:
         return AnalysisPlan(plan_id=stable_id("plan", request.model_dump()), question=request.question, scope=request.scope,
@@ -184,7 +210,7 @@ class SoccerPlugin:
         return {"event_id", "date", "home_team_id", "away_team_id", "home_team", "away_team", "home_score", "away_score", "status", "season", "competition"}
 
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
-        return {"team_stats", "lineups", "key_events"}
+        return {"team_stats", "lineups", "key_events", "expected_goals"}
 
     @staticmethod
     def _team_rows(schedule: pl.DataFrame, team_id: str) -> list[dict]:
@@ -208,8 +234,32 @@ class SoccerPlugin:
 
     @staticmethod
     def _value(metric: str, rows: list[dict], stats: pl.DataFrame, lineups: pl.DataFrame, events: pl.DataFrame,
-               subject_id: str, game_logs: pl.DataFrame | None = None) -> tuple[float | None, int]:
+               subject_id: str, game_logs: pl.DataFrame | None = None, xg: pl.DataFrame | None = None,
+               player_xg: pl.DataFrame | None = None) -> tuple[float | None, int]:
         games = {row["game_id"] for row in rows}
+        if metric in TEAM_XG_FIELDS or metric in PLAYER_XG_FIELDS:
+            player = metric in PLAYER_XG_FIELDS
+            source = player_xg if player else xg
+            fields = (PLAYER_XG_FIELDS if player else TEAM_XG_FIELDS)[metric]
+            id_column = "athlete_id" if player else "team_id"
+            if source is None or not {"game_id", id_column, *fields} <= set(source.columns):
+                return None, 0
+            by_game = {row["game_id"]: row for row in rows}
+            values = []
+            for item in source.filter(pl.col(id_column).cast(pl.String) == subject_id).unique(subset=["game_id"]).iter_rows(named=True):
+                game_id = str(item["game_id"])
+                numbers = [numeric(item.get(field)) for field in fields]
+                if game_id not in games or any(value is None for value in numbers):
+                    continue
+                value = numbers[0]
+                if metric == "xg_difference_per_match":
+                    value -= numbers[1]
+                elif metric == "goals_minus_xg_per_match":
+                    value = by_game[game_id]["goals_for"] - value
+                elif metric == "goals_minus_xg":
+                    value = numbers[1] - value
+                values.append(value)
+            return ((sum(values) if player else sum(values) / len(values)), len(values)) if values else (None, 0)
         if metric == "assists":
             logs = game_logs if game_logs is not None else pl.DataFrame()
             if not {"game_id", "assists"} <= set(logs.columns):
@@ -307,20 +357,32 @@ class SoccerPlugin:
                 lineup = supplemental.get("lineups", {}).get(season, pl.DataFrame())
                 events = supplemental.get("key_events", {}).get(season, pl.DataFrame())
                 game_logs = supplemental.get("player_game_logs", {}).get(season, pl.DataFrame())
-                values.append(self._value(name, rows, stat, lineup, events, str(subject.id), game_logs))
+                xg = supplemental.get("expected_goals", {}).get(season, pl.DataFrame())
+                player_xg = supplemental.get("player_expected_goals", {}).get(season, pl.DataFrame())
+                values.append(self._value(name, rows, stat, lineup, events, str(subject.id), game_logs, xg, player_xg))
             (before, before_n), (after, after_n) = values
             if before is None or after is None or not before_n or not after_n:
                 gaps.append(name)
                 continue
             payload = {**parameters, "metric": name, "before": before, "after": after}
+            metric_caveats = [f"Baseline: {before_n} qualifying matches; comparison: {after_n} qualifying matches."]
+            if name in TEAM_XG_FIELDS or name in PLAYER_XG_FIELDS:
+                metric_caveats.append(f"Recorded ESPN xG coverage: baseline {before_n}/{len(frames['baseline'][1])} matches; "
+                                      f"comparison {after_n}/{len(frames['comparison'][1])} matches. Missing values are excluded.")
+                if name.startswith("goals_minus_xg"):
+                    metric_caveats.append("Goals and xG use the same covered matches; their difference is descriptive, not a finishing-skill forecast.")
             aggregates.append(AggregateEvidence(
                 evidence_id=stable_id("evidence", payload), metric=name, label=METRICS[name][0],
                 value=round(after - before, 4), baseline_value=round(before, 4), comparison_value=round(after, 4),
                 unit=METRICS[name][4], sample_size=after_n, row_set_sha256=_sha(payload), dataset_manifest_ids=ids,
                 tool_execution_id=execution_id,
-                caveats=[f"Baseline: {before_n} qualifying matches; comparison: {after_n} qualifying matches."],
+                caveats=metric_caveats,
             ))
         if not aggregates:
+            if any(name in TEAM_XG_FIELDS or name in PLAYER_XG_FIELDS for name in selected):
+                raise ValueError("No comparable soccer metrics have coverage in both selected windows. "
+                                 "Sync Team Match Statistics (and lineups for players), then select windows with recorded ESPN xG; "
+                                 "historical coverage varies and missing values cannot be estimated.")
             raise ValueError("No comparable soccer metrics have coverage in both selected windows")
         execution = ToolExecutionRecord(execution_id=execution_id, tool="compare_soccer_windows", parameters=parameters,
                                         started_at=started_at, duration_ms=round((perf_counter() - started) * 1000),
@@ -352,6 +414,13 @@ class SoccerPlugin:
                                 for event in match_events.to_dicts()[:20]
                                 if event.get("text")]
                 description = f"{match.get('home_team')} {match.get('home_score')}–{match.get('away_score')} {match.get('away_team')} · {row['date']}"
+                xg_frame = supplemental.get("expected_goals", {}).get(window.season, pl.DataFrame())
+                match_xg = {}
+                if {"game_id", "team_id", "expected_goals"} <= set(xg_frame.columns):
+                    match_xg = {str(item["team_id"]): numeric(item.get("expected_goals"))
+                                for item in xg_frame.filter(pl.col("game_id").cast(pl.String) == row["game_id"]).iter_rows(named=True)}
+                home_xg = match_xg.get(str(match.get("home_team_id")))
+                away_xg = match_xg.get(str(match.get("away_team_id")))
                 plays.append(PlayEvidence(
                     sport="soccer", evidence_id=stable_id("evidence", {"game": row["game_id"], "window": label}),
                     season=window.season, game_id=row["game_id"], play_id=0, team=str(subject.id), description=description,
@@ -360,12 +429,14 @@ class SoccerPlugin:
                     visualization=PlayVisualization(sport="soccer", game_date=row["date"],
                         home_team_name=str(match.get("home_team") or ""), away_team_name=str(match.get("away_team") or ""),
                         home_score=int(_number(match.get("home_score")) or 0), away_score=int(_number(match.get("away_score")) or 0),
-                        source_packages=["play_by_play", *(["key_events"] if has_event_section else [])],
+                        home_expected_goals=home_xg, away_expected_goals=away_xg,
+                        source_packages=["play_by_play", *(["key_events"] if has_event_section else []),
+                                         *(["expected_goals"] if home_xg is not None or away_xg is not None else [])],
                         soccer_timeline=timeline),
                 ))
         caveats = ["ESPN soccer coverage varies by match and competition; missing match sections are excluded from metric denominators."]
         for source, season_manifests in supplemental_manifests.items():
-            if source not in {"team_stats", "lineups", "key_events"}:
+            if source not in {"team_stats", "lineups", "key_events", "expected_goals", "player_expected_goals"}:
                 continue
             for season, manifest in season_manifests.items():
                 expected = manifest.coverage.get("expected_matches", 0)

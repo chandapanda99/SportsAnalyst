@@ -109,6 +109,7 @@ Write like a soccer analyst briefing an informed supporter.
 - Use match and competition terminology. Separate recorded events from tactical inference.
 - Explain sample size and missing match sections when they limit the comparison.
 - Do not claim expected goals, player positions, or ball paths unless recorded.
+- When recorded xG is available, distinguish chance quality from actual goals and xG on target. Use the covered-match sample and describe goals minus xG without claiming a stable finishing skill or forecasting future goals.
 """.strip()
 
 

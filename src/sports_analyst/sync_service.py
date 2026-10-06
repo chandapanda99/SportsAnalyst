@@ -11,7 +11,7 @@ from sports_analyst.config import Settings
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.models import DatasetManifest, stable_id
 from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
-from sports_analyst.soccer_data import SOCCER_DEFAULT_DATASETS, SportsDataverseSoccerConnector, soccer_season_label
+from sports_analyst.soccer_data import SOCCER_COMPETITIONS, SOCCER_DEFAULT_DATASETS, SportsDataverseSoccerConnector, soccer_season_label
 from sports_analyst.object_jobs import ObjectJobStore
 from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
 from sports_analyst.storage import LocalStore
@@ -68,6 +68,9 @@ def run_dataset_sync(
     )
     application.events.emit(key, "starting", f"Preparing selected {sport.upper()} datasets", 0.05)
 
+    if sport == "soccer" and "team_stats" in selected_datasets and "expected_goals" not in selected_datasets:
+        selected_datasets.append("expected_goals")
+
     application.store.refresh_durable_datasets(sport, seasons, selected_datasets, competition)
     existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)}
     if sport == "soccer":
@@ -76,6 +79,10 @@ def run_dataset_sync(
                           if manifest.dataset == "play_by_play" else
                           manifest.coverage.get("completed_matches", 0) < manifest.coverage.get("expected_matches", 0))}
         existing -= incomplete
+        if competition in SOCCER_COMPETITIONS:
+            now = datetime.now(UTC)
+            current_season = now.year + int(not SOCCER_COMPETITIONS[competition][1] and now.month >= 7)
+            existing = {(dataset, season) for dataset, season in existing if season != current_season}
     if sport == "nfl":
         # In-season nflverse packages change after games and stat corrections.
         # Keep older local seasons, but replace selected current-season snapshots.

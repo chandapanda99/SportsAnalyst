@@ -662,7 +662,7 @@ describe('Open Sports Analyst workbench', () => {
       play_evidence: [{sport: 'soccer', evidence_id: 'soccer-match', season: 2025, game_id: '501', play_id: 0,
                        team: '1', description: 'Home FC 2–0 Away FC', supporting: true, window: 'comparison', evidence_role: 'typical',
                        visualization: {sport: 'soccer', game_date: '2024-09-15', home_team_name: 'Home FC', away_team_name: 'Away FC',
-                                       home_score: 2, away_score: 0,
+                                       home_score: 2, away_score: 0, home_expected_goals: 1.574, away_expected_goals: 0,
                                        soccer_timeline: [{clock: "42'", type: 'Goal', text: 'Alex scores'}]}}]
     }];
     render(App);
@@ -693,5 +693,6 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
     expect(await screen.findByText('Alex scores')).toBeTruthy();
+    expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();
   });
 });

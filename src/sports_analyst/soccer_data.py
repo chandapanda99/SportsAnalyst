@@ -6,8 +6,6 @@ import importlib.metadata
 import json
 import logging
 import re
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +19,7 @@ import polars as pl
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import sha256_file
 from sports_analyst.models import DatasetManifest, stable_id
+from sports_analyst.soccer_xg import CORE_ROOT, ExpectedGoalsSource, coverage as xg_coverage
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +65,20 @@ class SportsDataverseSoccerConnector:
         self._cache: OrderedDict[str, pl.DataFrame] = OrderedDict()
         self._fixture_coverage: dict[tuple[str, int], tuple[int, int]] = {}
         self._lock = RLock()
+        self.expected_goals = ExpectedGoalsSource(self.data_dir, self.settings.dataset_sync_concurrency)
 
     @staticmethod
     def _request(competition: str, endpoint: str, params: dict[str, str | int]) -> dict[str, Any]:
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{competition}/{endpoint}?{urlencode(params)}"
-        request = Request(url, headers={"User-Agent": "SportsAnalyst/1.0", "Accept": "application/json"})
-        with urlopen(request, timeout=30) as response:
-            return json.load(response)
+        from sportsdataverse import soccer
+        from sportsdataverse.errors import SportsDataverseError
+
+        arguments = {"event_id" if name == "event" else name: value for name, value in params.items()}
+        try:
+            return getattr(soccer, f"espn_soccer_{endpoint}")(
+                league=competition, return_parsed=False, timeout=30, num_retries=2, **arguments,
+            )
+        except SportsDataverseError as error:
+            raise OSError(str(error)) from error
 
     @staticmethod
     def _parse_scoreboard(payload: dict[str, Any]) -> pl.DataFrame:
@@ -178,7 +184,11 @@ class SportsDataverseSoccerConnector:
         if competition not in SOCCER_COMPETITIONS:
             raise ValueError(f"Unsupported soccer competition: {competition}")
         selected = list(dict.fromkeys(datasets or SOCCER_DEFAULT_DATASETS))
-        if set(selected) - set(SOCCER_DATASETS):
+        # Preserve legacy explicit xG sync requests; keep the separate snapshot
+        # internally for independent coverage, retries and existing investigations.
+        if "team_stats" in selected and "expected_goals" not in selected:
+            selected.append("expected_goals")
+        if set(selected) - (set(SOCCER_DATASETS) | {"expected_goals"}):
             raise ValueError(f"Unsupported soccer datasets: {sorted(set(selected) - set(SOCCER_DATASETS))}")
         if not seasons or any(year < 2000 or year > date.today().year + 1 for year in seasons):
             raise ValueError("Choose valid soccer seasons")
@@ -196,7 +206,8 @@ class SportsDataverseSoccerConnector:
             final = schedule.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
             ids = final.get_column("event_id").cast(pl.String).to_list()
             summaries: dict[str, dict] = {}
-            if any(dataset != "play_by_play" for dataset in pending) and ids:
+            summaries_requested = any(dataset in {"team_stats", "lineups", "key_events"} for dataset in pending)
+            if summaries_requested and ids:
                 workers = min(self.settings.dataset_sync_concurrency, len(ids), 8)
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="soccer-sync") as pool:
                     futures = {pool.submit(self._summary, competition, season, match): match for match in ids}
@@ -211,7 +222,7 @@ class SportsDataverseSoccerConnector:
                 self.data_dir / competition / str(season) / "events" / f"{match}.json").exists()}
             schedule = schedule.with_columns(pl.Series("summary_status", [
                 "fetched" if str(event_id) in fetched_ids else
-                "unavailable" if str(event_id) in completed_ids and any(dataset != "play_by_play" for dataset in pending) else
+                "unavailable" if str(event_id) in completed_ids and summaries_requested else
                 "not_requested" if str(event_id) in completed_ids else "not_completed"
                 for event_id in schedule.get_column("event_id").to_list()
             ]))
@@ -220,6 +231,12 @@ class SportsDataverseSoccerConnector:
                 pending.insert(0, "play_by_play")
             for dataset in pending:
                 if dataset == "play_by_play":
+                    continue
+                if dataset == "expected_goals":
+                    if progress_callback:
+                        progress_callback("downloading", dataset, season, completed, len(work))
+                    heartbeat = (lambda: progress_callback("processing", "expected_goals", season, completed, len(work))) if progress_callback else None
+                    frames[dataset] = self.expected_goals.team_matches(competition, season, final, heartbeat)
                     continue
                 section = "key_events" if dataset == "key_events" else dataset
                 parts = []
@@ -234,6 +251,7 @@ class SportsDataverseSoccerConnector:
                                                    "type": [None], "text": [None],
                                                    "clock": [None], "scoring_play": [False]}))
                 frames[dataset] = pl.concat(parts, how="diagonal_relaxed") if parts else pl.DataFrame()
+            completed += len(selected) - len(pending)
             for dataset in pending:
                 frame = frames[dataset]
                 completed += 1
@@ -260,19 +278,26 @@ class SportsDataverseSoccerConnector:
                      completed_matches: int = 0, expected_matches: int = 0, recorded_matches: int = 0) -> DatasetManifest:
         checksum = sha256_file(path)
         stat = path.stat()
+        coverage = ({"fetched_intervals": completed_matches, "expected_intervals": expected_matches}
+                    if dataset == "play_by_play" else {"completed_matches": completed_matches, "expected_matches": expected_matches,
+                                                       "recorded_matches": recorded_matches})
+        if dataset == "expected_goals" or dataset.startswith("player_expected_goals_"):
+            coverage = xg_coverage(frame, expected_matches)
+        source_url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{competition}/"
+        if dataset.startswith("player_game_logs_"):
+            source_url = f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{competition}/athletes/{dataset.removeprefix('player_game_logs_')}/gamelog"
+        elif dataset == "expected_goals" or dataset.startswith("player_expected_goals_"):
+            source_url = f"{CORE_ROOT}/{competition}/events/"
         return DatasetManifest(
             manifest_id=stable_id("dataset", {"sport": "soccer", "competition": competition, "season": season, "dataset": dataset, "sha256": checksum}),
             sport="soccer", competition=competition, dataset=dataset, season=season,
-            source_url=(f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{competition}/athletes/{dataset.removeprefix('player_game_logs_')}/gamelog"
-                        if dataset.startswith("player_game_logs_") else f"https://site.api.espn.com/apis/site/v2/sports/soccer/{competition}/"),
+            source_url=source_url,
             sha256=checksum, row_count=frame.height, columns=frame.columns,
             package_version=importlib.metadata.version("sportsdataverse"),
             license="See ESPN data terms.",
-            attribution="Match data provided by ESPN; endpoint selection follows the Sports Dataverse soccer catalog.",
+            attribution="Match data provided by ESPN through SportsDataverse.",
             local_path=str(path.resolve()), file_size=stat.st_size, modified_ns=stat.st_mtime_ns,
-            coverage=({"fetched_intervals": completed_matches, "expected_intervals": expected_matches}
-                      if dataset == "play_by_play" else {"completed_matches": completed_matches, "expected_matches": expected_matches,
-                                                         "recorded_matches": recorded_matches}),
+            coverage=coverage,
         )
 
     def player_game_log_manifest(self, competition: str, season: int, athlete_id: str) -> DatasetManifest:
@@ -285,10 +310,14 @@ class SportsDataverseSoccerConnector:
             frame = pl.read_parquet(path)
             return self.manifest_for(path, competition, season, dataset, frame)
         source_season = season if SOCCER_COMPETITIONS[competition][1] else season - 1
-        url = (f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{competition}"
-               f"/athletes/{athlete_id}/gamelog?{urlencode({'season': source_season})}")
-        with urlopen(Request(url, headers={"User-Agent": "SportsAnalyst/1.0", "Accept": "application/json"}), timeout=30) as response:
-            raw = json.load(response)
+        from sportsdataverse.errors import SportsDataverseError
+        from sportsdataverse.soccer import espn_soccer_player_gamelog
+
+        try:
+            raw = espn_soccer_player_gamelog(league=competition, athlete_id=athlete_id, season=source_season,
+                                           return_parsed=False, timeout=30, num_retries=2)
+        except SportsDataverseError as error:
+            raise OSError(str(error)) from error
         rows = []
         for season_type in raw.get("seasonTypes") or []:
             for category in season_type.get("categories") or []:
@@ -311,6 +340,30 @@ class SportsDataverseSoccerConnector:
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
         return self.manifest_for(path, competition, season, dataset, frame)
+
+    def player_expected_goals_manifest(self, competition: str, season: int, athlete_id: str,
+                                       schedule: pl.DataFrame, lineups: pl.DataFrame,
+                                       progress: Callable[[], None] | None = None) -> DatasetManifest:
+        if competition not in SOCCER_COMPETITIONS or not athlete_id.isdigit():
+            raise ValueError("Expected a supported competition and numeric player ID")
+        required = {"game_id", "team_id", "athlete_id"}
+        if not required <= set(lineups.columns):
+            raise ValueError("Sync lineups before requesting player expected goals")
+        final = schedule.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
+        games = final.get_column("event_id").cast(pl.String).to_list()
+        appearances = lineups.filter((pl.col("athlete_id").cast(pl.String) == athlete_id)
+                                     & pl.col("game_id").cast(pl.String).is_in(games))
+        if appearances.is_empty():
+            raise ValueError("No recorded player appearances for expected-goals analysis")
+        # Successful match requests are cached individually; failed requests can
+        # resume and newly synced appearances extend the player's season snapshot.
+        frame = self.expected_goals.player_matches(competition, season, athlete_id, appearances, progress)
+        frame = frame.with_columns(pl.lit(season).alias("season"), pl.lit(competition).alias("competition"))
+        path = self.data_dir / competition / str(season) / "player_expected_goals" / f"{athlete_id}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_parquet(path)
+        return self.manifest_for(path, competition, season, f"player_expected_goals_{athlete_id}", frame,
+                                 expected_matches=appearances.get_column("game_id").n_unique())
 
     def load(self, manifest: DatasetManifest, columns=None) -> pl.DataFrame:
         if manifest.sport != "soccer" or manifest.competition not in SOCCER_COMPETITIONS:

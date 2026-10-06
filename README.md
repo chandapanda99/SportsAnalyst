@@ -97,6 +97,15 @@ The same download can be started from the CLI, for example `uv run sports-analys
 is its ending year (2025 means 2024–25); MLS and NWSL use the calendar year. Selected-player assist game logs are requested and cached only if that metric is used and ESPN
 provides the log for both windows.
 
+**Team Match Statistics** also fetches ESPN Core expected-goals statistics through SportsDataverse in the same sync. Team analysis supports xG, xG against, xG difference, non-penalty xG,
+and goals minus xG per match. Player scoring analysis supports recorded xG, non-penalty xG, and goals minus xG; only the selected player's match statistics are fetched
+and cached when requested. Match evidence also displays each team's recorded xG. Sync Team Match Statistics (and lineups for players) before selecting these metrics.
+Existing xG snapshots remain compatible; xG coverage is tracked independently internally and shown alongside the bundled match statistics.
+Missing values are excluded, never replaced with zero, and comparisons report their qualifying-match coverage. Both windows need recorded values.
+Historical coverage is not guaranteed: a September sample across all seven competitions found xG in the checked 2026 matches but not the checked 2024/2025 matches.
+Use covered seasons or date ranges within a covered season. These are match statistics, not shot-location data or tracking replay.
+See the [SportsDataverse Core statistics documentation](https://js.sportsdataverse.org/docs/soccer/reference/core#espnsoccereventcompetitorstatistics).
+
 ## Windows desktop application
 
 The desktop edition runs the same FastAPI service and compiled Svelte application inside a native WebView2 window. It binds the API to a random loopback-only port for the

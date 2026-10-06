@@ -31,7 +31,8 @@ from sports_analyst.models import (
 )
 from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
 from sports_analyst.soccer_data import SportsDataverseSoccerConnector
-from sports_analyst.plugins.soccer import SoccerPlugin
+from sports_analyst.soccer_xg import PLAYER_XG_FIELDS
+from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS, SoccerPlugin
 from sports_analyst.persistence import PersistenceBackend
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
 from sports_analyst.sql import execute_read_only_sql
@@ -392,6 +393,24 @@ class AnalystApplication:
                         supplemental.setdefault("player_game_logs", {})[season] = self._load_dataset(connector, manifest)
                     except (OSError, ValueError) as error:
                         logger.warning("soccer_player_gamelog_unavailable competition=%s season=%s player=%s error=%s",
+                                       request.scope.competition, season, request.subject.id, error)
+            if (request.sport == "soccer" and request.subject and request.subject.type == "player"
+                    and set(request.metrics or SOCCER_DEFAULT_METRICS.get(request.analysis_domain, [])) & set(PLAYER_XG_FIELDS)):
+                def player_xg_progress() -> None:
+                    self.events.emit(identifier, "loading", "Loading recorded player expected goals", 0.2)
+
+                player_xg_progress()
+                for season in sorted(endpoint_seasons):
+                    try:
+                        manifest = connector.player_expected_goals_manifest(
+                            request.scope.competition, season, request.subject.id,
+                            datasets[season], supplemental.get("lineups", {}).get(season, pl.DataFrame()), player_xg_progress,
+                        )
+                        self.store.save_manifest(manifest)
+                        supplemental_manifests.setdefault("player_expected_goals", {})[season] = manifest
+                        supplemental.setdefault("player_expected_goals", {})[season] = self._load_dataset(connector, manifest)
+                    except (OSError, ValueError) as error:
+                        logger.warning("soccer_player_xg_unavailable competition=%s season=%s player=%s error=%s",
                                        request.scope.competition, season, request.subject.id, error)
             self.telemetry.add_outputs(
                 load_span,

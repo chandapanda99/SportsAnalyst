@@ -129,13 +129,16 @@
     soccer: {
       team: {
         results: ['Did this team improve its points per match, and was the change driven by scoring or defending?'],
-        attack: ['Did this team create more shots and shots on target as its goals per match changed?'],
-        defense: ['Did the team concede fewer goals consistently across the selected matches?'],
+        attack: ['Did this team create more shots and shots on target as its goals per match changed?',
+          'Where expected goals are recorded, did attacking output change through chance quality or goals scored above xG?'],
+        defense: ['Did the team concede fewer goals consistently across the selected matches?',
+          'Where xG against is recorded, did the team allow fewer or lower-quality chances?'],
         control: ['Did possession change alongside the team’s results and attacking output?']
       },
       player: {
         usage: ['Did this player feature and start more often across these periods?'],
-        scoring: ['Did this player score more often across the selected matches?'],
+        scoring: ['Did this player score more often across the selected matches?',
+          'Where player xG is recorded, how did expected goals and goals above xG change across the covered appearances?'],
         discipline: ['Did this player receive more cards across these periods?']
       }
     },
@@ -1268,6 +1271,11 @@
   }
 
   function datasetLabel(dataset: string) {
+    if (activeSport === 'soccer') {
+      const soccerLabels: Record<string, string> = {play_by_play: 'Match Results', team_stats: 'Team Match Statistics',
+        lineups: 'Match Lineups', key_events: 'Match Events', expected_goals: 'Expected Goals (xG)'};
+      if (soccerLabels[dataset]) return soccerLabels[dataset];
+    }
     const labels: Record<string, string> = {
       play_by_play: 'Play By Play',
       player_stats: 'Player Stats',
@@ -1445,6 +1453,15 @@
     if (!eligibleSeasons.length) return null;
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
+    if (activeSport === 'soccer' && dataset === 'team_stats') {
+      if (eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) return {state: 'partial', label: 'Partial · resume sync'};
+      const sources = datasets.filter(item => item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      if (sources.length < eligibleSeasons.length) return {state: 'partial', label: 'Match stats installed · sync to include xG'};
+      const covered = sources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
+      const expected = sources.reduce((sum, item) => sum + (item.coverage?.expected_matches ?? 0), 0);
+      return {state: covered < expected || local < eligibleSeasons.length ? 'partial' : 'installed',
+        label: covered ? `xG recorded · ${covered}/${expected} matches` : 'No xG recorded in downloaded matches'};
+    }
     if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) {
       return {state: 'partial', label: 'Partial · resume sync'};
     }
@@ -1460,6 +1477,10 @@
 
   function soccerPackageIncomplete(dataset: string, season: number) {
     if (activeSport !== 'soccer') return false;
+    if (dataset === 'team_stats') {
+      const xg = datasets.find(item => item.sport === 'soccer' && item.competition === selectedCompetition && item.dataset === 'expected_goals' && item.season === season);
+      if (!xg || (xg.coverage?.completed_matches ?? 0) < (xg.coverage?.expected_matches ?? 0)) return true;
+    }
     const manifest = datasets.find(item => item.sport === 'soccer' && item.competition === selectedCompetition && item.dataset === dataset && item.season === season);
     const completed = dataset === 'play_by_play' ? manifest?.coverage?.fetched_intervals : manifest?.coverage?.completed_matches;
     const expected = dataset === 'play_by_play' ? manifest?.coverage?.expected_intervals : manifest?.coverage?.expected_matches;
@@ -1471,8 +1492,11 @@
       return datasets.some((item) => (item.sport ?? 'nfl') === activeSport && item.dataset === dataset) ? [] : selectedSeasons.slice(0, 1);
     }
     const currentNflSeason = activeSport === 'nfl' ? 2026 : null;
+    const now = new Date();
+    const currentSoccerSeason = activeSport === 'soccer' ? now.getFullYear() +
+      (!soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar && now.getMonth() >= 6 ? 1 : 0) : null;
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
-        season === currentNflSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
+        season === currentNflSeason || season === currentSoccerSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
   }
 
   function seasonLabel(season: number) {
