@@ -112,7 +112,7 @@ class ExpectedGoalsSource:
         return response.json()
 
     def _row(self, competition: str, season: int, game_id: str, team_id: str,
-             athlete_id: str | None = None) -> dict:
+             athlete_id: str | None = None, *, refresh: bool = False) -> dict:
         if not all(value.isdigit() for value in (game_id, team_id, *([athlete_id] if athlete_id else []))):
             raise ValueError("Expected numeric ESPN match, team and player IDs")
         suffix = f"/roster/{athlete_id}" if athlete_id else ""
@@ -121,7 +121,7 @@ class ExpectedGoalsSource:
         stats: dict[str, float | None] = {}
         try:
             try:
-                payload = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else {}
+                payload = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() and not refresh else {}
             except (OSError, ValueError):
                 payload = {}
             stats = core_statistics(payload)
@@ -142,17 +142,17 @@ class ExpectedGoalsSource:
                 **{field: stats.get(name) for field, name in STAT_FIELDS.items()}}
 
     def team_matches(self, competition: str, season: int, schedule: pl.DataFrame,
-                     progress: Callable[[], None] | None = None) -> pl.DataFrame:
-        def fetch(match: dict) -> list[dict]:
-            return [self._row(competition, season, str(match["event_id"]), str(match[f"{side}_team_id"]))
-                    for side in ("home", "away")]
-
+                     progress: Callable[[], None] | None = None, *,
+                     progress_counts: Callable[[int, int], None] | None = None, refresh: bool = False) -> pl.DataFrame:
         rows = []
         with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="soccer-xg") as pool:
-            futures = [pool.submit(fetch, match) for match in schedule.iter_rows(named=True)]
+            futures = [pool.submit(self._row, competition, season, str(match["event_id"]), str(match[f"{side}_team_id"]), refresh=refresh)
+                       for match in schedule.iter_rows(named=True) for side in ("home", "away")]
             for index, future in enumerate(as_completed(futures), 1):
-                rows.extend(future.result())
-                if progress and (index % 10 == 0 or index == len(futures)):
+                rows.append(future.result())
+                if progress_counts:
+                    progress_counts(index, len(futures))
+                if progress and (index % 20 == 0 or index == len(futures)):
                     progress()
         return self._frame(rows)
 
@@ -172,4 +172,6 @@ class ExpectedGoalsSource:
     def _frame(rows: list[dict]) -> pl.DataFrame:
         if not rows:
             return pl.DataFrame()
-        return pl.DataFrame(rows).with_columns(pl.col(field).cast(pl.Float64) for field in STAT_FIELDS).sort("game_id", "team_id")
+        # Historical/qualifying matches may have no xG in the entire inference
+        # sample. Set dtypes before construction; casting afterward is too late.
+        return pl.DataFrame(rows, schema_overrides={field: pl.Float64 for field in STAT_FIELDS}).sort("game_id", "team_id")

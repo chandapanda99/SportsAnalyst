@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     persistence_backend: str = "local"
+    data_admin_token: SecretStr | None = Field(default=None, alias="SPORTS_ANALYST_DATA_ADMIN_TOKEN", repr=False)
     job_backend: str = "local"
     job_dispatch_backend: str = "none"
     job_progress_transport: str = "stream"

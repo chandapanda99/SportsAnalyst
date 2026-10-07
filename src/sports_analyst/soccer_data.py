@@ -20,6 +20,7 @@ from sports_analyst.config import Settings, get_settings
 from sports_analyst.data import sha256_file
 from sports_analyst.models import DatasetManifest, stable_id
 from sports_analyst.soccer_xg import CORE_ROOT, ExpectedGoalsSource, coverage as xg_coverage
+from sports_analyst.soccer_season_stats import FIELDS, SeasonStatisticsSource
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class SportsDataverseSoccerConnector:
         self._fixture_coverage: dict[tuple[str, int], tuple[int, int]] = {}
         self._lock = RLock()
         self.expected_goals = ExpectedGoalsSource(self.data_dir, self.settings.dataset_sync_concurrency)
+        self.season_statistics = SeasonStatisticsSource(self.data_dir)
 
     @staticmethod
     def _request(competition: str, endpoint: str, params: dict[str, str | int]) -> dict[str, Any]:
@@ -129,23 +131,46 @@ class SportsDataverseSoccerConnector:
                                  "position": (player.get("position") or {}).get("abbreviation"),
                                  "starter": player.get("starter")})
         elif section == "key_events":
+            roster = {str(player.get("athlete", {}).get("id") or ""): player
+                      for entry in payload.get("rosters") or [] for player in entry.get("roster") or []}
             for event in payload.get("keyEvents") or []:
                 participants = event.get("participants") or []
                 athlete = (participants[0].get("athlete") or {}) if participants else {}
+                incoming, outgoing = "", ""
+                if "substitution" in str((event.get("type") or {}).get("text") or "").lower():
+                    # Explicit roster relationships establish direction; participant order alone does not.
+                    for participant in participants:
+                        person = participant.get("athlete") or {}
+                        player = roster.get(str(person.get("id") or ""), {})
+                        for field, is_incoming in (("subbedInFor", True), ("subbedOutFor", False)):
+                            related = player.get(field)
+                            if related:
+                                related_athlete = (related.get("athlete") or related) if isinstance(related, dict) else {}
+                                related_id = str(related_athlete.get("id") or "") if isinstance(related, dict) else str(related)
+                                other = roster.get(related_id, {}).get("athlete", {})
+                                other_name = other.get("displayName") or related_athlete.get("displayName") or ""
+                                name = person.get("displayName") or ""
+                                incoming, outgoing = (name, other_name) if is_incoming else (other_name, name)
+                    # ESPN's complete text explicitly states "A replaces B".
+                    replacement = re.search(r"(?:^|\.\s)([^.]+?) replaces ([^.]+)", str(event.get("text") or ""))
+                    if replacement:
+                        incoming, outgoing = replacement.group(1).strip(), replacement.group(2).strip()
                 rows.append({"id": str(event.get("id") or ""), "type": (event.get("type") or {}).get("text"),
                              "text": event.get("text"), "clock": (event.get("clock") or {}).get("displayValue"),
                              "team_id": str((event.get("team") or {}).get("id") or ""),
                              "scoring_play": bool(event.get("scoringPlay")) and not (
                                  "shootout" in str((event.get("type") or {}).get("text") or "").lower()
                                  or (event.get("period") or {}).get("number") == 5),
-                             "athlete_id": str(athlete.get("id") or ""), "athlete_name": athlete.get("displayName")})
+                             "athlete_id": str(athlete.get("id") or ""), "athlete_name": athlete.get("displayName"),
+                             "player_in": incoming or "", "player_out": outgoing or ""})
         return pl.DataFrame(rows) if rows else pl.DataFrame()
 
-    def _scoreboard(self, competition: str, season: int) -> pl.DataFrame:
+    def _scoreboard(self, competition: str, season: int,
+                    progress: Callable[[int, int], None] | None = None) -> pl.DataFrame:
         frames = []
         intervals = list(_months(competition, season))
         successful = 0
-        for interval in intervals:
+        for index, interval in enumerate(intervals, 1):
             try:
                 frame = self._parse_scoreboard(self._request(competition, "scoreboard", {"dates": interval, "limit": 500}))
                 successful += 1
@@ -153,6 +178,8 @@ class SportsDataverseSoccerConnector:
                     frames.append(frame)
             except Exception as error:
                 logger.warning("soccer_scoreboard_unavailable competition=%s interval=%s error=%s", competition, interval, error)
+            if progress:
+                progress(index, len(intervals))
         self._fixture_coverage[(competition, season)] = (successful, len(intervals))
         if not frames:
             raise ValueError(f"No fixtures were returned for {competition} {soccer_season_label(competition, season)}")
@@ -161,11 +188,11 @@ class SportsDataverseSoccerConnector:
         ).unique(subset=["event_id"], keep="last")
         return frame.with_columns(pl.lit(season).alias("season"), pl.lit(competition).alias("competition"))
 
-    def _summary(self, competition: str, season: int, event_id: str) -> dict[str, Any]:
+    def _summary(self, competition: str, season: int, event_id: str, *, refresh: bool = False) -> dict[str, Any]:
         if not event_id.isdigit():
             raise ValueError("Invalid ESPN soccer event ID")
         checkpoint = self.data_dir / competition / str(season) / "events" / f"{event_id}.json"
-        if checkpoint.exists():
+        if checkpoint.exists() and not refresh:
             try:
                 cached = json.loads(checkpoint.read_text(encoding="utf-8"))
                 if isinstance(cached, dict) and cached.get("header"):
@@ -190,6 +217,8 @@ class SportsDataverseSoccerConnector:
         skip: set[tuple[str, int]] | None = None,
         *,
         competition: str | None = None,
+        refresh_seasons: set[int] | None = None,
+        progress_detail_callback: Callable[[str, str, int, int, int, float, str, bool], None] | None = None,
     ) -> list[DatasetManifest]:
         if competition not in SOCCER_COMPETITIONS:
             raise ValueError(f"Unsupported soccer competition: {competition}")
@@ -210,23 +239,42 @@ class SportsDataverseSoccerConnector:
             if not pending:
                 completed += len(selected)
                 continue
+            if "play_by_play" in selected and "play_by_play" not in pending and any(dataset != "play_by_play" for dataset in pending):
+                pending.insert(0, "play_by_play")
+            completed += len(selected) - len(pending)
+            preparation_units = len(pending)
+            summaries_requested = any(dataset in {"team_stats", "lineups", "key_events"} for dataset in pending)
+            schedule_share = .2 if summaries_requested or "expected_goals" in pending else .95
+            summary_share = .6 if "expected_goals" in pending else .95
+
+            def detail(dataset: str, fraction: float, message: str, force: bool = False) -> None:
+                if progress_detail_callback:
+                    progress_detail_callback("downloading", dataset, season, completed, len(work),
+                                             preparation_units * fraction, message, force)
+
             if progress_callback:
                 progress_callback("downloading", "play_by_play", season, completed, len(work))
-            schedule = self._scoreboard(competition, season)
+            schedule_progress = lambda done, total: detail(
+                "play_by_play", schedule_share * done / max(total, 1),
+                f"Season schedule · {done} of {total} months checked", done == total)
+            schedule = (self._scoreboard(competition, season, schedule_progress) if progress_detail_callback
+                        else self._scoreboard(competition, season))
             final = schedule.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
             ids = final.get_column("event_id").cast(pl.String).to_list()
             summaries: dict[str, dict] = {}
-            summaries_requested = any(dataset in {"team_stats", "lineups", "key_events"} for dataset in pending)
             if summaries_requested and ids:
                 workers = min(self.settings.dataset_sync_concurrency, len(ids), 8)
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="soccer-sync") as pool:
-                    futures = {pool.submit(self._summary, competition, season, match): match for match in ids}
-                    for future in as_completed(futures):
+                    futures = {pool.submit(self._summary, competition, season, match,
+                                           **({"refresh": True} if season in (refresh_seasons or set()) else {})): match for match in ids}
+                    for index, future in enumerate(as_completed(futures), 1):
                         match = futures[future]
                         try:
                             summaries[match] = future.result()
                         except Exception as error:
                             logger.warning("soccer_match_unavailable competition=%s event=%s error=%s", competition, match, error)
+                        detail("play_by_play", .2 + (summary_share - .2) * index / len(ids),
+                               f"Match details · {index} of {len(ids)} matches checked", index == len(ids))
             completed_ids = set(ids)
             fetched_ids = set(summaries) | {match for match in ids if (
                 self.data_dir / competition / str(season) / "events" / f"{match}.json").exists()}
@@ -237,16 +285,21 @@ class SportsDataverseSoccerConnector:
                 for event_id in schedule.get_column("event_id").to_list()
             ]))
             frames: dict[str, pl.DataFrame] = {"play_by_play": schedule}
-            if "play_by_play" in selected and "play_by_play" not in pending and any(dataset != "play_by_play" for dataset in pending):
-                pending.insert(0, "play_by_play")
             for dataset in pending:
                 if dataset == "play_by_play":
                     continue
                 if dataset == "expected_goals":
                     if progress_callback:
                         progress_callback("downloading", dataset, season, completed, len(work))
-                    heartbeat = (lambda: progress_callback("processing", "expected_goals", season, completed, len(work))) if progress_callback else None
-                    frames[dataset] = self.expected_goals.team_matches(competition, season, final, heartbeat)
+                    start_fraction = .6 if summaries_requested and ids else .2
+                    def xg_progress(done: int, total: int) -> None:
+                        detail("expected_goals", start_fraction + (.95 - start_fraction) * done / max(total, 1),
+                               f"Team match reports · {done} of {total} checked", done == total)
+                        if progress_callback and not progress_detail_callback:
+                            progress_callback("processing", "expected_goals", season, completed, len(work))
+                    frames[dataset] = self.expected_goals.team_matches(
+                        competition, season, final, progress_counts=xg_progress,
+                        refresh=season in (refresh_seasons or set()))
                     continue
                 section = "key_events" if dataset == "key_events" else dataset
                 parts = []
@@ -261,7 +314,6 @@ class SportsDataverseSoccerConnector:
                                                    "type": [None], "text": [None],
                                                    "clock": [None], "scoring_play": [False]}))
                 frames[dataset] = pl.concat(parts, how="diagonal_relaxed") if parts else pl.DataFrame()
-            completed += len(selected) - len(pending)
             for dataset in pending:
                 frame = frames[dataset]
                 completed += 1
@@ -374,6 +426,31 @@ class SportsDataverseSoccerConnector:
         frame.write_parquet(path)
         return self.manifest_for(path, competition, season, f"player_expected_goals_{athlete_id}", frame,
                                  expected_matches=appearances.get_column("game_id").n_unique())
+
+    def season_statistics_manifest(self, competition: str, season: int, subject_type: str,
+                                   subject_id: str, schedule: pl.DataFrame, lineups: pl.DataFrame,
+                                   progress=None) -> DatasetManifest:
+        if competition not in SOCCER_COMPETITIONS:
+            raise ValueError("Select a supported soccer competition")
+        if subject_type == "team":
+            matches = schedule.filter((pl.col("home_team_id").cast(pl.String) == subject_id)
+                                      | (pl.col("away_team_id").cast(pl.String) == subject_id))
+        else:
+            if not {"athlete_id", "game_id"} <= set(lineups.columns):
+                raise ValueError("Sync player lineups before season statistics")
+            games = lineups.filter(pl.col("athlete_id").cast(pl.String) == subject_id)["game_id"].cast(pl.String)
+            matches = schedule.filter(pl.col("event_id").cast(pl.String).is_in(games.to_list()))
+        matches = matches.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
+        stages = set(matches["competition_stage"].drop_nulls().to_list()) if "competition_stage" in matches.columns else set()
+        source_season = season if SOCCER_COMPETITIONS[competition][1] else season - 1
+        frame = self.season_statistics.fetch(competition, season, source_season, subject_type, subject_id, stages, progress)
+        frame = frame.with_columns(pl.lit(season).alias("season"), pl.lit(competition).alias("competition"))
+        path = self.data_dir / competition / str(season) / "season_statistics" / f"{subject_type}_{subject_id}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_parquet(path)
+        manifest = self.manifest_for(path, competition, season, f"season_statistics_{subject_type}_{subject_id}", frame)
+        return manifest.model_copy(update={"source_url": f"{CORE_ROOT}/{competition}/seasons/{source_season}/types/",
+            "coverage": {f"{field}_rows": frame[field].is_not_null().sum() for field in FIELDS}})
 
     def load(self, manifest: DatasetManifest, columns=None) -> pl.DataFrame:
         if manifest.sport != "soccer" or manifest.competition not in SOCCER_COMPETITIONS:

@@ -1807,6 +1807,12 @@ main.soccer-background {
         var(--color-surface-panel)
 }
 
+.play-visual.soccer-loading {
+    background:
+        radial-gradient(ellipse at center, color-mix(in srgb, var(--accent) 9%, transparent), transparent 75%),
+        var(--color-surface-panel);
+}
+
 .play-caption {
     position: absolute;
     z-index: 3;

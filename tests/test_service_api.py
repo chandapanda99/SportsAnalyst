@@ -26,11 +26,27 @@ class RecordingTelemetry:
         return
 
 
+def test_clear_downloaded_data_requires_confirmation_and_admin_token(tmp_path: Path) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint="", _env_file=None,
+                                               SPORTS_ANALYST_DATA_ADMIN_TOKEN="test-admin"))
+    client = TestClient(create_app(application))
+    payload = {"confirmation": "CLEAR DOWNLOADED DATA"}
+    assert client.request("DELETE", "/api/datasets/nfl", json=payload).status_code == 403
+    headers = {"X-Data-Admin-Token": "test-admin"}
+    assert client.request("DELETE", "/api/datasets/nfl", json={"confirmation": "no"}, headers=headers).status_code == 422
+    assert client.request("DELETE", "/api/datasets/soccer", json=payload, headers=headers).status_code == 422
+    response = client.request("DELETE", "/api/datasets/nfl", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"deleted_packages": 0}
+    application.events.emit("active-sync", "downloading", "Downloading", 0.1)
+    assert client.request("DELETE", "/api/datasets/nfl", json=payload, headers=headers).status_code == 409
+
+
 def test_dataset_sync_stream_keeps_work_and_progress_in_one_request(tmp_path: Path, monkeypatch) -> None:
     application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
     captured: dict[str, object] = {}
 
-    def sync(seasons, job_id, datasets, sport):
+    def sync(seasons, job_id, datasets, sport, competition=None):
         captured.update(seasons=seasons, datasets=datasets, sport=sport)
         application.events.emit(job_id, "downloading", "Downloading selected datasets", 0.5)
         application.events.emit(job_id, "complete", "Dataset sync complete", 1.0, manifest_ids=[])

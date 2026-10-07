@@ -351,6 +351,71 @@ class LocalStore:
         if publish_catalog:
             self.publish_dataset_catalog([manifest])
 
+    def clear_datasets(self, sport: str, competition: str | None = None) -> int:
+        """Remove a sport/league library, including source checkpoints, not investigations."""
+        if sport not in {"nfl", "nba", "soccer"}:
+            raise ValueError("Unsupported sport")
+        if sport == "soccer":
+            from sports_analyst.soccer_data import SOCCER_COMPETITIONS
+            if competition not in SOCCER_COMPETITIONS:
+                raise ValueError("Select a supported soccer competition")
+        elif competition is not None:
+            raise ValueError("Competition is only supported for soccer")
+        with self._persistence_lock:
+            if self.persistence.durable:
+                self._restore_durable_index()
+            manifests = self.manifests(sport=sport, competition=competition)
+            paths = [self._local_object_path(self._managed_relative_path(Path(item.local_path))) for item in manifests]
+            # Validate every target before deleting anything.
+            cache_key = f"raw/soccer/{competition}" if sport == "soccer" else "raw/nba" if sport == "nba" else "raw/nflverse"
+            cache_path = self._local_object_path(cache_key) if cache_key else None
+            if any(cache_path not in path.parents for path in paths):
+                raise ValueError("Dataset file is outside the selected sport's source directory")
+            if self.persistence.durable:
+                for item, path in zip(manifests, paths):
+                    self.persistence.delete_prefix(self._managed_relative_path(path))
+                    self.persistence.delete_prefix(self._dataset_metadata_key(item))
+                if cache_key:
+                    self.persistence.delete_prefix(cache_key + "/")
+                self._mutate_catalog(self.DATASET_CATALOG_KEY, lambda records: [
+                    record for record in records if not (
+                        record["manifest"].get("sport", "nfl") == sport and
+                        (sport != "soccer" or record["manifest"].get("competition") == competition))])
+                # Other replicas must discard their own source caches on next sync.
+                self.persistence.write_bytes(f"metadata/dataset-resets/{sport}/{competition or 'all'}.txt",
+                                             str(time.time_ns()).encode())
+            for path in paths:
+                path.unlink(missing_ok=True)
+            if cache_path and cache_path.exists():
+                shutil.rmtree(cache_path)
+                cache_path.mkdir(parents=True, exist_ok=True)
+            with self.connect() as db:
+                db.execute("DELETE FROM datasets WHERE sport = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ?",
+                           [sport, competition or ""])
+            return len(manifests)
+
+    def invalidate_reset_cache(self, sport: str, competition: str | None = None) -> None:
+        if not self.persistence.durable:
+            return
+        if sport not in {"nfl", "nba", "soccer"}:
+            raise ValueError("Unsupported sport")
+        if sport == "soccer":
+            from sports_analyst.soccer_data import SOCCER_COMPETITIONS
+            if competition not in SOCCER_COMPETITIONS:
+                raise ValueError("Select a supported soccer competition")
+        key = f"metadata/dataset-resets/{sport}/{competition or 'all'}.txt"
+        generation = self.persistence.read_bytes(key)
+        marker = self._local_object_path(key)
+        if generation is None or (marker.exists() and marker.read_bytes() == generation):
+            return
+        cache = self._local_object_path(f"raw/soccer/{competition}" if sport == "soccer" else
+                                        "raw/nba" if sport == "nba" else "raw/nflverse")
+        if cache.exists():
+            shutil.rmtree(cache)
+        cache.mkdir(parents=True, exist_ok=True)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_bytes(generation)
+
     def manifests(self, dataset: str | None = None, sport: str | None = None, competition: str | None = None) -> list[DatasetManifest]:
         with self.connect(read_only=True) as db:
             clauses, parameters = [], []
@@ -624,6 +689,11 @@ class EventRegistry:
         with self._lock:
             self._purge_expired()
             return list(self._events.get(key, []))
+
+    def has_active_work(self) -> bool:
+        with self._lock:
+            return any(events and events[-1]["stage"] not in {"complete", "failed"}
+                       for events in self._events.values())
 
     def _purge_expired(self) -> None:
         cutoff = time.monotonic() - self._retention_seconds

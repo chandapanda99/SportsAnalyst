@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from itertools import count
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import polars as pl
 from fastapi.testclient import TestClient
@@ -18,6 +20,8 @@ from sports_analyst.soccer_data import SportsDataverseSoccerConnector, soccer_se
 from sports_analyst.storage import LocalStore
 from sports_analyst.service import AnalystApplication
 from sports_analyst.soccer_xg import ExpectedGoalsSource, coverage
+from sports_analyst.soccer_season_stats import SeasonStatisticsSource
+from sports_analyst.sync_service import run_dataset_sync
 
 
 def _summary(game: str, with_events: bool = True) -> dict:
@@ -41,6 +45,48 @@ def _summary(game: str, with_events: bool = True) -> dict:
 
 
 class SoccerIntegrationTests(unittest.TestCase):
+    def test_current_season_refresh_policy_across_sports(self) -> None:
+        from datetime import UTC, datetime
+        from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
+        from sports_analyst.soccer_data import SOCCER_COMPETITIONS
+
+        now = datetime(2026, 10, 7, tzinfo=UTC)
+        scopes = [("nfl", None, LATEST_SYNCABLE_SEASON), ("nba", None, 2027)]
+        scopes += [("soccer", league, 2026 if calendar else 2027)
+                   for league, (_, calendar) in SOCCER_COMPETITIONS.items()]
+        for sport, league, current in scopes:
+            with self.subTest(sport=sport, league=league):
+                connector = Mock()
+                connector.sync.return_value = []
+                store = Mock()
+                store.manifests.return_value = [
+                    SimpleNamespace(dataset="play_by_play", season=season, coverage={})
+                    for season in (current - 1, current)]
+                application = SimpleNamespace(connectors={sport: connector}, store=store, events=Mock())
+                with patch("sports_analyst.sync_service.datetime") as clock:
+                    clock.now.return_value = now
+                    run_dataset_sync(application, [current - 2, current - 1, current],
+                                     datasets=["play_by_play"], sport=sport, competition=league)
+                self.assertEqual(connector.sync.call_args.kwargs["skip"], {("play_by_play", current - 1)})
+                if sport == "soccer":
+                    self.assertEqual(connector.sync.call_args.kwargs["refresh_seasons"], {current})
+
+        self.connector._summary = SportsDataverseSoccerConnector._summary.__get__(self.connector)
+        with patch.object(self.connector, "_request", return_value=_summary("123")) as request:
+            self.connector._summary("eng.1", 2027, "123")
+            self.connector._summary("eng.1", 2027, "123")
+            self.assertEqual(request.call_count, 1)
+            self.connector._summary("eng.1", 2027, "123", refresh=True)
+            self.assertEqual(request.call_count, 2)
+        payload = {"splits": {"categories": [{"stats": [{"name": "expectedGoals", "value": 1.5}]}]}}
+        with patch.object(ExpectedGoalsSource, "_team_statistics", return_value=payload) as request:
+            source = self.connector.expected_goals
+            source._row("eng.1", 2027, "123", "1")
+            source._row("eng.1", 2027, "123", "1")
+            self.assertEqual(request.call_count, 1)
+            source._row("eng.1", 2027, "123", "1", refresh=True)
+            self.assertEqual(request.call_count, 2)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -52,7 +98,7 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.store = LocalStore(self.settings)
         self.attempts: dict[str, int] = {}
 
-        def scoreboard(competition: str, season: int) -> pl.DataFrame:
+        def scoreboard(competition: str, season: int, progress=None) -> pl.DataFrame:
             return pl.DataFrame([
                 {"event_id": str(season), "date": f"{season - 1}-09-15T12:00:00Z",
                  "home_team_id": "1", "away_team_id": "2", "home_team": "Home", "away_team": "Away",
@@ -93,7 +139,7 @@ class SoccerIntegrationTests(unittest.TestCase):
 
     def test_champions_league_sync_analysis_and_knockout_context(self) -> None:
         original = self.connector._scoreboard
-        self.connector._scoreboard = lambda competition, season: original(competition, season).with_columns(
+        self.connector._scoreboard = lambda competition, season, progress=None: original(competition, season).with_columns(
             pl.Series("competition_stage", ["league-phase", "round-of-16"]))
         self.connector._summary = lambda competition, season, game: _summary(game)
         self._sync([2024, 2025], "uefa.champions")
@@ -126,6 +172,46 @@ class SoccerIntegrationTests(unittest.TestCase):
         shootout = self.connector._parse_summary({"keyEvents": [{"scoringPlay": True, "type": {"text": "Penalty Shootout"},
             "period": {"number": 5}}]}, "key_events")
         self.assertFalse(shootout["scoring_play"][0])
+        substitutions = self.connector._parse_summary({"keyEvents": [
+            {"type": {"text": "Substitution"}, "text": "Substitution, Home. Robin replaces Alex.",
+             "participants": [{"athlete": {"id": "11", "displayName": "Robin"}}]},
+            {"type": {"text": "Substitution"}, "text": "Robin Substitution", "participants": [
+                {"athlete": {"id": "11", "displayName": "Robin"}}]}],
+            "rosters": [{"roster": [
+                {"athlete": {"id": "11", "displayName": "Robin"}, "subbedInFor": {"athlete": {"id": "10", "displayName": "Alex"}}},
+                {"athlete": {"id": "10", "displayName": "Alex"}}]}]}, "key_events")
+        self.assertEqual(substitutions["player_in"].to_list(), ["Robin", "Robin"])
+        self.assertEqual(substitutions["player_out"].to_list(), ["Alex", "Alex"])
+
+    def test_sync_reports_progress_inside_schedule_matches_and_expected_goals(self) -> None:
+        fixtures = {"events": [{"id": "100", "date": "2024-09-15",
+            "status": {"type": {"name": "STATUS_FINAL", "completed": True}},
+            "competitions": [{"competitors": [
+                {"homeAway": "home", "team": {"id": "1", "displayName": "Home"}, "score": "2"},
+                {"homeAway": "away", "team": {"id": "2", "displayName": "Away"}, "score": "0"}
+            ]}]}]}
+        events = Mock()
+        application = SimpleNamespace(connectors={"soccer": self.connector}, store=self.store, events=events)
+        # Use the actual monthly fixture traversal with a local source response.
+        scoreboard = SportsDataverseSoccerConnector._scoreboard.__get__(self.connector)
+        with patch.object(self.connector, "_scoreboard", scoreboard), \
+             patch.object(self.connector, "_request", return_value=fixtures), \
+             patch.object(self.connector, "_summary", side_effect=lambda *args: _summary(args[-1])), \
+             patch("sports_analyst.sync_service.perf_counter", side_effect=count()):
+            manifests = run_dataset_sync(application, [2025], "progress-sync",
+                                         ["play_by_play", "team_stats"], "soccer", "eng.1")
+        updates = [call.args for call in events.emit.call_args_list]
+        messages = [item[2] for item in updates]
+        self.assertTrue(any("1 of 12 months checked" in message for message in messages))
+        self.assertTrue(any("12 of 12 months checked" in message for message in messages))
+        self.assertTrue(any("1 of 1 matches checked" in message for message in messages))
+        self.assertTrue(any("Team match reports · 1 of 2 checked" in message for message in messages))
+        self.assertTrue(any("Team match reports · 2 of 2 checked" in message for message in messages))
+        percentages = [item[3] for item in updates]
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertGreater(len(set(percentages[:-1])), 12)
+        self.assertEqual(percentages[-1], 1)
+        self.assertEqual({item.dataset for item in manifests}, {"play_by_play", "team_stats", "expected_goals"})
 
     def test_team_player_comparisons_and_missing_event_section(self) -> None:
         self._sync([2024, 2025])
@@ -152,6 +238,10 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(next(item.comparison_value for item in team_result.aggregate_evidence if item.metric == "possession_pct"), 0.53)
         self.assertEqual(len(team_result.play_evidence), 4)
         self.assertTrue(any(not play.visualization.soccer_timeline for play in team_result.play_evidence))
+        recorded = next(play.visualization.soccer_timeline for play in team_result.play_evidence
+                        if play.visualization.soccer_timeline)
+        self.assertEqual(recorded[0]["side"], "home")
+        self.assertTrue(recorded[0]["scoring_play"])
         player = AnalysisRequest(sport="soccer", question="How did Alex change?", scope=scope,
                                  subject={"type": "player", "id": "10"}, analysis_domain="usage",
                                  metrics=["appearances", "starts", "goals", "assists"])
@@ -193,6 +283,8 @@ class SoccerIntegrationTests(unittest.TestCase):
                                   subject={"type": "team", "id": "1"}, analysis_domain="results",
                                   metrics=["goals_for_per_match"])
         result = app.investigate(request)
+        self.assertEqual(result.run.subject.display_name, "Home")
+        self.assertEqual(app.store.get_investigation(result.run.investigation_id).run.subject.display_name, "Home")
         self.assertTrue(result.play_evidence)
         self.assertEqual(result.play_evidence[0].visualization.sport, "soccer")
         self.assertTrue(result.claims)
@@ -209,7 +301,78 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(first.sha256, second.sha256)
         self.assertEqual(self.connector.load(second).get_column("assists").to_list(), ["2"])
 
+    def test_published_season_statistics_team_player_scope_and_cache(self) -> None:
+        self.connector._summary = lambda competition, season, game: _summary(game)
+        self._sync([2024, 2025])
+        def fetch(url):
+            root = url.split("/types")[0]
+            if url.endswith("types?limit=100"):
+                return {"count": 1, "pageCount": 1, "items": [{"$ref": root + "/types/1"}]}
+            if url.endswith("types/1"):
+                return {"id": "1", "slug": "regular-season"}
+            return {"$ref": url + "/0", "splits": {"name": "Total", "categories": [{"stats": [
+                {"name": "totalGoals", "value": 7 if "/2024/" in url else 5},
+                {"name": "appearances", "value": 2}, {"name": "minutes", "value": 180},
+                {"name": "totalPasses", "value": 100}]}]}}
+        app = AnalystApplication(self.settings)
+        app.connectors["soccer"] = self.connector
+        with patch.object(SeasonStatisticsSource, "_request", side_effect=fetch) as source:
+            for subject_type, identifier, domain in [("team", "1", "attack"), ("player", "10", "scoring")]:
+                request = AnalysisRequest(sport="soccer", question="Compare published goals and match context",
+                    subject={"type": subject_type, "id": identifier}, analysis_domain=domain,
+                    metrics=[f"season_{subject_type}_goals"], scope={"team": identifier, "competition": "eng.1",
+                        "baseline": {"season": 2024}, "comparison": {"season": 2025}, "comparison_design": "full_seasons"})
+                result = app.investigate(request)
+                self.assertEqual(result.aggregate_evidence[0].baseline_value, 5)
+                self.assertEqual(result.aggregate_evidence[0].comparison_value, 7)
+                self.assertIn("published season totals", result.aggregate_evidence[0].caveats[0])
+                calls = source.call_count
+                app.investigate(request)
+                self.assertEqual(source.call_count, calls)
+                payload = request.model_dump()
+                payload["scope"]["comparison_design"] = "date_ranges"
+                for label, year in [("baseline", 2023), ("comparison", 2024)]:
+                    payload["scope"][label].update(start_date=f"{year}-09-01", end_date=f"{year}-10-31")
+                filtered = AnalysisRequest.model_validate(payload)
+                with self.assertRaisesRegex(ValueError, "full-season"):
+                    app.investigate(filtered)
+        bad = SeasonStatisticsSource(Path(self.temporary.name))
+        with patch.object(bad, "_request", side_effect=lambda url: fetch(url) if not url.endswith("statistics") else
+                          {"$ref": url.replace("/2024/", "/2026/") + "/0", "splits": {}}):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                bad.fetch("eng.1", 2025, 2024, "team", "1", set())
+        combined = SeasonStatisticsSource(Path(self.temporary.name) / "combined")
+        def combined_fetch(url):
+            root = url.split("/types")[0]
+            if url.endswith("types?limit=100"):
+                return {"count": 2, "pageCount": 1, "items": [{"$ref": root + f"/types/{i}"} for i in (0, 1)]}
+            if url.endswith("types/0"):
+                return {"slug": "combined"}
+            return fetch(url)
+        with patch.object(combined, "_request", side_effect=combined_fetch) as source:
+            totals = combined.fetch("usa.1", 2025, 2025, "team", "1", set())
+            self.assertEqual(totals.height, 1)
+            requests = [call.args[0] for call in source.call_args_list if call.args[0].endswith("statistics")]
+            self.assertEqual(len(requests), 1)
+            self.assertIn("/types/0/", requests[0])
+
     def test_expected_goals_sync_resume_and_team_comparison(self) -> None:
+        # A season can begin with >100 rows without xG, followed by recorded
+        # zero/positive values. Both team and selected-player tables must work.
+        for player in (False, True):
+            rows = [{"game_id": str(index // 2), "team_id": str(index % 2 + 1),
+                     "stats_available": True, "source_url": "https://sports.core.api.espn.com/",
+                     **({"athlete_id": "10"} if player else {}),
+                     **{field: None for field in ("expected_goals", "expected_goals_conceded",
+                         "expected_goals_non_penalty", "expected_goals_non_penalty_conceded", "total_goals", "total_shots")}}
+                    for index in range(124)]
+            rows[-2]["expected_goals"] = 0.0
+            rows[-1]["expected_goals"] = 1.574
+            frame = ExpectedGoalsSource._frame(rows)
+            self.assertEqual(frame.schema["expected_goals"], pl.Float64)
+            self.assertEqual(frame.schema["expected_goals_non_penalty"], pl.Float64)
+            self.assertEqual(frame["expected_goals"].null_count(), 122)
+            self.assertEqual(sorted(frame["expected_goals"].drop_nulls().to_list()), [0.0, 1.574])
         schedule = self.connector._scoreboard("eng.1", 2025).with_columns(
             pl.Series("event_id", ["100", "101"]))
         self.connector._scoreboard = lambda competition, season: schedule

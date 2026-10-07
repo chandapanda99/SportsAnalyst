@@ -60,6 +60,39 @@ class MemoryPersistence:
             self.versions.pop(key, None)
 
 
+def test_clear_library_local_and_cloud_preserves_other_scopes(tmp_path: Path) -> None:
+    for durable in (False, True):
+        settings = Settings(data_dir=tmp_path / str(durable), foundry_endpoint="")
+        backend = MemoryPersistence() if durable else None
+        store = LocalStore(settings, backend)
+        connector = NFLVerseConnector(settings)
+        frame = pl.DataFrame({"season": [2025], "posteam": ["KC"], "epa": [0.2]})
+        path = settings.raw_dir / "play_by_play_2025.parquet"
+        frame.write_parquet(path)
+        store.save_manifest(connector.manifest_for(path, 2025, frame))
+        other = settings.data_dir / "raw" / "soccer" / "eng.1" / "cache.json"
+        other.parent.mkdir(parents=True)
+        other.write_text("{}")
+        saved = settings.investigations_dir / "saved.txt"
+        saved.write_text("preserve")
+        replica_settings = Settings(data_dir=tmp_path / "replica", foundry_endpoint="")
+        if durable:
+            replica = LocalStore(replica_settings, backend)
+            stale = replica_settings.raw_dir / "stale.json"
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_text("stale")
+        assert store.clear_datasets("nfl") == 1
+        assert not path.exists()
+        assert other.exists() and saved.exists()
+        assert not store.manifests(sport="nfl")
+        if durable:
+            replica._restore_durable_index()
+            assert not replica.manifests(sport="nfl")
+            replica.invalidate_reset_cache("nfl")
+            assert not stale.exists()
+            assert not any(key.startswith("raw/nflverse/") for key in backend.objects)
+
+
 def test_resync_supersedes_the_previous_package_manifest(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path, foundry_endpoint="")
     connector = NFLVerseConnector(settings)

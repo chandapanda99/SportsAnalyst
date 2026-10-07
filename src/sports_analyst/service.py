@@ -32,7 +32,7 @@ from sports_analyst.models import (
 from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
 from sports_analyst.soccer_data import SportsDataverseSoccerConnector
 from sports_analyst.soccer_xg import PLAYER_XG_FIELDS
-from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS, SoccerPlugin
+from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS, SEASON_METRICS, SoccerPlugin
 from sports_analyst.persistence import PersistenceBackend
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
 from sports_analyst.sql import execute_read_only_sql
@@ -412,6 +412,23 @@ class AnalystApplication:
                     except (OSError, ValueError) as error:
                         logger.warning("soccer_player_xg_unavailable competition=%s season=%s player=%s error=%s",
                                        request.scope.competition, season, request.subject.id, error)
+            if request.sport == "soccer" and request.subject and set(request.metrics) & set(SEASON_METRICS):
+                if request.scope.comparison_design != "full_seasons" or any(
+                        window.start_date or window.end_date for window in (request.scope.baseline, request.scope.comparison)):
+                    raise ValueError("Published season statistics require full-season comparisons without date filters")
+                def season_stats_progress() -> None:
+                    self.events.emit(identifier, "loading", "Loading published soccer season statistics", 0.2)
+                for season in sorted(endpoint_seasons):
+                    season_stats_progress()
+                    try:
+                        manifest = connector.season_statistics_manifest(request.scope.competition, season,
+                            request.subject.type, str(request.subject.id), datasets[season],
+                            supplemental.get("lineups", {}).get(season, pl.DataFrame()), season_stats_progress)
+                        self.store.save_manifest(manifest)
+                        supplemental_manifests.setdefault("season_statistics", {})[season] = manifest
+                        supplemental.setdefault("season_statistics", {})[season] = self._load_dataset(connector, manifest)
+                    except (OSError, ValueError) as error:
+                        logger.warning("soccer_season_statistics_unavailable season=%s error=%s", season, error)
             self.telemetry.add_outputs(
                 load_span,
                 {
@@ -486,9 +503,15 @@ class AnalystApplication:
         with self.telemetry.span(
                 "sports-analyst.validate-and-persist", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as persist_span:
+            subject = request.subject
+            if subject is not None and subject.type == "team" and not subject.display_name:
+                options = self.analysis_options(request.sport, request.scope.competition)
+                team_name = next((team.label for team in options.teams if team.value == subject.id), None)
+                if team_name:
+                    subject = subject.model_copy(update={"display_name": team_name})
             run = InvestigationRun(
                 sport=request.sport,
-                subject=request.subject,
+                subject=subject,
                 investigation_id=identifier,
                 parent_investigation_id=request.parent_investigation_id,
                 question=request.question,

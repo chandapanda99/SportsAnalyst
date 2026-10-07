@@ -469,7 +469,7 @@ class PlayVisualization(BaseModel):
     away_team_name: str | None = None
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
-    soccer_timeline: list[dict[str, str]] = Field(default_factory=list)
+    soccer_timeline: list[dict[str, str | bool]] = Field(default_factory=list)
     competition_stage: str | None = None
     match_status_detail: str | None = None
     match_notes: str | None = None

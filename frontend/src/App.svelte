@@ -5,9 +5,11 @@
   import Chart from './Chart.svelte';
   import SupportingEvidence from './SupportingEvidence.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
+  import SoccerLoadingAnimation from './SoccerLoadingAnimation.svelte';
   import BasketballPlayTablet from './BasketballPlayTablet.svelte';
   import SoccerMatchTablet from './SoccerMatchTablet.svelte';
   import Icon from './Icon.svelte';
+  import CompletionToast from './CompletionToast.svelte';
   import PlayTablet from './PlayTablet.svelte';
   import type {
     AnalysisOptions,
@@ -24,6 +26,16 @@
   } from './types';
 
   let capabilities: Capabilities | null = null;
+  let completionNotifications: Array<{id: number; title: string; message: string}> = [];
+  let nextNotificationId = 0;
+
+  function notifyCompletion(title: string, message: string) {
+    completionNotifications = [...completionNotifications.slice(-2), {id: ++nextNotificationId, title, message}];
+  }
+
+  function dismissCompletion(id: number) {
+    completionNotifications = completionNotifications.filter(item => item.id !== id);
+  }
   let sports: SportOption[] = [];
   let activeSport = 'nfl';
   const soccerCompetitions = [
@@ -663,7 +675,8 @@
       metric.analysis_domain === analysisDomain && (!metric.subject_types?.length || metric.subject_types.includes(subjectType))
   );
   $: metricCategories = [...new Set(domainMetrics.map((metric) => metric.category))];
-  $: availableMetrics = domainMetrics.filter(metric => requiredSeasons.every(season => metric.available_seasons.includes(season)));
+  $: availableMetrics = domainMetrics.filter(metric => requiredSeasons.every(season => metric.available_seasons.includes(season))
+    && !(activeSport === 'soccer' && metric.value.startsWith('season_') && comparisonMode !== 'full_seasons'));
   $: availableMetricIds = new Set(availableMetrics.map(metric => metric.value));
   $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
   $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
@@ -690,6 +703,7 @@
           await streamDatasetSync(pollingStream(pending));
           await refresh();
           syncComplete = true;
+          notifyCompletion('Data Sync Complete', 'Your data library has been refreshed.');
         } else {
           await streamInvestigation(pollingStream(pending));
         }
@@ -1455,13 +1469,16 @@
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
     if (activeSport === 'soccer' && dataset === 'team_stats') {
-      if (eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) return {state: 'partial', label: 'Partial · resume sync'};
+      const teamSources = datasets.filter(item => item.sport === 'soccer' && item.dataset === 'team_stats' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      const teamMatches = teamSources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
+      const statsLabel = teamSources.every(item => item.coverage?.recorded_matches !== undefined)
+        ? `Team stats: ${teamMatches} matches` : `Team stats: ${local}/${eligibleSeasons.length} seasons`;
       const sources = datasets.filter(item => item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
-      if (sources.length < eligibleSeasons.length) return {state: 'partial', label: 'Match stats installed · sync to include xG'};
       const covered = sources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const expected = sources.reduce((sum, item) => sum + (item.coverage?.expected_matches ?? 0), 0);
-      return {state: covered < expected || local < eligibleSeasons.length ? 'partial' : 'installed',
-        label: covered ? `xG recorded · ${covered}/${expected} matches` : 'No xG recorded in downloaded matches'};
+      const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season));
+      return {state: incomplete ? 'partial' : 'installed',
+        label: `${statsLabel} · xG: ${covered}/${expected} matches${incomplete ? ' · resume sync' : covered < expected ? ' · limited source coverage' : ''}`};
     }
     if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) {
       return {state: 'partial', label: 'Partial · resume sync'};
@@ -1494,10 +1511,11 @@
     }
     const currentNflSeason = activeSport === 'nfl' ? 2026 : null;
     const now = new Date();
+    const currentNbaSeason = activeSport === 'nba' ? now.getUTCFullYear() + (now.getUTCMonth() >= 6 ? 1 : 0) : null;
     const currentSoccerSeason = activeSport === 'soccer' ? now.getFullYear() +
       (!soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar && now.getMonth() >= 6 ? 1 : 0) : null;
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
-        season === currentNflSeason || season === currentSoccerSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
+        season === currentNflSeason || season === currentNbaSeason || season === currentSoccerSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
   }
 
   function seasonLabel(season: number) {
@@ -1532,7 +1550,11 @@
     if (subject?.type === 'player') {
       return subject.display_name || playerNames.get(subject.id) || subject.id;
     }
-    return subject?.display_name || subject?.id || item.run.scope.team;
+    const teamId = subject?.id || item.run.scope.team;
+    const sameContext = (item.run.sport ?? 'nfl') === activeSport
+      && (activeSport !== 'soccer' || item.run.scope.competition === selectedCompetition);
+    const teamName = sameContext ? analysisOptions?.teams.find(team => team.value === teamId)?.label : undefined;
+    return subject?.display_name || teamName || teamId;
   }
 
   function investigationSubjectInitials(item: Investigation | InvestigationSummary, playerNames = playerNamesById) {
@@ -1628,6 +1650,7 @@
         dismissGuidance();
         if (active.claims[0]) void inspectFinding(active.claims[0]);
         await scrollToPageTop();
+        notifyCompletion('Analysis Complete', 'Your results and supporting evidence are ready to explore.');
         return true;
       } catch (problem) {
         lastError = problem;
@@ -1742,7 +1765,7 @@
           if (error instanceof ReportedInvestigationFailure) throw error;
           stage = 'Connection interrupted · checking download status';
         }
-        await wait(5_000);
+        await wait(2_000);
       }
       throw new Error(`Download updates are unavailable. Job ${stream.jobId} may still finish; check your data library before retrying.`);
     } finally {
@@ -1793,6 +1816,7 @@
         subject: {
           type: subjectType,
           id: resolvedSubject,
+          ...(subjectType === 'team' ? {display_name: analysisOptions?.teams.find(team => team.value === resolvedSubject)?.label} : {}),
           ...(subjectType === 'player' && selectedPlayer ? {display_name: selectedPlayer.name} : {}),
           ...(subjectType === 'player' && playerTeamId ? {team_id: playerTeamId} : {})
         },
@@ -1813,6 +1837,31 @@
       busy = false;
     } catch (problem) {
       error = String(problem);
+      busy = false;
+    }
+  }
+
+  async function clearDownloadedData() {
+    const scope = activeSport === 'soccer' ? soccerCompetitions.find(item => item.value === selectedCompetition)?.label : activeSport.toUpperCase();
+    if (!window.confirm(`Permanently clear all downloaded ${scope} data for every season? Saved investigations and settings stay, but their dataset-backed tools will need a fresh sync. On cloud deployments this clears the shared library for all users.`)) return;
+    busy = true;
+    stage = 'Clearing downloaded data';
+    error = '';
+    try {
+      try {
+        await api.clearDatasets(activeSport, activeSport === 'soccer' ? selectedCompetition : undefined);
+      } catch (problem) {
+        if (!String(problem).includes('administrator token')) throw problem;
+        const token = window.prompt('Enter the cloud data administrator token (not saved):');
+        if (!token) return;
+        await api.clearDatasets(activeSport, activeSport === 'soccer' ? selectedCompetition : undefined, token);
+      }
+      syncComplete = false;
+      await refresh();
+      notifyCompletion('Synced Data Reset', scope + ' synced data has been cleared. Saved investigations and settings are preserved.');
+    } catch (problem) {
+      error = String(problem);
+    } finally {
       busy = false;
     }
   }
@@ -1839,6 +1888,7 @@
       syncComplete = true;
       busy = false;
       syncing = false;
+      notifyCompletion('Data Sync Complete', 'Your data library has been refreshed.');
     } catch (problem) {
       error = String(problem);
       try {
@@ -1989,6 +2039,7 @@
       if (active && rootIdFor(active) === deletedRoot) {
         await openInvestigation(null);
       }
+      notifyCompletion('Analysis Deleted', 'The saved analysis and its follow-up conversation have been removed.');
     } catch (problem) {
       error = String(problem);
     } finally {
@@ -2167,9 +2218,15 @@
                   <strong>{setup?.label ?? 'Recommended Data'}</strong><span>{setup?.description ?? 'Choose seasons and download their recorded plays to begin.'}</span>
                 </div>
                 {#if !workspaceLoading && analysisOptions}
-                  <div class="setup-mode">
-                    <button type="button" aria-pressed={!customizeSources} on:click={chooseQuickSetup}>Recommended setup</button>
-                    <button type="button" aria-expanded={customizeSources} on:click={() => customizeSources = !customizeSources}>Customize data sources</button>
+                  <div class="data-setup-actions">
+                    <div class="setup-mode">
+                      <button type="button" aria-pressed={!customizeSources} on:click={chooseQuickSetup}>Recommended setup</button>
+                      <button type="button" aria-expanded={customizeSources} on:click={() => customizeSources = !customizeSources}>Customize data sources</button>
+                    </div>
+                    <button type="button" class="reset-synced-data-button" disabled={busy} on:click={clearDownloadedData}>
+                      <Icon name="trash" size={16}/>
+                      {busy && stage === 'Clearing downloaded data' ? 'Resetting Synced Data…' : 'Reset Synced Data'}
+                    </button>
                   </div>
                 {/if}
               </div>
@@ -2712,11 +2769,13 @@
                  aria-valuenow={Math.round(progress * 100)}><i style={`width:${Math.max(4, progress * 100)}%`}></i></div>
             <p>{syncing ? 'Each source is downloaded and checked before it is added to your library.' : progress < 0.1 ? 'Preparing the analysis service and checking your data. The comparison has not started yet.' : 'Comparing your periods and checking the evidence behind each finding.'}</p>
           </div>
-          <div class="play-visual" class:nba-loading={activeSport === 'nba'} aria-hidden="true">
+          <div class="play-visual" class:nba-loading={activeSport === 'nba'} class:soccer-loading={activeSport === 'soccer'} aria-hidden="true">
             <div class="play-caption">
-              <span>{activeSport === 'nba' ? 'LIVE ANALYSIS POSSESSION' : 'LIVE ANALYSIS DRIVE'}</span><b>{Math.round(progress * 100)}%</b></div>
+              <span>{activeSport === 'nba' ? 'LIVE ANALYSIS POSSESSION' : activeSport === 'soccer' ? 'LIVE ANALYSIS BUILDUP' : 'LIVE ANALYSIS DRIVE'}</span><b>{Math.round(progress * 100)}%</b></div>
             {#if activeSport === 'nba'}
               <BasketballLoadingAnimation/>
+            {:else if activeSport === 'soccer'}
+              <SoccerLoadingAnimation/>
             {:else}
               <img class="catch-scene" src="/open-sports-analyst-loader.svg" alt=""/>
             {/if}
@@ -2944,6 +3003,12 @@
       </section>
     {/if}
   </main>
+  <div class="completion-notifications" role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions">
+    {#each completionNotifications as notification (notification.id)}
+      <CompletionToast title={notification.title} message={notification.message}
+        ondismiss={() => dismissCompletion(notification.id)}/>
+    {/each}
+  </div>
 </div>
 {#if desktopMode && !initialWorkspaceReady}
   <div class="desktop-startup-overlay" role="status" aria-live="polite">

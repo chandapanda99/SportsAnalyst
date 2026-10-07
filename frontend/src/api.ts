@@ -36,7 +36,7 @@ export function pollingStream(job: PendingJob, timeoutSeconds?: number): EventSt
             }
           } catch { /* A transient outage does not resubmit work. */ }
           await new Promise(resolve => setTimeout(resolve, delay));
-          delay = Math.min(5000, delay * 1.5);
+          delay = Math.min(job.kind === 'sync' ? 2000 : 5000, delay * 1.5);
         }
         if (!stopped) controller.error(new Error('Progress polling timed out; refresh to resume this job.'));
       },
@@ -99,6 +99,10 @@ export const api = {
   analysisOptions: (sport = 'nfl', competition?: string) => json<AnalysisOptions>(`/api/sports/${sport}/options${competition ? `?competition=${encodeURIComponent(competition)}` : ''}`),
   players: (sport: string, query = '', competition?: string) => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}`),
   datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),
+  clearDatasets: (sport: string, competition?: string, token?: string) => json<{deleted_packages: number}>(`/api/datasets/${sport}`, {
+    method: 'DELETE', headers: {'content-type': 'application/json', ...(token ? {'X-Data-Admin-Token': token} : {})},
+    body: JSON.stringify({competition, confirmation: 'CLEAR DOWNLOADED DATA'})
+  }),
   investigations: (limit?: number, offset = 0, sport?: string) => {
     const params = new URLSearchParams();
     if (limit != null) { params.set('limit', String(limit)); params.set('offset', String(offset)); }

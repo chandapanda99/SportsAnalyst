@@ -20,6 +20,7 @@ from sports_analyst.models import (
 )
 from sports_analyst.soccer_data import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
 from sports_analyst.soccer_xg import PLAYER_XG_FIELDS, TEAM_XG_FIELDS, numeric
+from sports_analyst.soccer_season_stats import FIELDS as SEASON_STAT_FIELDS
 
 
 @dataclass
@@ -56,6 +57,19 @@ METRICS = {
     "non_penalty_expected_goals": ("Non-penalty expected goals", "player_expected_goals", "player", "scoring", "goals", "Recorded player xG excluding penalties, summed over covered appearances."),
     "goals_minus_xg": ("Goals minus xG", "player_expected_goals", "player", "scoring", "goals", "Recorded player goals minus xG across the same covered appearances."),
 }
+SEASON_METRICS = {}
+for subject_type in ("team", "player"):
+    for field in SEASON_STAT_FIELDS:
+        if subject_type == "team" and field == "minutes":
+            continue
+        name = f"season_{subject_type}_{field}"
+        SEASON_METRICS[name] = field
+        domain = ("scoring" if field in {"goals", "assists", "shots", "shots_on_target", "expected_goals", "non_penalty_expected_goals"} else "usage") if subject_type == "player" else (
+            "defense" if field in {"tackles", "interceptions"} else "control" if "passes" in field else "attack")
+        METRICS[name] = (f"Published season {field.replace('_', ' ')}", "season_statistics", subject_type, domain,
+                         "minutes" if field == "minutes" else "goals" if "goals" in field else "count",
+                         "Recorded ESPN season totals, fetched for the selected subject. Full-season comparisons only; never substitutes for match-level values.")
+
 DEFAULTS = {
     "results": ["points_per_match", "win_rate", "goals_for_per_match", "goals_against_per_match", "xg_difference_per_match"],
     "attack": ["goals_for_per_match", "shots_per_match", "shots_on_target_per_match", "xg_per_match", "non_penalty_xg_per_match", "goals_minus_xg_per_match"],
@@ -124,6 +138,13 @@ class SoccerPlugin:
         years = list(range(2016, latest + 1))
 
         def metric_seasons(name: str, source: str) -> list[int]:
+            if name in SEASON_METRICS:
+                field = SEASON_METRICS[name]
+                if "expected_goals" in field:
+                    return sorted({m.season for m in selected if m.season in available
+                                   and m.dataset.startswith(f"season_statistics_{METRICS[name][2]}_")
+                                   and m.coverage.get(f"{field}_rows", 0) > 0})
+                return available
             if name in TEAM_XG_FIELDS:
                 return sorted({m.season for m in selected if m.dataset == "expected_goals" and m.season in available
                                and m.coverage.get(f"{name}_rows", 0) > 0})
@@ -199,7 +220,10 @@ class SoccerPlugin:
                                 + (["xG measures chance quality before shot outcome; xG on target is a different statistic.",
                                     "Missing xG is excluded rather than counted as zero. Compare the reported covered-match samples.",
                                     "Goals minus xG is descriptive; it does not establish a stable finishing skill or forecast future goals."]
-                                   if metric in TEAM_XG_FIELDS or metric in PLAYER_XG_FIELDS else []))
+                                   if metric in TEAM_XG_FIELDS or metric in PLAYER_XG_FIELDS else [])
+                                + (["Full-season scope only; stage partitions are combined only without overlap. Missing partitions invalidate the total.",
+                                    "Published counts may differ from locally synced match coverage. These totals cannot locate events or support date-window estimates."]
+                                   if metric in SEASON_METRICS else []))
 
     def default_plan(self, request: AnalysisRequest) -> AnalysisPlan:
         return AnalysisPlan(plan_id=stable_id("plan", request.model_dump()), question=request.question, scope=request.scope,
@@ -323,6 +347,10 @@ class SoccerPlugin:
         supplemental = supplemental or {}
         supplemental_manifests = supplemental_manifests or {}
         selected = request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["results"])
+        if any(name in SEASON_METRICS for name in selected) and (
+                request.scope.comparison_design != "full_seasons"
+                or any(window.start_date or window.end_date for window in (request.scope.baseline, request.scope.comparison))):
+            raise ValueError("Published season statistics require full-season comparisons without date filters")
         invalid = [name for name in selected if name not in METRICS or METRICS[name][2] != subject.type]
         if invalid:
             raise ValueError(f"Unsupported metrics for this soccer subject: {invalid}")
@@ -365,13 +393,26 @@ class SoccerPlugin:
                 game_logs = supplemental.get("player_game_logs", {}).get(season, pl.DataFrame())
                 xg = supplemental.get("expected_goals", {}).get(season, pl.DataFrame())
                 player_xg = supplemental.get("player_expected_goals", {}).get(season, pl.DataFrame())
-                values.append(self._value(name, rows, stat, lineup, events, str(subject.id), game_logs, xg, player_xg))
+                if name in SEASON_METRICS:
+                    frame = supplemental.get("season_statistics", {}).get(season, pl.DataFrame())
+                    field = SEASON_METRICS[name]
+                    if not frame.is_empty() and {field, "subject_id", "subject_type"} <= set(frame.columns):
+                        frame = frame.filter((pl.col("subject_id") == str(subject.id)) & (pl.col("subject_type") == subject.type))
+                    numbers = [numeric(value) for value in frame[field].to_list()] if field in frame.columns else []
+                    appearances = frame["appearances"].sum() if "appearances" in frame.columns else 0
+                    values.append((sum(numbers), int(appearances or 0)) if numbers and all(value is not None for value in numbers)
+                                  and appearances else (None, 0))
+                else:
+                    values.append(self._value(name, rows, stat, lineup, events, str(subject.id), game_logs, xg, player_xg))
             (before, before_n), (after, after_n) = values
             if before is None or after is None or not before_n or not after_n:
                 gaps.append(name)
                 continue
             payload = {**parameters, "metric": name, "before": before, "after": after}
             metric_caveats = [f"Baseline: {before_n} qualifying matches; comparison: {after_n} qualifying matches."]
+            if name in SEASON_METRICS:
+                metric_caveats = [f"ESPN published season totals: baseline {before_n} recorded appearances; comparison {after_n}. "
+                                  "Separate from locally synced match totals; season/stage scope is recorded in the source dataset."]
             if name in TEAM_XG_FIELDS or name in PLAYER_XG_FIELDS:
                 metric_caveats.append(f"Recorded ESPN xG coverage: baseline {before_n}/{len(frames['baseline'][1])} matches; "
                                       f"comparison {after_n}/{len(frames['comparison'][1])} matches. Missing values are excluded.")
@@ -385,6 +426,9 @@ class SoccerPlugin:
                 caveats=metric_caveats,
             ))
         if not aggregates:
+            if any(name in SEASON_METRICS for name in selected):
+                raise ValueError("No comparable published season statistics are recorded for both windows. "
+                                 "Check source coverage and resync match results/lineups if competition stages are missing.")
             if any(name in TEAM_XG_FIELDS or name in PLAYER_XG_FIELDS for name in selected):
                 raise ValueError("No comparable soccer metrics have coverage in both selected windows. "
                                  "Sync Team Match Statistics (and lineups for players), then select windows with recorded ESPN xG; "
@@ -415,9 +459,16 @@ class SoccerPlugin:
                 if {"game_id", "text"} <= set(event_frame.columns):
                     match_events = event_frame.filter(pl.col("game_id").cast(pl.String) == row["game_id"])
                     has_event_section = not match_events.is_empty()
+                    team_sides = {str(match.get("home_team_id") or ""): "home",
+                                  str(match.get("away_team_id") or ""): "away"}
                     timeline = [{"clock": str(event.get("clock") or ""), "text": str(event.get("text") or ""),
-                                 "type": str(event.get("type") or "")}
-                                for event in match_events.to_dicts()[:20]
+                                 "type": str(event.get("type") or ""),
+                                 "player_in": str(event.get("player_in") or ""),
+                                 "player_out": str(event.get("player_out") or ""),
+                                 "side": team_sides.get(str(event.get("team_id") or ""), "neutral")
+                                         if event.get("team_id") else "neutral",
+                                 "scoring_play": event.get("scoring_play") is True}
+                                for event in match_events.to_dicts()
                                 if event.get("text")]
                 description = f"{match.get('home_team')} {match.get('home_score')}–{match.get('away_score')} {match.get('away_team')} · {row['date']}"
                 xg_frame = supplemental.get("expected_goals", {}).get(window.season, pl.DataFrame())

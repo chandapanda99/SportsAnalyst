@@ -85,7 +85,7 @@ export type PlayVisualization = {
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
   shot_x?: number; shot_y?: number; shot_coordinate_system?: string; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
   game_date?: string; home_team_name?: string; away_team_name?: string;
-  soccer_timeline?: Array<{clock: string; text: string; type: string}>;
+  soccer_timeline?: Array<{clock: string; text: string; type: string; side?: 'home' | 'away' | 'neutral'; scoring_play?: boolean; player_in?: string; player_out?: string}>;
   competition_stage?: string | null; match_status_detail?: string | null; match_notes?: string | null;
   home_shootout_score?: number | null; away_shootout_score?: number | null;
   home_expected_goals?: number | null; away_expected_goals?: number | null;

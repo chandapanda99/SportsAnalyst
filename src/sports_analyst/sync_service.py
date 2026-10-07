@@ -72,6 +72,7 @@ def run_dataset_sync(
         selected_datasets.append("expected_goals")
 
     application.store.refresh_durable_datasets(sport, seasons, selected_datasets, competition)
+    application.store.invalidate_reset_cache(sport, competition)
     existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)}
     if sport == "soccer":
         incomplete = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)
@@ -87,19 +88,33 @@ def run_dataset_sync(
         # In-season nflverse packages change after games and stat corrections.
         # Keep older local seasons, but replace selected current-season snapshots.
         existing = {(dataset, season) for dataset, season in existing if season != LATEST_SYNCABLE_SEASON}
+    if sport == "nba":
+        # NBA season IDs use the ending year; July starts the next season.
+        now = datetime.now(UTC)
+        current_season = now.year + int(now.month >= 7)
+        existing = {(dataset, season) for dataset, season in existing if season != current_season}
     registered: set[str] = set()
     last_sync_progress = 0.08
+    last_detail_at = 0.0
+    last_detail_key = None
     progress_lock = Lock()
 
-    def report_sync(phase: str, dataset: str, season: int, completed: int, total: int) -> None:
-        nonlocal last_sync_progress
+    def report_sync(phase: str, dataset: str, season: int, completed: int, total: int,
+                    fraction: float | None = None, detail: str | None = None, force: bool = False) -> None:
+        nonlocal last_sync_progress, last_detail_at, last_detail_key
         with progress_lock:
             if total <= 0:
                 return
+            if detail:
+                now = perf_counter()
+                detail_key = (dataset, season, detail.split(" · ")[0])
+                if not force and detail_key == last_detail_key and now - last_detail_at < 0.5:
+                    return
+                last_detail_at, last_detail_key = now, detail_key
             label = dataset.replace("_", " ").title()
             season_label = "reference data" if season == 0 else (soccer_season_label(competition, season) if sport == "soccer" else f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season))
             offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
-            unit_progress = min(total, completed + offsets.get(phase, 0.0))
+            unit_progress = min(total, completed + (max(0.0, fraction) if fraction is not None else offsets.get(phase, 0.0)))
             progress = 0.08 + 0.68 * unit_progress / total
             last_sync_progress = max(last_sync_progress, progress)
             messages = {
@@ -110,7 +125,8 @@ def run_dataset_sync(
                 "available": f"Already downloaded {label} for {season_label} · {completed} of {total}",
             }
             application.events.emit(
-                key, phase, messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress
+                key, phase, f"{label} for {season_label} · {detail}" if detail else
+                messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress
             )
 
     def register_manifest(manifest: DatasetManifest) -> None:
@@ -129,7 +145,8 @@ def run_dataset_sync(
             round((perf_counter() - upload_started_at) * 1000),
         )
 
-    sync_kwargs = {"competition": competition} if sport == "soccer" else {}
+    sync_kwargs = {"competition": competition, "progress_detail_callback": report_sync,
+                   "refresh_seasons": {current_season} if competition in SOCCER_COMPETITIONS else set()} if sport == "soccer" else {}
     manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     for manifest in manifests:
         if manifest.manifest_id not in registered:

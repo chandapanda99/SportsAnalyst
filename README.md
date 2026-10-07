@@ -11,7 +11,8 @@ evidence produced by those tools; the model cannot invent measurements or execut
 
 - Runs NFL team analysis for passing, rushing, and overall offense, plus player analysis for quarterbacks, receivers, and ball carriers.
 - Runs NBA team or player analysis across full seasons and validated season segments, with an optional team-stint filter for traded players.
-- Runs soccer team and player comparisons for the Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, NWSL, and UEFA Champions League. Match scores, team statistics, lineups, and key events
+- Runs soccer team and player comparisons for the Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, NWSL, and UEFA Champions League. Match scores, team statistics,
+  lineups, and key events
   are downloaded by competition and season; date-range comparisons and recorded match timelines are available. Missing match sections are disclosed rather than estimated.
 - Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability
   context.
@@ -97,19 +98,26 @@ The same download can be started from the CLI, for example `uv run sports-analys
 is its ending year (2025 means 2024–25); MLS and NWSL use the calendar year. Selected-player assist game logs are requested and cached only if that metric is used and ESPN
 provides the log for both windows.
 
-Champions League uses `uefa.champions` and ending-year season labels (2027 means 2026–27). The existing match, player and xG analysis paths apply, subject to recorded coverage.
-Evidence retains recorded stage and match notes, including shootout tallies where supplied. Comparisons are match-level, not aggregate-tie outcomes: extra-time goals count,
-shootout tallies do not, and tied match scores remain draws. Points per match includes only recorded league/group-phase matches. Use date windows to narrow tournament context;
-dedicated stage filters and two-legged tie analysis are not yet included.
+Champions League uses `uefa.champions` and ending-year season labels (2027 means 2026–27). The existing match, player and xG analysis paths apply, subject to recorded
+coverage. Evidence retains recorded stage and match notes, including shootout tallies where supplied. Comparisons are match-level, not aggregate-tie outcomes: extra-time goals
+count, shootout tallies do not, and tied match scores remain draws. Points per match includes only recorded league/group-phase matches. Use date windows to narrow tournament
+context; dedicated stage filters and two-legged tie analysis are not yet included.
 
-**Team Match Statistics** also fetches ESPN Core expected-goals statistics through SportsDataverse in the same sync. Team analysis supports xG, xG against, xG difference, non-penalty xG,
-and goals minus xG per match. Player scoring analysis supports recorded xG, non-penalty xG, and goals minus xG; only the selected player's match statistics are fetched
-and cached when requested. Match evidence also displays each team's recorded xG. Sync Team Match Statistics (and lineups for players) before selecting these metrics.
+**Team Match Statistics** also fetches ESPN Core expected-goals statistics through SportsDataverse in the same sync. Team analysis supports xG, xG against, xG difference,
+non-penalty xG, and goals minus xG per match. Player scoring analysis supports recorded xG, non-penalty xG, and goals minus xG; only the selected player's match statistics are
+fetched and cached when requested. Match evidence also displays each team's recorded xG. Sync Team Match Statistics (and lineups for players) before selecting these metrics.
 Existing xG snapshots remain compatible; xG coverage is tracked independently internally and shown alongside the bundled match statistics.
 Missing values are excluded, never replaced with zero, and comparisons report their qualifying-match coverage. Both windows need recorded values.
 Historical coverage is not guaranteed: a September sample across all seven competitions found xG in the checked 2026 matches but not the checked 2024/2025 matches.
 Use covered seasons or date ranges within a covered season. These are match statistics, not shot-location data or tracking replay.
 See the [SportsDataverse Core statistics documentation](https://js.sportsdataverse.org/docs/soccer/reference/core#espnsoccereventcompetitorstatistics).
+
+Soccer also offers **Published season** metrics in Customize metrics for full-season comparisons: team/player goals, assists, shots, shots on target, passes,
+accurate passes, tackles, interceptions and appearances, plus player minutes. These Core season statistics are fetched and cached only for the selected subject.
+The connector verifies season/subject references, uses combined totals without also adding their component stages, and requires verified match stages when summing
+disjoint tournament phases. Missing partitions or fields are not treated as zero. Published totals remain distinct from locally reconstructed match totals and
+cannot be used for date-range comparisons or inferred match events. Season xG/non-penalty xG metrics are offered only where cached season statistics record those fields;
+historical team/player season endpoint samples also lacked xG. In-season snapshots are refreshed when requested.
 
 ## Windows desktop application
 
@@ -270,6 +278,19 @@ open-sports-analyst/
 ```
 
 Set `DATA_DIR` in `.env` to use a different root directory.
+
+The data manager's **Clear downloaded data** action removes all seasons for the active sport (only the selected competition for soccer), including source caches. Saved
+investigations
+and settings are retained; dataset-backed tools need a fresh sync afterward. Deletion is
+permanent unless you have a backup or object-storage versioning enabled.
+
+For a shared cloud deployment, configure `SPORTS_ANALYST_DATA_ADMIN_TOKEN` as a secret.
+The UI requests it only when clearing data and does not save it. Durable-storage deployments
+reject deletion until this secret is configured. Configure it for public deployments using
+local storage as well. Clearing a cloud library affects every user, not the browser's local
+machine. Wait for all jobs to finish and pause new submissions during this administrative
+operation; detected queued/running jobs block deletion. Other replicas invalidate their
+source checkpoints on their next sync using a durable reset marker.
 
 Every dataset manifest records its sport, source, season, acquisition time, schema, package version, local SHA-256, size, license, and attribution. Catalog lookups, SQL views,
 history, and caches are partitioned by sport so an NBA request cannot resolve an NFL manifest. Investigation bundles also retain tool versions, parameters, execution timing,

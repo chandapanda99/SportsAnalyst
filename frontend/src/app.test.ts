@@ -151,7 +151,7 @@ describe('Open Sports Analyst workbench', () => {
               ]
             }
         : url.endsWith('/datasets') || url.includes('/datasets?sport=')
-          ? url.includes('sport=soccer') ? [2024, 2025].flatMap(season => ['play_by_play', 'team_stats', 'lineups', 'key_events'].map(dataset => ({dataset, season, sport: 'soccer', competition: 'eng.1'})))
+          ? url.includes('sport=soccer') ? [2024, 2025].flatMap(season => ['play_by_play', 'team_stats', 'lineups', 'key_events', 'expected_goals'].map(dataset => ({dataset, season, sport: 'soccer', competition: 'eng.1', coverage: {completed_matches: 2, expected_matches: 2, recorded_matches: dataset === 'expected_goals' ? (season === 2025 ? 2 : 0) : 2}})))
             : url.includes('sport=nba') ? [2024, 2025].flatMap(season => ['play_by_play', 'schedules', 'team_boxscores', 'player_boxscores'].map(dataset => ({dataset, season, sport: 'nba'}))) : [
               { dataset: 'play_by_play', season: 2024 },
               { dataset: 'rosters', season: 2024 },
@@ -380,6 +380,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
     expect(resultAttempts).toBeGreaterThanOrEqual(2);
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
+    expect(await screen.findByText('Analysis Complete')).toBeTruthy();
   });
 
   it('offers the 2026 NFL season and syncs its current snapshot', async () => {
@@ -581,6 +582,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', { method: 'DELETE' });
     expect(screen.queryByText('Which games changed the most?')).toBeNull();
     expect(screen.queryByText('Was it consistent across the sample?')).toBeNull();
+    expect(await screen.findByText('Analysis Deleted')).toBeTruthy();
   });
 
   it('shows diversified representative evidence by comparison window and selection role', async () => {
@@ -655,7 +657,7 @@ describe('Open Sports Analyst workbench', () => {
   it('scopes the soccer tab by competition and opens recorded match evidence', async () => {
     mockInvestigations = [{
       run: {investigation_id: 'soccer-report', sport: 'soccer', question: 'How did Home FC change?',
-            created_at: '2026-08-21T12:00:00Z', subject: {type: 'team', id: '1', display_name: 'Home FC'},
+            created_at: '2026-08-21T12:00:00Z', subject: {type: 'team', id: '1'},
             scope: {team: '1', competition: 'eng.1', comparison_design: 'full_seasons', season_type: 'REG',
                     baseline: {season: 2024, weeks: [1, 22]}, comparison: {season: 2025, weeks: [1, 22]}}},
       summary: 'Home FC improved.', claims: [], aggregate_evidence: [], charts: [], methodological_caveats: [], fallback_used: true,
@@ -663,7 +665,13 @@ describe('Open Sports Analyst workbench', () => {
                        team: '1', description: 'Home FC 2–0 Away FC', supporting: true, window: 'comparison', evidence_role: 'typical',
                        visualization: {sport: 'soccer', game_date: '2024-09-15', home_team_name: 'Home FC', away_team_name: 'Away FC',
                                        home_score: 2, away_score: 0, home_expected_goals: 1.574, away_expected_goals: 0,
-                                       soccer_timeline: [{clock: "42'", type: 'Goal', text: 'Alex scores'}]}}]
+                                       soccer_timeline: [
+                                         {clock: "42'", type: 'Goal', text: 'Alex scores', side: 'home', scoring_play: true},
+                                         {clock: "60'", type: 'Yellow Card', text: 'Morgan cautioned', side: 'away', scoring_play: false},
+                                         {clock: "65'", type: 'Substitution', text: 'Substitution, Home FC. Robin replaces Alex.', side: 'home'},
+                                         {clock: "65'", type: 'Substitution', text: 'Robin Substitution', side: 'home', player_in: 'Robin', player_out: 'Alex'},
+                                         {clock: "90+2'", type: 'VAR Review', text: 'Decision confirmed', side: 'neutral', scoring_play: false}
+                                       ]}}]
     }];
     render(App);
     await fireEvent.click(await screen.findByRole('button', {name: 'Soccer'}));
@@ -672,6 +680,8 @@ describe('Open Sports Analyst workbench', () => {
     expect(document.querySelector('.app-shell')?.classList.contains('soccer-theme')).toBe(true);
     expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
     const competition = await screen.findByLabelText('Competition');
+    const statsBadge = await screen.findByText('Team stats: 4 matches · xG: 2/4 matches · limited source coverage');
+    expect(statsBadge.classList.contains('partial')).toBe(false);
     expect(screen.getByRole('option', {name: 'UEFA Champions League'})).toBeTruthy();
     await fireEvent.change(competition, {target: {value: 'uefa.champions'}});
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
@@ -690,14 +700,53 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
       String(input) === '/api/sports/soccer/options?competition=usa.1')).toBe(true));
     expect(screen.queryByText('How did Home FC change?')).toBeNull();
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    let finishSync: () => void = () => {};
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input) === '/api/datasets/soccer/sync-stream') {
+        return Promise.resolve(new Response(new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode('data: {"stage":"downloading","message":"Downloading match data","progress":0.5}\n\n'));
+            finishSync = () => {
+              controller.enqueue(encoder.encode('data: {"stage":"complete","message":"Dataset sync complete","progress":1}\n\n'));
+              controller.close();
+            };
+          }
+        }), {headers: {'content-type': 'text/event-stream'}}));
+      }
+      return defaultFetch(input, init);
+    });
     await fireEvent.click(await screen.findByRole('button', {name: /Download \d+ sources for \d+ seasons/}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
       String(input) === '/api/datasets/soccer/sync-stream' && JSON.parse(String(init?.body)).competition === 'usa.1')).toBe(true));
+    expect(await screen.findByText('LIVE ANALYSIS BUILDUP')).toBeTruthy();
+    expect(document.querySelector('.soccer-loading-scene')).toBeTruthy();
+    expect(document.querySelector('.catch-scene')).toBeNull();
+    expect(screen.getByRole('progressbar', {name: 'Download progress'}).getAttribute('aria-valuenow')).toBe('50');
+    finishSync();
     await screen.findByText('Download finished');
+    expect(await screen.findByText('Data Sync Complete')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Dismiss Data Sync Complete notification'}));
+    expect(screen.queryByText('Data Sync Complete')).toBeNull();
     await fireEvent.change(competition, {target: {value: 'eng.1'}});
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
+    expect(document.querySelector('.recent-subject-name')?.textContent).toBe('Home FC');
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
     expect(await screen.findByText('Alex scores')).toBeTruthy();
     expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();
+    const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});
+    const substitution = within(timeline).getByRole('button', {name: "65' Substitution — Home FC"});
+    expect(within(substitution).getByText('On: Robin')).toBeTruthy();
+    expect(within(substitution).getByText('Off: Alex')).toBeTruthy();
+    expect(substitution.querySelector('svg')).toBeTruthy();
+    await fireEvent.click(substitution);
+    expect(screen.getByText('Substitution, Home FC. Robin replaces Alex.')).toBeTruthy();
+    expect(within(timeline).getByRole('button', {name: "42' Goal — Home FC"}).closest('li')?.classList.contains('home')).toBe(true);
+    const awayEvent = within(timeline).getByRole('button', {name: "60' Yellow Card — Away FC"});
+    expect(awayEvent.closest('li')?.classList.contains('away')).toBe(true);
+    await fireEvent.click(awayEvent);
+    expect(await screen.findByText('Morgan cautioned')).toBeTruthy();
+    expect(within(timeline).getByRole('button', {name: "90+2' VAR Review — Team not recorded"}).closest('li')?.classList.contains('neutral')).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +58,11 @@ class SyncRequest(BaseModel):
 
 class FollowUpRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2_000)
+
+
+class ClearDatasetsRequest(BaseModel):
+    competition: str | None = None
+    confirmation: str
 
 
 class EvidenceBatchRequest(BaseModel):
@@ -122,6 +128,35 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     @api.get("/api/capabilities", response_model=RuntimeCapabilities)
     def capabilities() -> RuntimeCapabilities:
         return service.capabilities()
+
+    @api.delete("/api/datasets/{sport}")
+    def clear_datasets(sport: str, request: ClearDatasetsRequest, x_data_admin_token: str | None = Header(default=None)) -> dict:
+        token = service.settings.data_admin_token.get_secret_value() if service.settings.data_admin_token else ""
+        if service.store.persistence.durable and not token:
+            raise HTTPException(403, "Cloud data deletion requires SPORTS_ANALYST_DATA_ADMIN_TOKEN to be configured")
+        if token and not secrets.compare_digest(token, x_data_admin_token or ""):
+            raise HTTPException(403, "A valid data administrator token is required")
+        if request.confirmation != "CLEAR DOWNLOADED DATA":
+            raise HTTPException(422, "Explicit deletion confirmation is required")
+        if service.jobs is not None:
+            if hasattr(service.jobs, "has_active_work"):
+                active_work = service.jobs.has_active_work()
+            else:
+                record = service.jobs._read_json("jobs/active.json") or {}
+                active_work = any((service.jobs.status(key) or {}).get("stage") not in {"complete", "failed"}
+                                  for key in record.get("jobs", []))
+            if active_work:
+                raise HTTPException(409, "Wait for queued or running jobs to finish before clearing data")
+        elif service.events.has_active_work():
+            raise HTTPException(409, "Wait for running jobs to finish before clearing data")
+        try:
+            count = service.store.clear_datasets(sport, request.competition)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        for connector in service.connectors.values():
+            connector.clear_cache()
+        refresh_catalog()
+        return {"deleted_packages": count}
 
     @api.get("/api/datasets", response_model=list[DatasetManifest])
     def datasets(sport: str | None = None) -> list[DatasetManifest]:

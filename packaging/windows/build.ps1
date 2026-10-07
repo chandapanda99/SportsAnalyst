@@ -127,19 +127,19 @@ try
     {
         throw "Installed package version $installedVersion does not match project version $projectVersion"
     }
-    Write-Host "Desktop dependencies: SYNCHRONIZED"
+    Write-Host "Desktop Dependencies: SYNCHRONIZED"
 
     uv run python packaging/windows/make_icon.py
     if ($LASTEXITCODE -ne 0)
     {
-        throw "Application icon generation failed"
+        throw "Application icon generation FAILED!"
     }
     Write-Host "App Icon: GENERATED"
 
     uv run pyinstaller --noconfirm --clean --distpath dist --workpath build/desktop packaging/windows/OpenSportsAnalyst.spec
     if ($LASTEXITCODE -ne 0)
     {
-        throw "PyInstaller build failed"
+        throw "PyInstaller Build: FAILED!"
     }
     Write-Host "PyInstaller Build: SUCCESS!"
 
