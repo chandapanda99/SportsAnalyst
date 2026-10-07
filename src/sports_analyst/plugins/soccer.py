@@ -207,7 +207,8 @@ class SoccerPlugin:
                                    PlannedToolCall(tool="find_representative_matches", arguments={}, purpose="Attach match context.")])
 
     def required_play_by_play_columns(self, request: AnalysisRequest) -> set[str]:
-        return {"event_id", "date", "home_team_id", "away_team_id", "home_team", "away_team", "home_score", "away_score", "status", "season", "competition"}
+        return {"event_id", "date", "home_team_id", "away_team_id", "home_team", "away_team", "home_score", "away_score", "status", "season", "competition",
+                "competition_stage", "match_status_detail", "match_notes", "home_shootout_score", "away_shootout_score"}
 
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
         return {"team_stats", "lineups", "key_events", "expected_goals"}
@@ -229,7 +230,8 @@ class SoccerPlugin:
             rows.append({"game_id": str(item["event_id"]), "date": str(item["date"])[:10], "goals_for": scored,
                          "goals_against": conceded, "points": 3 if scored > conceded else 1 if scored == conceded else 0,
                          "win": float(scored > conceded), "draw": float(scored == conceded), "loss": float(scored < conceded),
-                         "opponent": item.get("away_team" if home else "home_team"), "home": home})
+                         "opponent": item.get("away_team" if home else "home_team"), "home": home,
+                         "competition": item.get("competition"), "competition_stage": item.get("competition_stage")})
         return rows
 
     @staticmethod
@@ -272,6 +274,10 @@ class SoccerPlugin:
                     by_game[game_id] = max(number, by_game.get(game_id, 0))
             return (sum(by_game.values()), len(by_game)) if by_game else (None, 0)
         if metric in {"points_per_match", "win_rate", "draw_rate", "loss_rate", "goals_for_per_match", "goals_against_per_match"}:
+            if metric == "points_per_match":
+                # Points are meaningful in group/league phases, not knockout ties.
+                rows = [row for row in rows if row.get("competition") != "uefa.champions"
+                        or row.get("competition_stage") in {"league-phase", "group-stage", "group-phase"}]
             field = {"points_per_match": "points", "win_rate": "win", "draw_rate": "draw", "loss_rate": "loss",
                      "goals_for_per_match": "goals_for", "goals_against_per_match": "goals_against"}[metric]
             return (sum(row[field] for row in rows) / len(rows), len(rows)) if rows else (None, 0)
@@ -427,6 +433,10 @@ class SoccerPlugin:
                     metric_value=row["goals_for"], supporting=True, window=label, evidence_role="typical",
                     dataset_manifest_id=manifests[window.season].manifest_id, tool_execution_id=execution_id,
                     visualization=PlayVisualization(sport="soccer", game_date=row["date"],
+                        competition_stage=match.get("competition_stage"), match_status_detail=match.get("match_status_detail"),
+                        match_notes=match.get("match_notes"),
+                        home_shootout_score=_number(match.get("home_shootout_score")),
+                        away_shootout_score=_number(match.get("away_shootout_score")),
                         home_team_name=str(match.get("home_team") or ""), away_team_name=str(match.get("away_team") or ""),
                         home_score=int(_number(match.get("home_score")) or 0), away_score=int(_number(match.get("away_score")) or 0),
                         home_expected_goals=home_xg, away_expected_goals=away_xg,
@@ -435,6 +445,11 @@ class SoccerPlugin:
                         soccer_timeline=timeline),
                 ))
         caveats = ["ESPN soccer coverage varies by match and competition; missing match sections are excluded from metric denominators."]
+        if request.scope.competition == "uefa.champions":
+            caveats.append("Champions League comparisons are match-level, not aggregate-tie or qualification results. "
+                           "Recorded scores include extra time but exclude shootout tallies; tied scores count as draws. "
+                           "Points per match uses only matches with a recorded group/league phase. "
+                           "Season windows can mix qualifying, league/group and knockout opponents; use date ranges to narrow the context.")
         for source, season_manifests in supplemental_manifests.items():
             if source not in {"team_stats", "lineups", "key_events", "expected_goals", "player_expected_goals"}:
                 continue

@@ -91,6 +91,42 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(self.store.manifest_for_season(2025, "play_by_play", "soccer", "eng.1").competition, "eng.1")
         self.assertEqual(self.store.manifest_for_season(2025, "play_by_play", "soccer", "esp.1").competition, "esp.1")
 
+    def test_champions_league_sync_analysis_and_knockout_context(self) -> None:
+        original = self.connector._scoreboard
+        self.connector._scoreboard = lambda competition, season: original(competition, season).with_columns(
+            pl.Series("competition_stage", ["league-phase", "round-of-16"]))
+        self.connector._summary = lambda competition, season, game: _summary(game)
+        self._sync([2024, 2025], "uefa.champions")
+        self._sync([2025], "eng.1")
+        self.assertEqual(soccer_season_label("uefa.champions", 2025), "2024–25")
+        app = AnalystApplication(self.settings)
+        app.connectors["soccer"] = self.connector
+        client = TestClient(create_app(app))
+        options = client.get("/api/sports/soccer/options", params={"competition": "uefa.champions"})
+        self.assertEqual(options.status_code, 200)
+        self.assertEqual(options.json()["available_seasons"], [2024, 2025])
+        result = app.investigate(AnalysisRequest(sport="soccer", question="How did Home's UCL performance change?",
+            subject={"type": "team", "id": "1"}, analysis_domain="results",
+            metrics=["points_per_match", "goals_for_per_match", "draw_rate"],
+            scope={"team": "1", "competition": "uefa.champions", "baseline": {"season": 2024},
+                   "comparison": {"season": 2025}, "comparison_design": "full_seasons"}))
+        metrics = {item.metric: item for item in result.aggregate_evidence}
+        self.assertEqual(metrics["points_per_match"].comparison_value, 3)
+        self.assertEqual(metrics["points_per_match"].sample_size, 1)
+        self.assertEqual(metrics["goals_for_per_match"].comparison_value, 1.5)
+        self.assertTrue(any("aggregate-tie" in caveat for caveat in result.methodological_caveats))
+        self.assertEqual(result.play_evidence[0].visualization.competition_stage, "league-phase")
+        self.assertIsNotNone(self.store.manifest_for_season(2025, "play_by_play", "soccer", "eng.1"))
+        fixtures = self.connector._parse_scoreboard({"events": [{"id": "900", "date": "2025-03-01",
+            "season": {"slug": "round-of-16"}, "status": {"type": {"name": "STATUS_FINAL_PEN", "completed": True, "detail": "FT-Pens"}},
+            "competitions": [{"competitors": [{"homeAway": "home", "team": {"id": "1"}, "score": "1", "shootoutScore": "5"},
+                                             {"homeAway": "away", "team": {"id": "2"}, "score": "1", "shootoutScore": "4"}]}]}]})
+        self.assertEqual(fixtures["status"][0], "STATUS_FINAL")
+        self.assertEqual(SoccerPlugin._team_rows(fixtures, "1")[0]["draw"], 1)
+        shootout = self.connector._parse_summary({"keyEvents": [{"scoringPlay": True, "type": {"text": "Penalty Shootout"},
+            "period": {"number": 5}}]}, "key_events")
+        self.assertFalse(shootout["scoring_play"][0])
+
     def test_team_player_comparisons_and_missing_event_section(self) -> None:
         self._sync([2024, 2025])
         self._sync([2024, 2025])

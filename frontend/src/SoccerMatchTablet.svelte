@@ -23,6 +23,12 @@
     <p class="soccer-match-xg">Expected goals (ESPN): {match?.home_expected_goals?.toFixed(2) ?? 'Unavailable'} : {match?.away_expected_goals?.toFixed(2) ?? 'Unavailable'}</p>
   {/if}
   <p>{play.description}</p>
+  {#if match?.competition_stage}<p>Stage: {match.competition_stage.replaceAll('-', ' ')}</p>{/if}
+  {#if match?.match_status_detail}<p>{match.match_status_detail}</p>{/if}
+  {#if match?.home_shootout_score != null && match?.away_shootout_score != null}
+    <p>Penalty shootout: {match.home_shootout_score} : {match.away_shootout_score} (excluded from match goals)</p>
+  {/if}
+  {#if match?.match_notes}<p>{match.match_notes}</p>{/if}
   <h4>Recorded match events</h4>
   {#if timeline.length}
     <ol>

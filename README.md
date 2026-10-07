@@ -11,7 +11,7 @@ evidence produced by those tools; the model cannot invent measurements or execut
 
 - Runs NFL team analysis for passing, rushing, and overall offense, plus player analysis for quarterbacks, receivers, and ball carriers.
 - Runs NBA team or player analysis across full seasons and validated season segments, with an optional team-stint filter for traded players.
-- Runs soccer team and player comparisons for the Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, and NWSL. Match scores, team statistics, lineups, and key events
+- Runs soccer team and player comparisons for the Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, NWSL, and UEFA Champions League. Match scores, team statistics, lineups, and key events
   are downloaded by competition and season; date-range comparisons and recorded match timelines are available. Missing match sections are disclosed rather than estimated.
 - Provides the mature NFL diagnostic suite: trends, benchmarks, outliers, situational splits, play mix, opponent context, change points, player usage, and availability
   context.
@@ -90,12 +90,17 @@ You do **not** need to run a data-sync command before launching the application.
 button. NFL quick setup includes play-by-play and recommends schedules, player statistics, and rosters. NBA requires play-by-play, schedules, team box scores, and player box
 scores for the guided flow. The application reports whether the optional live transport is installed, but
 current NBA investigations use synced bulk releases and do not make live NBA Stats calls.
-For soccer, select one of the seven competitions, choose seasons, and sync the desired match packages. Soccer data is keyed by competition, so syncing MLS cannot overwrite a
+For soccer, select a competition, choose seasons, and sync the desired match packages. Soccer data is keyed by competition, so syncing MLS cannot overwrite a
 Premier League season. Completed matches with unavailable summaries remain in the fixture catalog; partial match-detail syncs can be retried from the data library.
 
 The same download can be started from the CLI, for example `uv run sports-analyst data sync soccer --competition eng.1 --season 2025`. For European leagues, the season number
 is its ending year (2025 means 2024–25); MLS and NWSL use the calendar year. Selected-player assist game logs are requested and cached only if that metric is used and ESPN
 provides the log for both windows.
+
+Champions League uses `uefa.champions` and ending-year season labels (2027 means 2026–27). The existing match, player and xG analysis paths apply, subject to recorded coverage.
+Evidence retains recorded stage and match notes, including shootout tallies where supplied. Comparisons are match-level, not aggregate-tie outcomes: extra-time goals count,
+shootout tallies do not, and tied match scores remain draws. Points per match includes only recorded league/group-phase matches. Use date windows to narrow tournament context;
+dedicated stage filters and two-legged tie analysis are not yet included.
 
 **Team Match Statistics** also fetches ESPN Core expected-goals statistics through SportsDataverse in the same sync. Team analysis supports xG, xG against, xG difference, non-penalty xG,
 and goals minus xG per match. Player scoring analysis supports recorded xG, non-penalty xG, and goals minus xG; only the selected player's match statistics are fetched

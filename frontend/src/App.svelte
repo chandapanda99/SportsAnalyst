@@ -33,7 +33,8 @@
     {value: 'ger.1', label: 'Bundesliga', calendar: false},
     {value: 'ita.1', label: 'Serie A', calendar: false},
     {value: 'fra.1', label: 'Ligue 1', calendar: false},
-    {value: 'usa.nwsl', label: 'NWSL', calendar: true}
+    {value: 'usa.nwsl', label: 'NWSL', calendar: true},
+    {value: 'uefa.champions', label: 'UEFA Champions League', calendar: false}
   ];
   let selectedCompetition = 'eng.1';
   let baselineStartDate = '';

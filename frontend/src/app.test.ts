@@ -672,6 +672,11 @@ describe('Open Sports Analyst workbench', () => {
     expect(document.querySelector('.app-shell')?.classList.contains('soccer-theme')).toBe(true);
     expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
     const competition = await screen.findByLabelText('Competition');
+    expect(screen.getByRole('option', {name: 'UEFA Champions League'})).toBeTruthy();
+    await fireEvent.change(competition, {target: {value: 'uefa.champions'}});
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
+      String(input) === '/api/sports/soccer/options?competition=uefa.champions')).toBe(true));
+    await fireEvent.change(competition, {target: {value: 'eng.1'}});
     const dataCard = document.getElementById('data-setup');
     expect(dataCard?.contains(competition)).toBe(true);
     const subjectCard = screen.getByRole('heading', {name: 'Who do you want to understand?'}).closest('.scope-card');

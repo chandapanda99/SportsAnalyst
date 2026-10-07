@@ -31,6 +31,7 @@ SOCCER_COMPETITIONS = {
     "ita.1": ("Serie A", False),
     "fra.1": ("Ligue 1", False),
     "usa.nwsl": ("NWSL", True),
+    "uefa.champions": ("UEFA Champions League", False),
 }
 SOCCER_DATASETS = ("play_by_play", "team_stats", "lineups", "key_events")
 SOCCER_DEFAULT_DATASETS = list(SOCCER_DATASETS)
@@ -88,6 +89,8 @@ class SportsDataverseSoccerConnector:
             competitors = game.get("competitors") or []
             home = next((item for item in competitors if item.get("homeAway") == "home"), {})
             away = next((item for item in competitors if item.get("homeAway") == "away"), {})
+            status = ((event.get("status") or game.get("status") or {}).get("type") or {})
+            stage = (event.get("season") or {}).get("slug")
             rows.append({
                 "event_id": str(event.get("id") or ""), "date": event.get("date"),
                 "home_team_id": str((home.get("team") or {}).get("id") or ""),
@@ -95,7 +98,12 @@ class SportsDataverseSoccerConnector:
                 "home_team": (home.get("team") or {}).get("displayName"),
                 "away_team": (away.get("team") or {}).get("displayName"),
                 "home_score": home.get("score"), "away_score": away.get("score"),
-                "status": ((event.get("status") or {}).get("type") or {}).get("name"),
+                "status": "STATUS_FINAL" if status.get("completed") else status.get("name"),
+                "competition_stage": stage,
+                "match_status_detail": status.get("detail") or status.get("description"),
+                "match_notes": " · ".join(str(note.get("text") or note.get("headline") or "") for note in game.get("notes") or []),
+                "home_shootout_score": home.get("shootoutScore"),
+                "away_shootout_score": away.get("shootoutScore"),
             })
         return pl.DataFrame(rows) if rows else pl.DataFrame()
 
@@ -127,7 +135,9 @@ class SportsDataverseSoccerConnector:
                 rows.append({"id": str(event.get("id") or ""), "type": (event.get("type") or {}).get("text"),
                              "text": event.get("text"), "clock": (event.get("clock") or {}).get("displayValue"),
                              "team_id": str((event.get("team") or {}).get("id") or ""),
-                             "scoring_play": event.get("scoringPlay"),
+                             "scoring_play": bool(event.get("scoringPlay")) and not (
+                                 "shootout" in str((event.get("type") or {}).get("text") or "").lower()
+                                 or (event.get("period") or {}).get("number") == 5),
                              "athlete_id": str(athlete.get("id") or ""), "athlete_name": athlete.get("displayName")})
         return pl.DataFrame(rows) if rows else pl.DataFrame()
 
