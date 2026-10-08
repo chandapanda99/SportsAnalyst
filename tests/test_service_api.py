@@ -7,9 +7,9 @@ import polars as pl
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import _event_stream, create_app
+from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import Settings
 from sports_analyst.models import AnalysisRequest, AnalysisScope
-from sports_analyst.service import AnalystApplication
 
 
 class RecordingTelemetry:

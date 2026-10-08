@@ -4,8 +4,8 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import secrets
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
 from sports_analyst import __version__
+from sports_analyst.application.service import AnalystApplication
+from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -32,8 +34,6 @@ from sports_analyst.models import (
     ToolDefinition,
     stable_id,
 )
-from sports_analyst.service import AnalystApplication
-from sports_analyst.soccer_data import SOCCER_COMPETITIONS
 
 logger = logging.getLogger("sports_analyst.api")
 
@@ -82,8 +82,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     catalog_refreshed_at = monotonic()
 
     def enqueue(key: str, kind: str, payload: dict) -> None:
-        from sports_analyst.cloud_dispatch import ensure_dispatch
-        from sports_analyst.job_common import QueueFull
+        from sports_analyst.jobs.cloud import ensure_dispatch
+        from sports_analyst.jobs.common import QueueFull
 
         try:
             service.jobs.enqueue(key, kind, payload, service.settings.job_max_attempts,
@@ -97,7 +97,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     def job_status(key: str) -> dict:
         if service.jobs is not None:
-            from sports_analyst.cloud_dispatch import ensure_dispatch
+            from sports_analyst.jobs.cloud import ensure_dispatch
 
             ensure_dispatch(service.settings, service.jobs, key)
             status = service.jobs.status(key)

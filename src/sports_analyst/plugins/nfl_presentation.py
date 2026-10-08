@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from sports_analyst.chart_specs import metric_row_comparison_spec
-from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisWindow,
@@ -23,6 +22,7 @@ from sports_analyst.plugins.nfl_shared import (
     _row_number,
     _row_text,
 )
+from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 
 class NFLPresentationMixin:

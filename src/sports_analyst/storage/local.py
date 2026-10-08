@@ -14,7 +14,7 @@ import duckdb
 
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import DatasetManifest, InvestigationBundle, InvestigationSummary
-from sports_analyst.persistence import PersistenceBackend, create_persistence_backend, normalize_object_key
+from sports_analyst.storage.persistence import PersistenceBackend, create_persistence_backend, normalize_object_key
 
 logger = logging.getLogger("sports_analyst.storage")
 
@@ -356,7 +356,7 @@ class LocalStore:
         if sport not in {"nfl", "nba", "soccer"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
-            from sports_analyst.soccer_data import SOCCER_COMPETITIONS
+            from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
             if competition not in SOCCER_COMPETITIONS:
                 raise ValueError("Select a supported soccer competition")
         elif competition is not None:
@@ -400,7 +400,7 @@ class LocalStore:
         if sport not in {"nfl", "nba", "soccer"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
-            from sports_analyst.soccer_data import SOCCER_COMPETITIONS
+            from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
             if competition not in SOCCER_COMPETITIONS:
                 raise ValueError("Select a supported soccer competition")
         key = f"metadata/dataset-resets/{sport}/{competition or 'all'}.txt"
@@ -469,7 +469,7 @@ class LocalStore:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "bundle.json"
         path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
-        from sports_analyst.reports import render_html, render_markdown
+        from sports_analyst.presentation.reports import render_html, render_markdown
 
         (directory / "report.md").write_text(render_markdown(bundle), encoding="utf-8")
         (directory / "report.html").write_text(render_html(bundle), encoding="utf-8")

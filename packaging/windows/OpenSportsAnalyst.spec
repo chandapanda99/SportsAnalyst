@@ -25,13 +25,20 @@ for distribution in (
         pass
 
 a = Analysis(
-    [str(PACKAGE_ROOT / "sports_analyst" / "desktop.py")],
+    [str(PACKAGE_ROOT / "sports_analyst" / "desktop" / "app.py")],
     pathex=[str(PACKAGE_ROOT)],
     binaries=[],
     datas=datas,
     hiddenimports=[
         "keyring.backends.Windows",
         "sports_analyst.worker",
+        # Provider imports are intentionally lazy; keep them available in the
+        # frozen build without importing them during normal app startup.
+        "nflreadpy",
+        "sportsdataverse.nba.nba_loaders",
+        "sportsdataverse.soccer",
+        "sportsdataverse.dl_utils",
+        "sportsdataverse.errors",
     ],
     hookspath=[],
     hooksconfig={},

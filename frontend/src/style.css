@@ -41,6 +41,7 @@ button, input, textarea, select {
 }
 
 .desktop-startup-brand { display: flex; align-items: center; gap: 16px; margin-bottom: 34px; font-size: 20px; font-weight: 700; }
+.desktop-startup-logo { display: block; width: clamp(64px, 12vw, 80px); height: auto; aspect-ratio: 1; object-fit: contain; flex: 0 0 auto; }
 .desktop-startup-brand strong { display: block; color: #a7bfd0; font-size: 16px; font-weight: 400; letter-spacing: .13em; text-transform: uppercase; }
 .desktop-startup-kicker { color: #68e0c3; font: 12px Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
 .desktop-startup-card h1 { margin: 12px 0; font-size: clamp(27px, 4vw, 38px); line-height: 1.15; }

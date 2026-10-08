@@ -211,6 +211,47 @@ describe('Open Sports Analyst workbench', () => {
     vi.unstubAllGlobals();
   });
 
+  it('opens the desktop workspace while history is stalled and offers a separate retry on failure', async () => {
+    window.history.replaceState({}, '', '/?desktop');
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    let failHistory!: (error: Error) => void;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (/\/api\/investigations\?/.test(String(input))) return new Promise((_, reject) => { failHistory = reject; });
+      return defaultFetch(input, init);
+    });
+    try {
+      render(App);
+      await screen.findByText('Loading recent analyses…');
+      expect(document.querySelector('.desktop-startup-overlay')).toBeNull();
+      failHistory(new Error('Investigation history timed out.'));
+      await screen.findByRole('button', {name: 'Retry History'});
+      vi.mocked(fetch).mockImplementation(defaultFetch);
+      await fireEvent.click(screen.getByRole('button', {name: 'Retry History'}));
+      await waitFor(() => expect(screen.queryByRole('button', {name: 'Retry History'})).toBeNull());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  });
+
+  it('identifies a failed desktop initialization step and opens the workspace after retry', async () => {
+    window.history.replaceState({}, '', '/?desktop');
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input).includes('/sports/nfl/options')) return Promise.resolve(new Response(JSON.stringify({detail: 'Options unavailable'}), {status: 503}));
+      return defaultFetch(input, init);
+    });
+    try {
+      render(App);
+      await screen.findByRole('button', {name: 'Try Again'});
+      expect(screen.getByText(/We couldn't finish opening your workspace.*season and analysis options.*Options unavailable/)).toBeTruthy();
+      vi.mocked(fetch).mockImplementation(defaultFetch);
+      await fireEvent.click(screen.getByRole('button', {name: 'Try Again'}));
+      await waitFor(() => expect(document.querySelector('.desktop-startup-overlay')).toBeNull());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  });
+
   it('renders the scoped investigation entry point without model credentials', async () => {
     render(App);
     expect(await screen.findByText('Football analysis')).toBeTruthy();
@@ -323,7 +364,7 @@ describe('Open Sports Analyst workbench', () => {
     });
 
     render(App);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/health'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/health', expect.objectContaining({signal: expect.any(AbortSignal)})));
     expect(fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => !url.endsWith('/api/health'))).toHaveLength(0);
 
     releaseHealth();
@@ -420,7 +461,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
     await fireEvent.click(screen.getByText(/Data Ready · Manage Data|Prepare Data/, {selector: 'strong'}));
-    await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
+    await fireEvent.click(await screen.findByRole('button', {name: 'Customize data sources'}));
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
     expect(screen.getByText(/not offered for selected seasons/)).toBeTruthy();
@@ -579,9 +620,9 @@ describe('Open Sports Analyst workbench', () => {
 
     await fireEvent.click(deleteButton);
 
-    expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', { method: 'DELETE' });
-    expect(screen.queryByText('Which games changed the most?')).toBeNull();
-    expect(screen.queryByText('Was it consistent across the sample?')).toBeNull();
+    expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', expect.objectContaining({method: 'DELETE'}));
+    await waitFor(() => expect(screen.queryAllByText('Which games changed the most?')).toHaveLength(0));
+    expect(screen.queryAllByText('Was it consistent across the sample?')).toHaveLength(0);
     expect(await screen.findByText('Analysis Deleted')).toBeTruthy();
   });
 

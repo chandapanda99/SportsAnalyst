@@ -8,11 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import create_app
+from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import Settings
+from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisSubject, AnalysisWindow
-from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.plugins.nba import NBAPlugin
-from sports_analyst.service import AnalystApplication
 
 
 def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:

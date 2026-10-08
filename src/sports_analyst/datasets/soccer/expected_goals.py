@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 import polars as pl
 
+from sports_analyst.datasets.optional import load_optional_module
+
 logger = logging.getLogger(__name__)
 CORE_ROOT = "https://sports.core.api.espn.com/v2/sports/soccer/leagues"
 STAT_FIELDS = {
@@ -82,8 +84,8 @@ class ExpectedGoalsSource:
 
     @staticmethod
     def _team_statistics(competition: str, game_id: str, team_id: str) -> dict:
-        from sportsdataverse.soccer import espn_soccer_game_team_statistics
-        from sportsdataverse.errors import SportsDataverseError
+        espn_soccer_game_team_statistics = load_optional_module("sportsdataverse.soccer", "Soccer team-statistics sync").espn_soccer_game_team_statistics
+        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer team-statistics sync").SportsDataverseError
 
         # The package's parsed form currently assumes splits is a list. Preserve
         # the authoritative numeric values and normalize both raw shapes here.
@@ -97,8 +99,8 @@ class ExpectedGoalsSource:
 
     @staticmethod
     def _player_statistics(competition: str, game_id: str, team_id: str, athlete_id: str) -> dict:
-        from sportsdataverse.dl_utils import download
-        from sportsdataverse.errors import SportsDataverseError
+        download = load_optional_module("sportsdataverse.dl_utils", "Soccer player-statistics sync").download
+        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer player-statistics sync").SportsDataverseError
 
         # This is the statistics resource linked by the documented Core roster
         # endpoint. Use SDV's shared transport rather than one request per roster member.

@@ -17,10 +17,12 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
-from sports_analyst.data import sha256_file
+from sports_analyst.datasets.nfl import sha256_file
+from sports_analyst.datasets.optional import OptionalDependencyError, load_optional_module
+from sports_analyst.datasets.soccer.expected_goals import CORE_ROOT, ExpectedGoalsSource
+from sports_analyst.datasets.soccer.expected_goals import coverage as xg_coverage
+from sports_analyst.datasets.soccer.season_statistics import FIELDS, SeasonStatisticsSource
 from sports_analyst.models import DatasetManifest, stable_id
-from sports_analyst.soccer_xg import CORE_ROOT, ExpectedGoalsSource, coverage as xg_coverage
-from sports_analyst.soccer_season_stats import FIELDS, SeasonStatisticsSource
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +74,8 @@ class SportsDataverseSoccerConnector:
 
     @staticmethod
     def _request(competition: str, endpoint: str, params: dict[str, str | int]) -> dict[str, Any]:
-        from sportsdataverse import soccer
-        from sportsdataverse.errors import SportsDataverseError
+        soccer = load_optional_module("sportsdataverse.soccer", "Soccer dataset sync")
+        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer dataset sync").SportsDataverseError
 
         arguments = {"event_id" if name == "event" else name: value for name, value in params.items()}
         try:
@@ -176,6 +178,8 @@ class SportsDataverseSoccerConnector:
                 successful += 1
                 if isinstance(frame, pl.DataFrame) and not frame.is_empty():
                     frames.append(frame)
+            except OptionalDependencyError:
+                raise
             except Exception as error:
                 logger.warning("soccer_scoreboard_unavailable competition=%s interval=%s error=%s", competition, interval, error)
             if progress:
@@ -271,6 +275,8 @@ class SportsDataverseSoccerConnector:
                         match = futures[future]
                         try:
                             summaries[match] = future.result()
+                        except OptionalDependencyError:
+                            raise
                         except Exception as error:
                             logger.warning("soccer_match_unavailable competition=%s event=%s error=%s", competition, match, error)
                         detail("play_by_play", .2 + (summary_share - .2) * index / len(ids),
@@ -372,8 +378,8 @@ class SportsDataverseSoccerConnector:
             frame = pl.read_parquet(path)
             return self.manifest_for(path, competition, season, dataset, frame)
         source_season = season if SOCCER_COMPETITIONS[competition][1] else season - 1
-        from sportsdataverse.errors import SportsDataverseError
-        from sportsdataverse.soccer import espn_soccer_player_gamelog
+        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer player game logs").SportsDataverseError
+        espn_soccer_player_gamelog = load_optional_module("sportsdataverse.soccer", "Soccer player game logs").espn_soccer_player_gamelog
 
         try:
             raw = espn_soccer_player_gamelog(league=competition, athlete_id=athlete_id, season=source_season,

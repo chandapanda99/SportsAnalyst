@@ -11,7 +11,7 @@ from time import monotonic, perf_counter
 from typing import Any
 
 from sports_analyst.config import Settings, get_settings
-from sports_analyst.job_common import retryable_job_error
+from sports_analyst.jobs.common import retryable_job_error
 
 logger = logging.getLogger("sports_analyst.worker")
 
@@ -19,9 +19,9 @@ logger = logging.getLogger("sports_analyst.worker")
 def execute_job(settings: Settings, job: dict) -> None:
     # Import the service only in the child. The supervisor stays small and can
     # renew leases while Polars, the model client, or an exporter is busy.
-    from sports_analyst.jobs import LeaseLost, SQLiteJobStore, WorkerEvents
+    from sports_analyst.application.service import AnalystApplication
+    from sports_analyst.jobs.local import LeaseLost, SQLiteJobStore, WorkerEvents
     from sports_analyst.models import AnalysisRequest
-    from sports_analyst.service import AnalystApplication
 
     jobs = SQLiteJobStore(settings.job_database_path)
     key, token = job["job_id"], job["lease_token"]
@@ -70,8 +70,8 @@ def execute_job(settings: Settings, job: dict) -> None:
 
 
 def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, stop_event: Any | None = None) -> None:
-    from sports_analyst.jobs import SQLiteJobStore
-    from sports_analyst.log_config import configure_logging
+    from sports_analyst.jobs.local import SQLiteJobStore
+    from sports_analyst.observability.logging import configure_logging
 
     configure_logging(settings.log_level)
     if settings.job_backend != "sqlite":
@@ -162,7 +162,7 @@ def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, s
 
 def execute_object_job(settings: Settings, key: str) -> None:
     """Execute one R2-backed request; Cloud Run owns process retries."""
-    from sports_analyst.service import AnalystApplication
+    from sports_analyst.application.service import AnalystApplication
 
     application = AnalystApplication(settings)
     jobs = application.jobs
@@ -235,7 +235,7 @@ def main() -> None:
         parser.error("--once, --drain and --object-job are mutually exclusive")
     settings = get_settings()
     if args.object_job:
-        from sports_analyst.log_config import configure_logging
+        from sports_analyst.observability.logging import configure_logging
 
         configure_logging(settings.log_level)
         key = os.getenv("JOB_ID")

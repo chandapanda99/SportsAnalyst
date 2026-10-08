@@ -14,8 +14,8 @@ from typing import Any
 
 import polars as pl
 
-from sports_analyst.chart_specs import metric_row_comparison_spec
-from sports_analyst.evidence_selection import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.datasets.nba import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -36,8 +36,8 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
-from sports_analyst.nba_data import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available
 from sports_analyst.plugins.nba_segments import NBA_SEGMENTS, available_segments, segment_game_ids
+from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 NBA_TEAMS = {
     "ATL": "Atlanta Hawks",

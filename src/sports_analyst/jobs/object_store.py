@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from sports_analyst.job_common import QueueFull
-from sports_analyst.persistence import PersistenceBackend, normalize_object_key
+from sports_analyst.jobs.common import QueueFull
+from sports_analyst.storage.persistence import PersistenceBackend, normalize_object_key
 
 
 class ObjectJobStore:

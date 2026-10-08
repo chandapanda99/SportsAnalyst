@@ -45,15 +45,49 @@ export function pollingStream(job: PendingJob, timeoutSeconds?: number): EventSt
   };
 }
 
+function requestLabel(url: string): string {
+  if (url.includes('/capabilities')) return 'Analysis settings';
+  if (url.endsWith('/sports')) return 'Available sports';
+  if (url.includes('/options')) return 'Season and analysis options';
+  if (url.includes('/players')) return 'Player search';
+  if (/\/investigations(?:\?|$)/.test(url)) return 'Investigation history';
+  if (/\/datasets(?:\?|$)/.test(url)) return 'Downloaded data catalog';
+  return 'Server request';
+}
+
+// The deadline covers both the connection and reading the response body.
+async function boundedRequest<T>(url: string, init: RequestInit | undefined, read: (response: Response) => Promise<T>, timeoutMs = 30_000): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  init?.signal?.addEventListener('abort', abort, {once: true});
+  if (init?.signal?.aborted) abort();
+  let timer: ReturnType<typeof setTimeout>;
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(url, {...init, signal: controller.signal});
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+        return read(response);
+      })(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${requestLabel(url)} timed out after ${timeoutMs / 1000} seconds. Please try again.`));
+          controller.abort();
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer!);
+    init?.signal?.removeEventListener('abort', abort);
+  }
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
-  return response.json() as Promise<T>;
+  return boundedRequest(url, init, response => response.json() as Promise<T>);
 }
 
 async function empty(url: string, init?: RequestInit): Promise<void> {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.statusText);
+  await boundedRequest(url, init, async () => undefined);
 }
 
 export interface EventStreamResponse {
@@ -85,7 +119,7 @@ async function eventStream(url: string, init: RequestInit, label: string): Promi
 export const api = {
   ready: async () => {
     try {
-      return (await fetch('/api/health')).ok;
+      return await boundedRequest('/api/health', undefined, async () => true, 5_000);
     } catch {
       return false;
     }

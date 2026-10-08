@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from sports_analyst.sql import execute_read_only_sql, validate_sql
+from sports_analyst.storage.sql import execute_read_only_sql, validate_sql
 
 
 @pytest.mark.parametrize("sql", ["DELETE FROM pbp", "SELECT 1; SELECT 2", "SELECT * FROM read_parquet('secret')", "INSTALL httpfs"])

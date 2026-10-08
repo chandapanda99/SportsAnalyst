@@ -8,10 +8,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from sports_analyst.analysis.instructions import PROMPT_VERSION, REVIEW_CONTRACT, analysis_guidance
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
-from sports_analyst.analysis_instructions import PROMPT_VERSION, REVIEW_CONTRACT, analysis_guidance
 
 logger = logging.getLogger("sports_analyst.agents")
 POSITIVE_IS_BETTER = {
@@ -300,7 +300,7 @@ def _fallback_synthesis(
         improved = change > 0 if primary.metric in POSITIVE_IS_BETTER else change < 0
         direction = "improved" if improved else "declined"
     if sport == "soccer":
-        from sports_analyst.soccer_data import SOCCER_COMPETITIONS, soccer_season_label
+        from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS, soccer_season_label
 
         season_label = lambda year: soccer_season_label(competition, year) if competition in SOCCER_COMPETITIONS else str(year)
         baseline_label = f"{baseline.start_date} to {baseline.end_date}" if baseline.start_date else f"{season_label(baseline.season)} season"

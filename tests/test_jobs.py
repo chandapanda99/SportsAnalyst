@@ -10,11 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import _event_stream, create_app
+from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import Settings
-from sports_analyst.jobs import LeaseLost, QueueFull, SQLiteJobStore
+from sports_analyst.jobs.local import LeaseLost, QueueFull, SQLiteJobStore
+from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.models import AnalysisRequest, AnalysisScope
-from sports_analyst.object_jobs import ObjectJobStore
-from sports_analyst.service import AnalystApplication
 from sports_analyst.worker import execute_job
 
 
@@ -124,8 +124,8 @@ def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypat
 
 
 def test_dispatch_recovery_and_queue_admission(tmp_path, monkeypatch):
-    from sports_analyst import cloud_dispatch
-    from sports_analyst.jobs import QueueFull
+    from sports_analyst.jobs import cloud as cloud_dispatch
+    from sports_analyst.jobs.local import QueueFull
 
     settings = Settings(_env_file=None, data_dir=tmp_path)
     settings = settings.model_copy(update={"job_dispatch_backend": "cloud_run", "max_active_jobs": 3,
@@ -206,10 +206,10 @@ def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, mon
     settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="sqlite")
     queue = MagicMock()
     queue.publication.return_value = nullcontext()
-    monkeypatch.setattr("sports_analyst.jobs.SQLiteJobStore", lambda _: queue)
+    monkeypatch.setattr("sports_analyst.jobs.local.SQLiteJobStore", lambda _: queue)
     application = MagicMock()
     application.store.get_investigation.side_effect = KeyError("missing")
-    monkeypatch.setattr("sports_analyst.service.AnalystApplication", lambda _: application)
+    monkeypatch.setattr("sports_analyst.application.service.AnalystApplication", lambda _: application)
 
     def complete(*_):
         application.events.emit("job", "complete", "Ready", 1, investigation_id="job")
@@ -224,7 +224,7 @@ def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, mon
     execute_job(settings, {**job, "kind": "sync", "payload": {"seasons": [2025], "sport": "nba"}})
     execute_job(settings, {**job, "kind": "follow_up", "payload": {"parent_id": "parent", "question": "Why?"}})
     assert queue.finish.call_count == 3
-    application.sync.assert_called_once_with([2025], "job", None, "nba")
+    application.sync.assert_called_once_with([2025], "job", None, "nba", None)
     application.store.get_investigation.side_effect = None
     execute_job(settings, job)
     assert application.investigate.call_count == 1  # Saved R2 result avoids a repeated AI call.
@@ -238,7 +238,7 @@ def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, mon
 
 
 def test_sqlite_queue_survives_restart_recovers_leases_and_replays_progress(tmp_path):
-    from sports_analyst.jobs import QueueFull
+    from sports_analyst.jobs.local import QueueFull
 
     path = tmp_path / "jobs.sqlite3"
     store = SQLiteJobStore(path)

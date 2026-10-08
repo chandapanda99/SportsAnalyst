@@ -12,10 +12,10 @@ from pathlib import Path
 from threading import RLock
 from time import perf_counter
 
-import nflreadpy as nfl
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.models import DatasetManifest, stable_id
 
 logger = logging.getLogger("sports_analyst.data")
@@ -139,6 +139,7 @@ class NFLVerseConnector:
             if release_path := DIRECT_PARQUET_PATHS.get(dataset):
                 self._download_parquet(f"{NFLVERSE_RELEASE_BASE_URL}{release_path.format(season=season)}", path)
             else:
+                nfl = load_optional_module("nflreadpy", "NFL dataset sync")
                 frame = self._load_remote(nfl, dataset, season)
                 if progress_callback:
                     progress_callback("processing", dataset, season, index, len(work))

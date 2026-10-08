@@ -11,16 +11,29 @@ from typing import Any
 
 import polars as pl
 
-from sports_analyst.chart_specs import metric_row_comparison_spec
+from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
+from sports_analyst.datasets.soccer.expected_goals import PLAYER_XG_FIELDS, TEAM_XG_FIELDS, numeric
+from sports_analyst.datasets.soccer.season_statistics import FIELDS as SEASON_STAT_FIELDS
 from sports_analyst.models import (
-    AggregateEvidence, AnalysisOptions, AnalysisPlan, AnalysisRequest, ChartArtifact,
-    ComparisonWindowOption, DatasetManifest, MetricDefinition, MetricOption, PlannedToolCall,
-    PlayerOption, PlayEvidence, PlayVisualization, TeamOption, ToolDefinition,
-    ToolExecutionRecord, stable_id,
+    AggregateEvidence,
+    AnalysisOptions,
+    AnalysisPlan,
+    AnalysisRequest,
+    ChartArtifact,
+    ComparisonWindowOption,
+    DatasetManifest,
+    MetricDefinition,
+    MetricOption,
+    PlannedToolCall,
+    PlayerOption,
+    PlayEvidence,
+    PlayVisualization,
+    TeamOption,
+    ToolDefinition,
+    ToolExecutionRecord,
+    stable_id,
 )
-from sports_analyst.soccer_data import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
-from sports_analyst.soccer_xg import PLAYER_XG_FIELDS, TEAM_XG_FIELDS, numeric
-from sports_analyst.soccer_season_stats import FIELDS as SEASON_STAT_FIELDS
+from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 
 @dataclass

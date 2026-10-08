@@ -5,10 +5,10 @@ from typing import Annotated
 
 import typer
 
+from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import get_settings
+from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
 from sports_analyst.models import AnalysisRequest, AnalysisScope
-from sports_analyst.service import AnalystApplication
-from sports_analyst.soccer_data import SOCCER_COMPETITIONS
 
 app = typer.Typer(help="Open Sports Analyst — evidence-bound local sports analysis")
 data_app = typer.Typer(help="Manage local sports datasets")
@@ -102,7 +102,7 @@ def capabilities() -> None:
 
 @eval_app.command("run")
 def eval_run() -> None:
-    from sports_analyst.evaluation import evaluation_cases
+    from sports_analyst.analysis.evaluation import evaluation_cases
 
     typer.echo(json.dumps({"cases": len(evaluation_cases()), "status": "definitions-valid"}, indent=2))
 

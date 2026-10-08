@@ -5,12 +5,12 @@ import logging
 
 from fastapi import FastAPI, HTTPException, Request
 
+from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import get_settings
-from sports_analyst.job_common import retryable_job_error
-from sports_analyst.log_config import configure_logging
-from sports_analyst.object_jobs import ObjectJobStore
-from sports_analyst.persistence import PersistenceBackend, create_persistence_backend
-from sports_analyst.service import AnalystApplication
+from sports_analyst.jobs.common import retryable_job_error
+from sports_analyst.jobs.object_store import ObjectJobStore
+from sports_analyst.observability.logging import configure_logging
+from sports_analyst.storage.persistence import PersistenceBackend, create_persistence_backend
 from sports_analyst.worker import run_object_analysis
 
 logger = logging.getLogger("sports_analyst.analysis_api")

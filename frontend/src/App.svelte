@@ -26,7 +26,7 @@
   } from './types';
 
   let capabilities: Capabilities | null = null;
-  let completionNotifications: Array<{id: number; title: string; message: string}> = [];
+  let completionNotifications: Array<{ id: number; title: string; message: string }> = [];
   let nextNotificationId = 0;
 
   function notifyCompletion(title: string, message: string) {
@@ -36,6 +36,7 @@
   function dismissCompletion(id: number) {
     completionNotifications = completionNotifications.filter(item => item.id !== id);
   }
+
   let sports: SportOption[] = [];
   let activeSport = 'nfl';
   const soccerCompetitions = [
@@ -89,6 +90,7 @@
       event.preventDefault();
     }
   }
+
   type QuestionBank = Record<string, Record<'team' | 'player', Record<string, string[]>>>;
   const questionBanks: QuestionBank = {
     nfl: {
@@ -443,6 +445,10 @@
   const desktopMode = new URLSearchParams(window.location.search).has('desktop');
   let initialWorkspaceReady = false;
   let initialWorkspaceError = '';
+  let startupStatus = 'Connecting to the local app…';
+  let historyLoading = false;
+  let historyLoadError = '';
+  let historyRequestVersion = 0;
   type DraftState = {
     question: string; team: string; teamInput: string; baseline: number; comparison: number;
     baselineStartWeek: number; baselineEndWeek: number; comparisonStartWeek: number; comparisonEndWeek: number;
@@ -656,10 +662,10 @@
       || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
           : activeSport === 'soccer'
-          ? baseline !== comparison || baselineStartDate !== comparisonStartDate || baselineEndDate !== comparisonEndDate
-          : baseline !== comparison
-          || baselineStartWeek !== comparisonStartWeek
-          || baselineEndWeek !== comparisonEndWeek);
+              ? baseline !== comparison || baselineStartDate !== comparisonStartDate || baselineEndDate !== comparisonEndDate
+              : baseline !== comparison
+              || baselineStartWeek !== comparisonStartWeek
+              || baselineEndWeek !== comparisonEndWeek);
   $: missingRequiredSeasons = requiredSeasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
   $: hasRequiredData = requiredSeasons.every((season) => analysisOptions?.available_seasons.includes(season));
   $: missingPlayerSeasons = subjectType === 'player' && selectedPlayer
@@ -676,7 +682,7 @@
   );
   $: metricCategories = [...new Set(domainMetrics.map((metric) => metric.category))];
   $: availableMetrics = domainMetrics.filter(metric => requiredSeasons.every(season => metric.available_seasons.includes(season))
-    && !(activeSport === 'soccer' && metric.value.startsWith('season_') && comparisonMode !== 'full_seasons'));
+      && !(activeSport === 'soccer' && metric.value.startsWith('season_') && comparisonMode !== 'full_seasons'));
   $: availableMetricIds = new Set(availableMetrics.map(metric => metric.value));
   $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
   $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
@@ -720,20 +726,30 @@
     const sport = activeSport;
     const requestVersion = ++workspaceRequestVersion;
     workspaceLoading = true;
+    if (error === workspaceLoadError) error = '';
     workspaceLoadError = '';
     try {
       if (!backendReady) {
         if (!await api.ready()) throw new Error('The local analysis service is still starting.');
         backendReady = true;
       }
+      const waiting = new Set<string>();
+      function startupStep<T>(label: string, request: Promise<T>): Promise<T> {
+        waiting.add(label);
+        startupStatus = `Loading ${[...waiting].join(', ')}…`;
+        return request.then(value => {
+          waiting.delete(label);
+          if (requestVersion === workspaceRequestVersion) startupStatus = waiting.size ? `Loading ${[...waiting].join(', ')}…` : 'Preparing your selections…';
+          return value;
+        }, problem => { throw new Error(`${label}: ${problem instanceof Error ? problem.message : String(problem)}`); });
+      }
       const bootstrap = capabilities && sports.length
           ? Promise.resolve(null)
-          : Promise.all([api.capabilities(), api.sports()]);
-      const [[nextOptions, nextDatasets, nextHistory], nextBootstrap] = await Promise.all([
+          : Promise.all([startupStep('analysis settings', api.capabilities()), startupStep('available sports', api.sports())]);
+      const [[nextOptions, nextDatasets], nextBootstrap] = await Promise.all([
         Promise.all([
-          api.analysisOptions(sport, sport === 'soccer' ? selectedCompetition : undefined),
-          api.datasets(sport),
-          api.investigations(undefined, 0, sport)
+          startupStep('season and analysis options', api.analysisOptions(sport, sport === 'soccer' ? selectedCompetition : undefined)),
+          startupStep('downloaded data catalog', api.datasets(sport))
         ]),
         bootstrap
       ]);
@@ -754,18 +770,18 @@
       }
       analysisOptions = nextOptions;
       datasets = sport === 'soccer' ? nextDatasets.filter(item => item.competition === selectedCompetition) : nextDatasets;
-      history = sport === 'soccer' ? nextHistory.filter(item => item.run.scope.competition === selectedCompetition) : nextHistory;
       initializeSelections();
       initialWorkspaceReady = true;
       initialWorkspaceError = '';
-      const unresolvedPlayerHistory = nextHistory.some((item) => item.run.subject?.type === 'player' && !item.run.subject.display_name);
-      if (subjectType === 'player' || unresolvedPlayerHistory) void loadPlayers();
+      void loadHistory();
+      if (subjectType === 'player') void loadPlayers();
     } catch (problem) {
       if (requestVersion !== workspaceRequestVersion || sport !== activeSport) return;
       const startupAttempt = !backendReady;
-      const retryLimit = startupAttempt ? 120 : 4;
+      const retryLimit = startupAttempt ? 5 : 0;
       if (attempt < retryLimit) {
         workspaceLoadError = 'Waiting for the local analysis service…';
+        startupStatus = workspaceLoadError;
         const retryDelay = startupAttempt ? 500 : 500 * (attempt + 1);
         await new Promise((resolve) => setTimeout(resolve, retryDelay));
         if (requestVersion === workspaceRequestVersion && sport === activeSport) await refresh(attempt + 1);
@@ -779,10 +795,32 @@
     }
   }
 
+  async function loadHistory() {
+    const version = ++historyRequestVersion;
+    const sport = activeSport;
+    const competition = selectedCompetition;
+    historyLoading = true;
+    historyLoadError = '';
+    const current = () => version === historyRequestVersion && sport === activeSport && competition === selectedCompetition;
+    try {
+      const items = await api.investigations(undefined, 0, sport);
+      if (!current()) return;
+      history = sport === 'soccer' ? items.filter(item => item.run.scope.competition === competition) : items;
+      if (items.some(item => item.run.subject?.type === 'player' && !item.run.subject.display_name) && !playersLoading) void loadPlayers();
+    } catch (problem) {
+      if (current()) historyLoadError = problem instanceof Error ? problem.message : String(problem);
+    } finally {
+      if (current()) historyLoading = false;
+    }
+  }
+
   async function switchSport(sport: string) {
     if (sport === activeSport || busy) return;
     sportDrafts[activeSport] = captureDraft();
     workspaceRequestVersion += 1;
+    historyRequestVersion += 1;
+    historyLoadError = '';
+    historyLoading = false;
     playerSearchVersion += 1;
     activeSport = sport;
     active = null;
@@ -889,9 +927,9 @@
     if (!initializedSelections) {
       selectedMetrics = [...analysisOptions.default_metrics];
       syncSeasons = analysisOptions.syncable_seasons.filter(season => {
-            const required = analysisOptions?.data_setup?.required_datasets ?? ['play_by_play'];
-            return required.every(source => eligibleSelectedSeasons(source, [season]).length);
-          }).slice(0, 2);
+        const required = analysisOptions?.data_setup?.required_datasets ?? ['play_by_play'];
+        return required.every(source => eligibleSelectedSeasons(source, [season]).length);
+      }).slice(0, 2);
       selectLocallyAvailablePackages();
       const required = analysisOptions.data_setup?.required_datasets?.length ? analysisOptions.data_setup.required_datasets : ['play_by_play'];
       dataManagerOpen = ![baseline, comparison].every(season => required.every(source => syncedPackages(season).has(source)));
@@ -1287,8 +1325,10 @@
 
   function datasetLabel(dataset: string) {
     if (activeSport === 'soccer') {
-      const soccerLabels: Record<string, string> = {play_by_play: 'Match Results', team_stats: 'Team Match Statistics',
-        lineups: 'Match Lineups', key_events: 'Match Events', expected_goals: 'Expected Goals (xG)'};
+      const soccerLabels: Record<string, string> = {
+        play_by_play: 'Match Results', team_stats: 'Team Match Statistics',
+        lineups: 'Match Lineups', key_events: 'Match Events', expected_goals: 'Expected Goals (xG)'
+      };
       if (soccerLabels[dataset]) return soccerLabels[dataset];
     }
     const labels: Record<string, string> = {
@@ -1472,13 +1512,15 @@
       const teamSources = datasets.filter(item => item.sport === 'soccer' && item.dataset === 'team_stats' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
       const teamMatches = teamSources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const statsLabel = teamSources.every(item => item.coverage?.recorded_matches !== undefined)
-        ? `Team stats: ${teamMatches} matches` : `Team stats: ${local}/${eligibleSeasons.length} seasons`;
+          ? `Team stats: ${teamMatches} matches` : `Team stats: ${local}/${eligibleSeasons.length} seasons`;
       const sources = datasets.filter(item => item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
       const covered = sources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const expected = sources.reduce((sum, item) => sum + (item.coverage?.expected_matches ?? 0), 0);
       const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season));
-      return {state: incomplete ? 'partial' : 'installed',
-        label: `${statsLabel} · xG: ${covered}/${expected} matches${incomplete ? ' · resume sync' : covered < expected ? ' · limited source coverage' : ''}`};
+      return {
+        state: incomplete ? 'partial' : 'installed',
+        label: `${statsLabel} · xG: ${covered}/${expected} matches${incomplete ? ' · resume sync' : covered < expected ? ' · limited source coverage' : ''}`
+      };
     }
     if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) {
       return {state: 'partial', label: 'Partial · resume sync'};
@@ -1513,7 +1555,7 @@
     const now = new Date();
     const currentNbaSeason = activeSport === 'nba' ? now.getUTCFullYear() + (now.getUTCMonth() >= 6 ? 1 : 0) : null;
     const currentSoccerSeason = activeSport === 'soccer' ? now.getFullYear() +
-      (!soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar && now.getMonth() >= 6 ? 1 : 0) : null;
+        (!soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar && now.getMonth() >= 6 ? 1 : 0) : null;
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
         season === currentNflSeason || season === currentNbaSeason || season === currentSoccerSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
   }
@@ -1527,6 +1569,9 @@
     if (competition === selectedCompetition || busy) return;
     selectedCompetition = competition;
     workspaceRequestVersion += 1;
+    historyRequestVersion += 1;
+    historyLoadError = '';
+    historyLoading = false;
     playerSearchVersion += 1;
     resetDraft('soccer');
     analysisOptions = null;
@@ -1552,7 +1597,7 @@
     }
     const teamId = subject?.id || item.run.scope.team;
     const sameContext = (item.run.sport ?? 'nfl') === activeSport
-      && (activeSport !== 'soccer' || item.run.scope.competition === selectedCompetition);
+        && (activeSport !== 'soccer' || item.run.scope.competition === selectedCompetition);
     const teamName = sameContext ? analysisOptions?.teams.find(team => team.value === teamId)?.label : undefined;
     return subject?.display_name || teamName || teamId;
   }
@@ -1783,7 +1828,10 @@
     stage = 'Starting investigation';
     try {
       let baselineWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: baseline, weeks: [1, 22]};
-      let comparisonWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: comparison, weeks: [1, 22]};
+      let comparisonWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {
+        season: comparison,
+        weeks: [1, 22]
+      };
       if (comparisonMode === 'week_ranges') {
         baselineWindow = {season: baseline, weeks: [baselineStartWeek, baselineEndWeek]};
         comparisonWindow = {season: comparison, weeks: [comparisonStartWeek, comparisonEndWeek]};
@@ -2050,7 +2098,8 @@
 
 <svelte:head><title>Open Sports Analyst</title></svelte:head>
 
-<div class="app-shell" class:nba-theme={activeSport === 'nba'} class:soccer-theme={activeSport === 'soccer'} bind:this={appShellElement} style={`--rail-width: ${railWidth}px`}>
+<div class="app-shell" class:nba-theme={activeSport === 'nba'} class:soccer-theme={activeSport === 'soccer'} bind:this={appShellElement}
+     style={`--rail-width: ${railWidth}px`}>
   <aside class="rail" class:mobile-history-open={mobileHistoryOpen}>
     <div class="brand"><img class="mark" src="/favicon.svg" alt="" aria-hidden="true"/>
       <div><strong>Open Sports</strong><span>Analyst</span></div>
@@ -2073,6 +2122,8 @@
         <Icon name="history" size={15}/>
         Film Room Gallery
       </div>
+      {#if historyLoading}<p role="status"><span class="button-spinner" aria-hidden="true"></span> Loading recent analyses…</p>{/if}
+      {#if historyLoadError}<div role="alert"><p>Recent analyses couldn't load. {historyLoadError}</p><button type="button" on:click={() => loadHistory()}>Retry History</button></div>{/if}
       {#each rootHistory.slice(0, 8) as item}
         <div class="recent-report">
           <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
@@ -2142,6 +2193,9 @@
 
     {#if error}
       <div class="error" role="alert">{error}</div>
+    {/if}
+    {#if workspaceLoadError && !workspaceLoading && initialWorkspaceReady}
+      <button type="button" on:click={() => { error = ''; void refresh(); }}>Retry Workspace Loading</button>
     {/if}
 
     {#if investigationLoading}
@@ -2255,7 +2309,7 @@
                 </div>
               {:else if !analysisOptions}
                 <div class="library-load-error" role="alert">
-                  <span><strong>Data catalog unavailable</strong><small>The local analysis service did not respond. Start the API or try loading the catalog again.</small></span>
+                  <span><strong>Data catalog unavailable</strong><small>{workspaceLoadError || 'The analysis service did not respond. Try loading the catalog again.'}</small></span>
                   <button type="button" on:click={() => refresh()}>Retry</button>
                 </div>
               {:else}
@@ -2310,10 +2364,12 @@
                   </fieldset>
                 </div>
                 {#if activeSport === 'nfl' && syncSeasons.includes(2026)}
-                  <p class="current-season-note">2026 is still in progress. Analyses use games in your latest downloaded snapshot; refresh it as nflverse publishes new results. For like-for-like comparisons, select matching week ranges.</p>
+                  <p class="current-season-note">2026 is still in progress. Analyses use games in your latest downloaded snapshot; refresh it as nflverse publishes
+                    new results. For like-for-like comparisons, select matching week ranges.</p>
                 {/if}
                 <button class="download-data-button" disabled={!syncSeasons.length || !syncDatasets.length} on:click={syncData}>
-                  {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length} sources for {syncSeasons.length} seasons
+                  {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length}
+                  sources for {syncSeasons.length} seasons
                   <Icon name="database-import" size={20}/>
                 </button>
               {/if}
@@ -2455,7 +2511,9 @@
                     <fieldset>
                       <legend>Reference period</legend>
                       <label>Season<select bind:value={baseline}>
-                        {#each scopeSeasons as season}<option value={season}>{seasonLabel(season)}</option>{/each}
+                        {#each scopeSeasons as season}
+                          <option value={season}>{seasonLabel(season)}</option>
+                        {/each}
                       </select></label>
                       {#if comparisonMode === 'date_ranges'}
                         <label>From date<input type="date" bind:value={baselineStartDate}/></label>
@@ -2466,7 +2524,9 @@
                     <fieldset>
                       <legend>Comparison period</legend>
                       <label>Season<select bind:value={comparison}>
-                        {#each scopeSeasons as season}<option value={season}>{seasonLabel(season)}</option>{/each}
+                        {#each scopeSeasons as season}
+                          <option value={season}>{seasonLabel(season)}</option>
+                        {/each}
                       </select></label>
                       {#if comparisonMode === 'date_ranges'}
                         <label>From date<input type="date" bind:value={comparisonStartDate}/></label>
@@ -2581,7 +2641,8 @@
                     <p class="range-summary">{`Includes every season from ${baseline} through ${comparison}: ${requiredSeasons.join(', ')}.`}</p>
                   {/if}
                   {#if activeSport === 'nfl' && requiredSeasons.includes(2026)}
-                    <p class="current-season-note">The current season is incomplete. Results reflect only games in the downloaded 2026 snapshot; use matching week ranges to compare equivalent portions of past seasons.</p>
+                    <p class="current-season-note">The current season is incomplete. Results reflect only games in the downloaded 2026 snapshot; use matching week
+                      ranges to compare equivalent portions of past seasons.</p>
                   {/if}
                   {#if !windowsDiffer}
                     <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
@@ -2771,7 +2832,8 @@
           </div>
           <div class="play-visual" class:nba-loading={activeSport === 'nba'} class:soccer-loading={activeSport === 'soccer'} aria-hidden="true">
             <div class="play-caption">
-              <span>{activeSport === 'nba' ? 'LIVE ANALYSIS POSSESSION' : activeSport === 'soccer' ? 'LIVE ANALYSIS BUILDUP' : 'LIVE ANALYSIS DRIVE'}</span><b>{Math.round(progress * 100)}%</b></div>
+              <span>{activeSport === 'nba' ? 'LIVE ANALYSIS POSSESSION' : activeSport === 'soccer' ? 'LIVE ANALYSIS BUILDUP' : 'LIVE ANALYSIS DRIVE'}</span><b>{Math.round(progress * 100)}
+              %</b></div>
             {#if activeSport === 'nba'}
               <BasketballLoadingAnimation/>
             {:else if activeSport === 'soccer'}
@@ -2879,10 +2941,12 @@
         </div>
       </section>
       <section class="plays">
-        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : 'Plays'}</span><small>Examples from both periods—not the entire
+        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : 'Plays'}</span><small>Examples
+          from both periods—not the entire
           sample</small>
         </div>
-        <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it. Counterexamples show outcomes that run against the overall trend.</p>
+        <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it. Counterexamples show
+          outcomes that run against the overall trend.</p>
         {#if !active.play_evidence.length}<p class="empty-state">No representative plays are available for this analysis. Review the numerical evidence and source
           limitations above.</p>{/if}
         {#each evidenceGroups(active.play_evidence) as group}
@@ -2899,7 +2963,8 @@
                         on:click={() => openPlay(play)}><span class="play-tag"
                                                               class:supporting={play.evidence_role ? play.evidence_role !== 'counterexample' : play.supporting}
                                                               class:typical={play.evidence_role === 'typical'}>{evidenceRoleLabel(play)}</span>
-                  <span class="play-reference"><strong>{play.game_id}</strong>{#if activeSport !== 'soccer'}<small>Play #{play.play_id}</small>{/if}</span>
+                  <span class="play-reference"><strong>{play.game_id}</strong>
+                    {#if activeSport !== 'soccer'}<small>Play #{play.play_id}</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
                       class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
@@ -3006,14 +3071,15 @@
   <div class="completion-notifications" role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions">
     {#each completionNotifications as notification (notification.id)}
       <CompletionToast title={notification.title} message={notification.message}
-        ondismiss={() => dismissCompletion(notification.id)}/>
+                       ondismiss={() => dismissCompletion(notification.id)}/>
     {/each}
   </div>
 </div>
 {#if desktopMode && !initialWorkspaceReady}
   <div class="desktop-startup-overlay" role="status" aria-live="polite">
     <div class="desktop-startup-card">
-      <div class="desktop-startup-brand"><Icon name="sports-analyst" size={56}/><span>Open Sports <strong>Analyst</strong></span></div>
+      <div class="desktop-startup-brand"><img class="desktop-startup-logo" src="/favicon.svg" alt=""
+                                              aria-hidden="true"/><span>Open Sports <strong>Analyst</strong></span></div>
       <span class="desktop-startup-kicker">Getting Ready</span>
       <h1>Preparing your workspace</h1>
       <p>Loading your sports library and analysis settings.</p>
@@ -3022,7 +3088,7 @@
         <p class="desktop-startup-error">We couldn't finish opening your workspace. {initialWorkspaceError}</p>
         <button type="button" on:click={() => { initialWorkspaceError = ''; void refresh(); }}>Try Again</button>
       {:else}
-        <p class="desktop-startup-status">{backendReady ? 'Checking your sports data and analysis tools…' : 'Connecting to the local app…'}</p>
+        <p class="desktop-startup-status">{startupStatus}</p>
       {/if}
     </div>
   </div>

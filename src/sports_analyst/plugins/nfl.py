@@ -8,7 +8,7 @@ from typing import Any
 
 import polars as pl
 
-from sports_analyst.data import DATASET_MIN_SEASONS, REFERENCE_DATASETS, SUPPORTED_DATASETS
+from sports_analyst.datasets.nfl import DATASET_MIN_SEASONS, REFERENCE_DATASETS, SUPPORTED_DATASETS
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,

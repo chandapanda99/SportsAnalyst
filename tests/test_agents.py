@@ -1,20 +1,19 @@
-from sports_analyst.agents import (
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from sports_analyst.analysis.agents import (
+    EvidenceBoundAgent,
     SynthesisDraft,
     _citation_ledger,
     _citation_response_model,
     _formulate_user_message,
     _resolve_citation_draft,
 )
+from sports_analyst.analysis.instructions import PROMPT_VERSION, evidence_brief
 from sports_analyst.config import Settings
-from sports_analyst.models import AggregateEvidence, Claim, ClaimType, PlayEvidence
-import json
-from types import SimpleNamespace
-
-import pytest
-
-from sports_analyst.agents import EvidenceBoundAgent
-from sports_analyst.analysis_instructions import PROMPT_VERSION, evidence_brief
-from sports_analyst.models import AnalysisWindow, DatasetManifest, MetricDefinition
+from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, DatasetManifest, MetricDefinition, PlayEvidence
 
 
 def aggregate_evidence() -> AggregateEvidence:
@@ -131,7 +130,8 @@ def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:
 def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, question, specific_rule, monkeypatch):
     """Exercise the real synthesis/tool boundary, without paid model calls."""
     import deepagents
-    import sports_analyst.agents as agents
+
+    import sports_analyst.analysis.agents as agents
 
     primary = aggregate_evidence().model_copy(update={
         "unit": "rate", "sample_size": 8,

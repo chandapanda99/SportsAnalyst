@@ -13,15 +13,15 @@ import polars as pl
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import create_app
+from sports_analyst.application.service import AnalystApplication
+from sports_analyst.application.sync import run_dataset_sync
 from sports_analyst.config import Settings
+from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector, soccer_season_label
+from sports_analyst.datasets.soccer.expected_goals import ExpectedGoalsSource, coverage
+from sports_analyst.datasets.soccer.season_statistics import SeasonStatisticsSource
 from sports_analyst.models import AnalysisRequest
 from sports_analyst.plugins.soccer import SoccerPlugin
-from sports_analyst.soccer_data import SportsDataverseSoccerConnector, soccer_season_label
-from sports_analyst.storage import LocalStore
-from sports_analyst.service import AnalystApplication
-from sports_analyst.soccer_xg import ExpectedGoalsSource, coverage
-from sports_analyst.soccer_season_stats import SeasonStatisticsSource
-from sports_analyst.sync_service import run_dataset_sync
+from sports_analyst.storage.local import LocalStore
 
 
 def _summary(game: str, with_events: bool = True) -> dict:
@@ -47,8 +47,9 @@ def _summary(game: str, with_events: bool = True) -> dict:
 class SoccerIntegrationTests(unittest.TestCase):
     def test_current_season_refresh_policy_across_sports(self) -> None:
         from datetime import UTC, datetime
+
+        from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
         from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
-        from sports_analyst.soccer_data import SOCCER_COMPETITIONS
 
         now = datetime(2026, 10, 7, tzinfo=UTC)
         scopes = [("nfl", None, LATEST_SYNCABLE_SEASON), ("nba", None, 2027)]
@@ -63,7 +64,7 @@ class SoccerIntegrationTests(unittest.TestCase):
                     SimpleNamespace(dataset="play_by_play", season=season, coverage={})
                     for season in (current - 1, current)]
                 application = SimpleNamespace(connectors={sport: connector}, store=store, events=Mock())
-                with patch("sports_analyst.sync_service.datetime") as clock:
+                with patch("sports_analyst.application.sync.datetime") as clock:
                     clock.now.return_value = now
                     run_dataset_sync(application, [current - 2, current - 1, current],
                                      datasets=["play_by_play"], sport=sport, competition=league)
@@ -197,7 +198,7 @@ class SoccerIntegrationTests(unittest.TestCase):
         with patch.object(self.connector, "_scoreboard", scoreboard), \
              patch.object(self.connector, "_request", return_value=fixtures), \
              patch.object(self.connector, "_summary", side_effect=lambda *args: _summary(args[-1])), \
-             patch("sports_analyst.sync_service.perf_counter", side_effect=count()):
+             patch("sports_analyst.application.sync.perf_counter", side_effect=count()):
             manifests = run_dataset_sync(application, [2025], "progress-sync",
                                          ["play_by_play", "team_stats"], "soccer", "eng.1")
         updates = [call.args for call in events.emit.call_args_list]

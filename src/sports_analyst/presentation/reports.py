@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 
 from sports_analyst.models import InvestigationBundle
-from sports_analyst.team_palettes import rgb_csv, team_report_palette
+from sports_analyst.presentation.teams import rgb_csv, team_report_palette
 
 
 def _window_label(window) -> str:

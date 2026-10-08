@@ -10,10 +10,12 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.analysis.instructions import evidence_brief
 from sports_analyst.config import Settings, get_settings
-from sports_analyst.analysis_instructions import evidence_brief
-from sports_analyst.data import NFLVerseConnector
-from sports_analyst.log_config import configure_logging
+from sports_analyst.datasets.nba import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
+from sports_analyst.datasets.nfl import NFLVerseConnector
+from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector
+from sports_analyst.datasets.soccer.expected_goals import PLAYER_XG_FIELDS
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisPlan,
@@ -30,14 +32,13 @@ from sports_analyst.models import (
     ToolDefinition,
     stable_id,
 )
-from sports_analyst.nba_data import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
-from sports_analyst.soccer_data import SportsDataverseSoccerConnector
-from sports_analyst.soccer_xg import PLAYER_XG_FIELDS
-from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS, SEASON_METRICS, SoccerPlugin
-from sports_analyst.persistence import PersistenceBackend
+from sports_analyst.observability.logging import configure_logging
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
-from sports_analyst.sql import execute_read_only_sql
-from sports_analyst.storage import EventRegistry, LocalStore
+from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS
+from sports_analyst.plugins.soccer import SEASON_METRICS, SoccerPlugin
+from sports_analyst.storage.local import EventRegistry, LocalStore
+from sports_analyst.storage.persistence import PersistenceBackend
+from sports_analyst.storage.sql import execute_read_only_sql
 
 logger = logging.getLogger("sports_analyst.service")
 
@@ -82,8 +83,8 @@ class AnalystApplication:
         if analysis_runtime:
             if startup_progress:
                 startup_progress("Preparing analysis tools")
-            from sports_analyst.agents import EvidenceBoundAgent
-            from sports_analyst.telemetry import LangSmithTelemetry
+            from sports_analyst.analysis.agents import EvidenceBoundAgent
+            from sports_analyst.observability.telemetry import LangSmithTelemetry
 
             self.agent = EvidenceBoundAgent(self.settings)
             self.telemetry = LangSmithTelemetry(self.settings)
@@ -93,11 +94,11 @@ class AnalystApplication:
         self.events = EventRegistry()
         self.jobs = None
         if self.settings.job_backend == "sqlite":
-            from sports_analyst.jobs import SQLiteJobStore
+            from sports_analyst.jobs.local import SQLiteJobStore
 
             self.jobs = SQLiteJobStore(self.settings.job_database_path)
         elif self.settings.job_backend == "object":
-            from sports_analyst.object_jobs import ObjectJobStore
+            from sports_analyst.jobs.object_store import ObjectJobStore
 
             polling = self.settings.job_progress_transport == "poll"
             self.jobs = ObjectJobStore(
@@ -235,7 +236,7 @@ class AnalystApplication:
     def sync(
             self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None
     ) -> list[DatasetManifest]:
-        from sports_analyst.sync_service import run_dataset_sync
+        from sports_analyst.application.sync import run_dataset_sync
 
         return run_dataset_sync(self, seasons, job_id, datasets, sport, competition)
 

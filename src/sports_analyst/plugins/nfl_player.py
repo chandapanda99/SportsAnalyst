@@ -9,7 +9,6 @@ from typing import Any
 
 import polars as pl
 
-from sports_analyst.chart_specs import metric_row_comparison_spec
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisRequest,
@@ -28,6 +27,7 @@ from sports_analyst.plugins.nfl_shared import (
     _scope_plays,
     _sha,
 )
+from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 # source, label, category, domain, description, formula, interpretation, higher-is-better, required columns
 PLAYER_METRICS: dict[str, tuple[str, str, str, str, str, str, str, bool, set[str]]] = {

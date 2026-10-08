@@ -1,6 +1,7 @@
 """Deterministic, diversity-aware selection of representative sport evidence."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Literal
 

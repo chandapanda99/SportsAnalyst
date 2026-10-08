@@ -117,7 +117,7 @@ try
         throw "uv.lock is stale; run uv lock and commit the result before packaging"
     }
 
-    uv sync --frozen --extra desktop --extra desktop-build
+    uv sync --upgrade --prerelease allow --extra desktop --extra desktop-build
     if ($LASTEXITCODE -ne 0)
     {
         throw "Desktop dependencies could not be synchronized"

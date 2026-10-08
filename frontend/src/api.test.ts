@@ -1,7 +1,19 @@
 import {afterEach, expect, it, vi} from 'vitest';
 import {api, pendingJob, pollingStream} from './api';
 
-afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); sessionStorage.clear(); });
+
+it('bounds stalled startup requests including response bodies and allows retry', async () => {
+  vi.useFakeTimers();
+  const fetcher = vi.fn().mockResolvedValue({ok: true, json: () => new Promise(() => {})});
+  vi.stubGlobal('fetch', fetcher);
+  const stalled = expect(api.analysisOptions('nfl')).rejects.toThrow('Season and analysis options timed out');
+  await vi.advanceTimersByTimeAsync(30_000);
+  await stalled;
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  fetcher.mockResolvedValue(new Response(JSON.stringify({seasons: [2026]})));
+  expect(await api.analysisOptions('nfl')).toEqual({seasons: [2026]});
+});
 
 it('submits polling jobs once and restores progress from a saved ID after refresh', async () => {
   const fetcher = vi.fn()

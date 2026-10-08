@@ -6,10 +6,10 @@ from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request
 
+from sports_analyst.application.sync import DatasetSyncApplication
 from sports_analyst.config import get_settings
-from sports_analyst.job_common import retryable_job_error
-from sports_analyst.log_config import configure_logging
-from sports_analyst.sync_service import DatasetSyncApplication
+from sports_analyst.jobs.common import retryable_job_error
+from sports_analyst.observability.logging import configure_logging
 
 logger = logging.getLogger("sports_analyst.sync_api")
 settings = get_settings()

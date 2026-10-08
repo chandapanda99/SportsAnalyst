@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import polars as pl
 
-from sports_analyst.soccer_xg import CORE_ROOT, core_statistics
+from sports_analyst.datasets.optional import load_optional_module
+from sports_analyst.datasets.soccer.expected_goals import CORE_ROOT, core_statistics
 
 # Only additive counts are combined across disjoint competition stages.
 FIELDS = {
@@ -26,8 +27,8 @@ class SeasonStatisticsSource:
 
     @staticmethod
     def _request(url: str) -> dict:
-        from sportsdataverse.dl_utils import download
-        from sportsdataverse.errors import SportsDataverseError
+        download = load_optional_module("sportsdataverse.dl_utils", "Soccer season-statistics sync").download
+        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer season-statistics sync").SportsDataverseError
         try:
             response = download(url=url, timeout=30, num_retries=2)
             if response is None:

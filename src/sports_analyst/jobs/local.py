@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sports_analyst.job_common import QueueFull
+from sports_analyst.jobs.common import QueueFull
 
 
 class LeaseLost(RuntimeError):

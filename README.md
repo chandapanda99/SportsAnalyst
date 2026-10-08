@@ -128,6 +128,12 @@ On first launch, the application asks for the model provider, analysis model, op
 remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.json`. Select **Use deterministic mode** to run without an LLM. To reopen model setup from a
 development installation, run `uv run sports-analyst-desktop --configure`.
 
+Workspace startup identifies the settings/catalog requests still loading and provides a retryable error if they stall. Health checks have a 5-second deadline and ordinary
+requests through the shared API client have a 30-second deadline, including response-body loading; long-running sync and analysis progress streams are not cut off by that deadline. Investigation
+history loads independently with its own loading indicator and retry action, so it does not prevent opening the investigation form. Optional sports-provider libraries
+load when their feature is used. Missing or Windows-blocked provider libraries produce a feature-specific error without preventing access to the core app or existing
+local data; core runtime libraries such as DuckDB and Polars are still required. These changes do not disable or bypass Windows application-control policies.
+
 The desktop automatically stores its queue and progress history in `%LOCALAPPDATA%\open-sports-analyst\jobs.sqlite3` and starts `sports-analyst-worker` as a managed sibling
 process. It needs no database server or cloud storage. Closing the desktop stops the active child cleanly; unfinished work is released back to the SQLite queue and resumes
 when the application starts again. The command-line development server keeps the simpler in-process `JOB_BACKEND=local` default.
@@ -229,6 +235,29 @@ LANGSMITH_PROJECT=open-sports-analyst-local
 Each investigation is a root trace with child spans for planning, data loading, deterministic analysis, synthesis, and persistence. Follow-ups use the original investigation
 ID as their `thread_id`, while retaining their own `investigation_id`. Trace metadata contains scope identifiers and counts, not raw datasets or credentials. Tracing is
 fail-open: configuration or delivery failures are logged but do not fail an investigation.
+
+## Source organization
+
+The Python package groups implementation modules by responsibility:
+
+```text
+src/sports_analyst/
+├── application/      Investigation orchestration and dataset sync
+├── analysis/         Agents, analytical instructions, evidence selection, evaluation
+├── datasets/         NFL/NBA connectors and optional provider dependencies
+│   └── soccer/       Match connector, expected goals, and season statistics
+├── jobs/             Local/object queues and cloud dispatch
+├── storage/          Local catalog, durable persistence, and read-only SQL
+├── presentation/     Charts, reports, and team palettes
+├── observability/    Logging and LangSmith tracing
+├── desktop/          Windows desktop lifecycle and configuration
+├── plugins/          Sport-specific metrics and analysis
+└── providers/        Model-provider integrations
+```
+
+Shared `config.py` and `models.py` stay at the package root, together with the API, CLI, worker, and cloud API entry points. Launch commands and deployment entry points
+are unchanged. Internal imports now use the grouped paths (for example, `sports_analyst.application.service.AnalystApplication`). Package initializers are lightweight
+so importing a group does not initialize an application or load optional sports providers.
 
 ## Data
 

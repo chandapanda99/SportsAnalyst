@@ -4,11 +4,11 @@ from unittest.mock import MagicMock
 
 import polars as pl
 
+from sports_analyst.application.sync import run_dataset_sync
 from sports_analyst.config import Settings
-from sports_analyst.data import NFLVerseConnector
+from sports_analyst.datasets.nfl import NFLVerseConnector
 from sports_analyst.models import AnalysisPlan, AnalysisScope, InvestigationBundle, InvestigationRun, RunStatus
-from sports_analyst.storage import LocalStore
-from sports_analyst.sync_service import run_dataset_sync
+from sports_analyst.storage.local import LocalStore
 
 
 class MemoryPersistence:

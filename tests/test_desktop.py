@@ -2,14 +2,50 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import types
 from pathlib import Path
 
 from sports_analyst.api import bundled_frontend_directory
-from sports_analyst import desktop
-from sports_analyst.desktop import DesktopController, _run_desktop_worker
-from sports_analyst.desktop_config import DesktopConfigStore
+from sports_analyst.desktop import app as desktop
+from sports_analyst.desktop.app import DesktopController, _run_desktop_worker
+from sports_analyst.desktop.config import DesktopConfigStore
+
+
+def test_public_entrypoints_open_without_optional_sports_providers(tmp_path: Path) -> None:
+    """Exercise the reorganized package in a fresh interpreter, not cached imports."""
+    environment = {**os.environ, "DATA_DIR": str(tmp_path), "JOB_BACKEND": "local",
+                   "PERSISTENCE_BACKEND": "local", "SPORTS_ANALYST_RUNTIME_ROLE": "api", "LANGSMITH_TRACING": "false"}
+    probe = '''
+import importlib.abc
+import importlib.util
+import sys
+
+class BlockedLoader(importlib.abc.Loader):
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        raise ImportError('Optional provider deliberately unavailable during startup')
+
+class BlockProviders(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'nflreadpy', 'sportsdataverse', 'pandas', 'scipy', 'sklearn'}:
+            return importlib.util.spec_from_loader(fullname, BlockedLoader())
+
+sys.meta_path.insert(0, BlockProviders())
+from sports_analyst import api, cli, desktop, worker
+from sports_analyst.application.service import AnalystApplication
+from sports_analyst.datasets.nfl import NFLVerseConnector
+from sports_analyst.datasets.nba import SportsDataverseNBAConnector
+from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector
+assert callable(desktop.main) and callable(worker.main)
+assert callable(api.create_app) and cli.app is not None
+assert all(name not in sys.modules for name in ('nflreadpy', 'sportsdataverse', 'pandas', 'scipy', 'sklearn'))
+'''
+    result = subprocess.run([sys.executable, "-c", probe], env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
 
 
 def test_desktop_configuration_persists_settings_and_loads_secrets_securely(tmp_path: Path, monkeypatch) -> None:

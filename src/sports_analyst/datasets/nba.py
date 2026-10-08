@@ -15,7 +15,8 @@ from typing import NamedTuple
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
-from sports_analyst.data import sha256_file
+from sports_analyst.datasets.nfl import sha256_file
+from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.models import DatasetManifest, stable_id
 
 logger = logging.getLogger(__name__)
@@ -118,10 +119,7 @@ class SportsDataverseNBAConnector:
 
     @staticmethod
     def _loader_registry() -> dict[str, Callable[..., object]]:
-        try:
-            from sportsdataverse.nba import nba_loaders
-        except ImportError as error:  # pragma: no cover - exercised by deployment smoke tests
-            raise RuntimeError("SportsDataverse is not installed; sync dependencies before using NBA data") from error
+        nba_loaders = load_optional_module("sportsdataverse.nba.nba_loaders", "NBA dataset sync")
         return {dataset: getattr(nba_loaders, definition[0]) for dataset, definition in NBA_DATASETS.items()}
 
     def sync(
@@ -136,9 +134,6 @@ class SportsDataverseNBAConnector:
         unknown = sorted(set(selected) - set(NBA_DATASETS))
         if unknown:
             raise ValueError(f"unsupported SportsDataverse NBA datasets: {unknown}")
-        loaders = self._loader_registry()
-        from sportsdataverse.errors import SeasonNotFoundError
-
         work = [
             (season, dataset) for season in sorted(set(seasons)) for dataset in selected if season in NBA_DATASETS[dataset].available_seasons
         ]
@@ -157,6 +152,11 @@ class SportsDataverseNBAConnector:
                     progress_callback("available", dataset, season, completed, len(work))
                 continue
             pending.append((index, season, dataset))
+
+        if not pending:
+            return []
+        loaders = self._loader_registry()
+        from sportsdataverse.errors import SeasonNotFoundError
 
         def acquire(index: int, season: int, dataset: str) -> tuple[int, DatasetManifest | None]:
             item_started_at = perf_counter()

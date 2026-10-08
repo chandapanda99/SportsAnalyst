@@ -14,7 +14,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from sports_analyst.desktop_config import DesktopConfigStore
+from sports_analyst.desktop.config import DesktopConfigStore
 
 
 def _run_desktop_worker(settings: Any, stop_event: Any) -> None:
@@ -29,7 +29,7 @@ def _setup_icon_data_uri() -> str:
     candidates = []
     if bundle_root := getattr(sys, "_MEIPASS", None):
         candidates.append(Path(bundle_root) / "frontend" / "dist" / "favicon.svg")
-    candidates.append(Path(__file__).resolve().parents[2] / "frontend" / "public" / "favicon.svg")
+    candidates.append(Path(__file__).resolve().parents[3] / "frontend" / "public" / "favicon.svg")
     for candidate in candidates:
         if candidate.is_file():
             encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
@@ -150,8 +150,8 @@ class DesktopController:
         import uvicorn
 
         from sports_analyst.api import create_app
+        from sports_analyst.application.service import AnalystApplication
         from sports_analyst.config import get_settings
-        from sports_analyst.service import AnalystApplication
 
         # Desktop jobs always use the private AppData SQLite ledger. Ignore
         # cloud/self-hosting backend variables inherited from a developer shell.

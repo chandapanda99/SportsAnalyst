@@ -8,13 +8,19 @@ from threading import Lock
 from time import perf_counter
 
 from sports_analyst.config import Settings
-from sports_analyst.data import NFLVerseConnector
+from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
+from sports_analyst.datasets.nfl import NFLVerseConnector
+from sports_analyst.datasets.optional import optional_dependencies
+from sports_analyst.datasets.soccer.connector import (
+    SOCCER_COMPETITIONS,
+    SOCCER_DEFAULT_DATASETS,
+    SportsDataverseSoccerConnector,
+    soccer_season_label,
+)
+from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.models import DatasetManifest, stable_id
-from sports_analyst.nba_data import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
-from sports_analyst.soccer_data import SOCCER_COMPETITIONS, SOCCER_DEFAULT_DATASETS, SportsDataverseSoccerConnector, soccer_season_label
-from sports_analyst.object_jobs import ObjectJobStore
 from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
-from sports_analyst.storage import LocalStore
+from sports_analyst.storage.local import LocalStore
 
 logger = logging.getLogger("sports_analyst.service")
 
@@ -147,7 +153,8 @@ def run_dataset_sync(
 
     sync_kwargs = {"competition": competition, "progress_detail_callback": report_sync,
                    "refresh_seasons": {current_season} if competition in SOCCER_COMPETITIONS else set()} if sport == "soccer" else {}
-    manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
+    with optional_dependencies(f"{sport.upper()} dataset sync"):
+        manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)
