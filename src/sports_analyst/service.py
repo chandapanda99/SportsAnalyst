@@ -11,6 +11,7 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.analysis_instructions import evidence_brief
 from sports_analyst.data import NFLVerseConnector
 from sports_analyst.log_config import configure_logging
 from sports_analyst.models import (
@@ -473,6 +474,21 @@ class AnalystApplication:
                     {"question": item.run.question, "summary": item.summary}
                     for item in self.store.investigation_thread(request.parent_investigation_id)
                 ]
+            definitions = []
+            for metric in sorted({item.metric for item in result.aggregate_evidence}):
+                try:
+                    definitions.append(self.explain_metric(metric, request.sport))
+                except (ValueError, KeyError):
+                    # Derived split/trend evidence may not have a registered metric definition.
+                    pass
+            source_manifests = {item.manifest_id: item for item in manifests.values()}
+            for packages in supplemental_manifests.values():
+                source_manifests.update({item.manifest_id: item for item in packages.values()})
+            analytical_context = evidence_brief(
+                result.aggregate_evidence, definitions, list(source_manifests.values()),
+                {"sport": request.sport, "domain": request.analysis_domain,
+                 "subject": request.subject.model_dump(mode="json") if request.subject else {"type": "team", "id": request.scope.team},
+                 "comparison": request.scope.model_dump(mode="json"), "as_of": datetime.now(UTC).isoformat()})
             draft, model_id, fallback = self.agent.synthesize(
                 request.question,
                 request.subject.id if request.subject else request.scope.team,
@@ -487,6 +503,7 @@ class AnalystApplication:
                 progress_callback=lambda message, progress: self.events.emit(identifier, "synthesizing", message, progress),
                 trace_metadata=trace_metadata,
                 competition=request.scope.competition,
+                analytical_context=analytical_context,
             )
             self.telemetry.add_outputs(
                 synthesis_span,

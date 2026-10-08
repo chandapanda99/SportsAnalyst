@@ -384,7 +384,7 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
         application.store.manifest_for_season(2025, sport="nfl")
 
     client = TestClient(create_app(application))
-    assert {item["value"] for item in client.get("/api/sports").json()} == {"nfl", "nba"}
+    assert {item["value"] for item in client.get("/api/sports").json()} == {"nfl", "nba", "soccer"}
     options = client.get("/api/sports/nba/options").json()
     assert set(options["data_setup"]["required_datasets"]) == {"play_by_play", "schedules", "team_boxscores", "player_boxscores"}
     assert options["data_setup"]["label"] == "Basketball essentials"
@@ -417,11 +417,11 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     sync_events = application.events.events("nba-progress")
     sync_progress = [float(event["progress"]) for event in sync_events]
     assert sync_progress == sorted(sync_progress)
-    assert {event["stage"] for event in sync_events} >= {"downloading", "processing", "downloaded", "registering", "complete"}
+    assert {event["stage"] for event in sync_events} >= {"downloading", "processing", "downloaded", "uploading", "complete"}
     assert any("Play By Play" in str(event["message"]) and "1 of 2" in str(event["message"]) for event in sync_events)
     synced: dict[str, object] = {}
 
-    def capture_sync(seasons, _job_id, datasets, sport):
+    def capture_sync(seasons, _job_id, datasets, sport, competition=None):
         synced.update(seasons=seasons, datasets=datasets, sport=sport)
         return []
 

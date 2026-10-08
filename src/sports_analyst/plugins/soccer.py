@@ -424,6 +424,8 @@ class SoccerPlugin:
                 unit=METRICS[name][4], sample_size=after_n, row_set_sha256=_sha(payload), dataset_manifest_ids=ids,
                 tool_execution_id=execution_id,
                 caveats=metric_caveats,
+                context={"baseline_sample": before_n, "comparison_sample": after_n,
+                         "sample_definition": "Metric-specific qualifying observations; see definition and coverage caveats."},
             ))
         if not aggregates:
             if any(name in SEASON_METRICS for name in selected):

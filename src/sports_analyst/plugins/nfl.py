@@ -811,6 +811,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     comparison_value=round(comp_value, 4),
                     unit="rate" if "rate" in metric or metric in {"success_rate", "cpoe"} else "per play",
                     sample_size=comparison.height,
+                    context={"baseline_sample": baseline.height, "comparison_sample": comparison.height,
+                             "sample_definition": "Qualifying play rows; per-metric non-null denominators may differ."},
                     confidence_low=round(low, 4) if low is not None else None,
                     confidence_high=round(high, 4) if high is not None else None,
                     row_set_sha256=_sha(payload),

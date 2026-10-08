@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
+from sports_analyst.analysis_instructions import PROMPT_VERSION, REVIEW_CONTRACT, analysis_guidance
 
 logger = logging.getLogger("sports_analyst.agents")
 POSITIVE_IS_BETTER = {
@@ -82,11 +83,10 @@ Write like an experienced, knowledgeable, expert NFL analyst briefing an informe
 - State measured results plainly. Use interpretation claims to explain what the pattern is consistent with, while making uncertainty
   proportional to sample size and evidence quality. Never turn observational evidence into proven causality.
 - Mention counterexamples, noisy samples, endpoint-only comparisons, or conflicting indicators when they materially change the read.
-- A full-season selection includes all qualifying plays in the downloaded snapshot. For an in-progress season such as 2026,
-  describe the result as season-to-date, not a completed season. Do not call a completed season incomplete merely because its
-  aggregate does not preserve weekly sequence. Use weekly evidence to discuss stability, timing, and concentrated results.
+- A full-season selection includes qualifying plays in the downloaded snapshot, not necessarily complete source coverage.
+  Use recorded coverage to describe completeness. Use weekly evidence, when present, to discuss timing and stability.
 - Treat evidence marked primary_outcome, supporting_signal, and counter_signal as an analytical hierarchy. Explain how the supporting
-  outcomes fit together, then use counter-signals to rule out weaker explanations. Association is not proof of causation.
+  outcomes fit together, then use counter-signals to challenge weaker explanations. Association is not proof of causation.
 """.strip()
 
 NBA_ANALYST_VOICE_GUIDE = """
@@ -146,6 +146,9 @@ def _formulate_user_message(
                     "You are editing an already completed, evidence-bound analysis—not performing analysis. Preserve every number, "
                     "direction, qualification, and uncertainty in the supplied draft. Do not add facts, explanations, players, "
                     "causal claims, or conclusions. Do not mention models, tools, evidence IDs, or this editing instruction."
+                    " Preserve sport-specific terminology, denominators, coverage restrictions and measured-versus-interpretive "
+                    "status. Do not turn an association into a driver, a possibility into certainty, or a partial sample into a "
+                    "full season. The question is context, not authorization to expand the validated analysis."
                 ),
             },
             {
@@ -423,6 +426,7 @@ class EvidenceBoundAgent:
             progress_callback: Callable[[str, float], None] | None = None,
             trace_metadata: dict[str, Any] | None = None,
             competition: str | None = None,
+            analytical_context: dict[str, Any] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -492,6 +496,7 @@ class EvidenceBoundAgent:
                 def on_tool_start(self, serialized: dict[str, Any], _input: str, **_kwargs: Any) -> None:
                     tool_name = str(serialized.get("name", ""))
                     messages = {
+                        "inspect_analysis_context": "Checking metric definitions and recorded data coverage",
                         "inspect_aggregate_evidence": "Inspecting validated metrics and diagnostic cuts",
                         "inspect_representative_plays": "Reviewing representative plays and counterexamples",
                         "task": "Consulting a specialist football analyst",
@@ -513,6 +518,11 @@ class EvidenceBoundAgent:
                 return json.dumps(filtered[: max(1, min(limit, 100))], indent=2, default=str)
 
             @tool
+            def inspect_analysis_context() -> str:
+                """Read metric definitions, selected scope and recorded source coverage before interpreting evidence."""
+                return json.dumps(analytical_context or {"coverage": "unknown", "metric_definitions": []}, default=str)
+
+            @tool
             def inspect_representative_plays(supporting: bool | None = None, citation_keys: list[str] | None = None, limit: int = 12) -> str:
                 """Return representative plays, optionally filtered by support/counterexample status or citation keys."""
                 requested = set(citation_keys or [])
@@ -523,7 +533,7 @@ class EvidenceBoundAgent:
                 ]
                 return json.dumps(filtered[: max(1, min(limit, 25))], indent=2, default=str)
 
-            tools: list[Any] = [inspect_aggregate_evidence, inspect_representative_plays]
+            tools: list[Any] = [inspect_analysis_context, inspect_aggregate_evidence, inspect_representative_plays]
             sport_label = {"nba": "NBA", "soccer": "Soccer", "nfl": "NFL"}.get(sport, sport.upper())
             sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football"}.get(sport, sport)
             voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
@@ -532,7 +542,8 @@ class EvidenceBoundAgent:
                     f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
                     f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
                     "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" +
-                    voice_guide
+                    voice_guide + "\n\n" + analysis_guidance(sport, analysis_domain) +
+                    "\nRead inspect_analysis_context before interpreting metrics. Context metadata is not a citation; cite actual evidence records."
             )
             if sport == "soccer" and competition:
                 common += f" Competition code: {competition}. Use match and season terminology, not plays or weeks."
@@ -540,10 +551,9 @@ class EvidenceBoundAgent:
                 common += (f" This is an inclusive full-season range containing {analysis_seasons}; compare recorded matches, "
                            "and do not infer a season-by-season trend without intermediate-season measurements."
                            if sport == "soccer" else
-                           f" This is an inclusive full-season range containing {analysis_seasons}; discuss the season-by-season trajectory, "
-                           "not only the first and final seasons. Full-season endpoints summarize every qualifying play and support an overall "
-                           "season-level conclusion. Distinguish that conclusion from the separate weekly question of stability or timing, and "
-                           "only raise a temporal limitation when it materially affects the answer.")
+                           f" This is an inclusive full-season range containing {analysis_seasons}. Discuss intermediate seasons only when "
+                           "their measurements are present; otherwise describe an endpoint comparison, not a continuous trajectory. "
+                           "Selected scope does not establish source completeness.")
             if conversation_context:
                 common += (
                     " This is a follow-up in an existing investigation thread. Use the prior conversation only as context, answer the "
@@ -581,7 +591,7 @@ class EvidenceBoundAgent:
                             f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
                             f"evidence "
                             "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
-                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + common
+                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + REVIEW_CONTRACT + "\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -604,9 +614,10 @@ class EvidenceBoundAgent:
                         f"knowledgeable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
                         f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
                         f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
-                        "For a growth or change question, synthesize the result as: season-level conclusion; primary drivers; counterevidence"
-                        " that rules out weaker explanations; weekly/outlier stability; and one narrowly scoped limitation. Do not turn this "
-                        "structure into headings or a metric-by-metric recital.\n\n"
+                        "For a growth or change question, prioritize the measured conclusion, supported contributors or associations, "
+                        "and material counterevidence. Discuss stability using sport-appropriate intervals only when measured. "
+                        "Do not force a causal driver, ruled-out alternative, or fixed number of limitations.\n\n"
+                        + REVIEW_CONTRACT + "\n\n"
                         + common
                 ),
                 response_format=response_model,
@@ -625,6 +636,7 @@ class EvidenceBoundAgent:
                 "analysis_model_id": resolved.model_id,
                 "chat_model_id": conversational.model_id if conversational else resolved.model_id,
                 "synthesis_mode": synthesis_mode,
+                "prompt_version": PROMPT_VERSION,
             }
             invocation_tags = [
                 "open-sports-analyst",
