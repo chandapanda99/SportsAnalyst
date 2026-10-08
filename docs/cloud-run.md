@@ -40,6 +40,22 @@ Cloud Build creates separate Linux AMD64 API, sync, and analysis images, deploys
 health and frontend smoke checks. The API and sync images omit model-provider, tracing, report-rendering, and desktop dependencies. The analysis image contains the locked
 Python analysis environment without the frontend bundle or build tools. There is no database migration stage.
 
+### Rebuild images after source updates
+
+From the repository root with Docker Desktop's Linux container engine running, build the three deployment targets:
+
+```bash
+docker build --platform=linux/amd64 --target=cloud-api -t open-sports-analyst-api:local .
+docker build --platform=linux/amd64 --target=cloud-sync -t open-sports-analyst-sync:local .
+docker build --platform=linux/amd64 --target=cloud-analysis -t open-sports-analyst-analysis:local .
+```
+
+These commands build locally; they do not push images or change your deployment. The existing deployment workflow rebuilds and publishes all three targets automatically.
+Each target includes startup/import checks for its runtime. The public API check verifies the frontend bundle and that analysis agents/tracing are not loaded at startup;
+the sync check verifies all three sport connectors. API and sync dependencies are constrained to the versions exported from `uv.lock`, without installing the omitted
+analysis-only dependencies. The analysis image starts its private HTTP API by default; the fallback Cloud Run Job continues to override that command with the worker.
+All deployed targets use the same non-root Linux user. Windows installer packaging and signing are independent of these Docker builds.
+
 ## Runtime behavior
 
 - The API writes a small job request and initial progress record to R2.

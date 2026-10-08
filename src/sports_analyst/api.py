@@ -20,6 +20,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from sports_analyst import __version__
 from sports_analyst.application.service import AnalystApplication
+from sports_analyst.datasets.errors import safe_sync_message
 from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
 from sports_analyst.models import (
     AnalysisOptions,
@@ -221,7 +222,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             except Exception as error:
                 logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
                 logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
-                service.events.emit(job_id, "failed", str(error), 1.0)
+                service.events.emit(job_id, "failed", safe_sync_message(error), 1.0, **getattr(error, "context", {}))
 
         background_tasks.add_task(execute)
         return {"job_id": job_id, "timeout_seconds": timeout_seconds}
@@ -531,7 +532,7 @@ async def _dataset_sync_stream(
         except Exception as error:
             logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
             logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
-            service.events.emit(job_id, "failed", str(error), 1.0)
+            service.events.emit(job_id, "failed", safe_sync_message(error), 1.0, **getattr(error, "context", {}))
 
     task = asyncio.create_task(asyncio.to_thread(execute))
     try:

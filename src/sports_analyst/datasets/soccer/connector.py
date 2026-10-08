@@ -17,6 +17,7 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.errors import FixtureDiscoveryError
 from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError, load_optional_module
 from sports_analyst.datasets.soccer.expected_goals import CORE_ROOT, ExpectedGoalsSource
@@ -172,6 +173,7 @@ class SportsDataverseSoccerConnector:
         frames = []
         intervals = list(_months(competition, season))
         successful = 0
+        last_error = None
         for index, interval in enumerate(intervals, 1):
             try:
                 frame = self._parse_scoreboard(self._request(competition, "scoreboard", {"dates": interval, "limit": 500}))
@@ -181,12 +183,13 @@ class SportsDataverseSoccerConnector:
             except OptionalDependencyError:
                 raise
             except Exception as error:
+                last_error = error
                 logger.warning("soccer_scoreboard_unavailable competition=%s interval=%s error=%s", competition, interval, error)
             if progress:
                 progress(index, len(intervals))
         self._fixture_coverage[(competition, season)] = (successful, len(intervals))
         if not frames:
-            raise ValueError(f"No fixtures were returned for {competition} {soccer_season_label(competition, season)}")
+            raise FixtureDiscoveryError(f"No fixtures were returned for {competition} {soccer_season_label(competition, season)}") from last_error
         frame = pl.concat(frames, how="diagonal_relaxed").filter(
             pl.col("event_id").str.contains(r"^\d+$")
         ).unique(subset=["event_id"], keep="last")

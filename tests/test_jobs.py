@@ -1,6 +1,7 @@
 """Major desktop SQLite and cloud object-job workflows."""
 import asyncio
 import json
+import logging
 import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
@@ -16,6 +17,52 @@ from sports_analyst.jobs.local import LeaseLost, QueueFull, SQLiteJobStore
 from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.models import AnalysisRequest, AnalysisScope
 from sports_analyst.worker import execute_job
+
+
+@pytest.fixture(autouse=True)
+def restore_log_handlers():
+    package = logging.getLogger("sports_analyst")
+    handlers, level = list(package.handlers), package.level
+    yield
+    for handler in list(package.handlers):
+        if handler not in handlers:
+            package.removeHandler(handler)
+            handler.close()
+    package.setLevel(level)
+
+
+@pytest.mark.parametrize("sport,competition,league", [("soccer", "usa.1", "MLS"), ("nfl", None, "NFL"), ("nba", None, "NBA")])
+@pytest.mark.parametrize("error_type,retries", [(ImportError, False), (TimeoutError, True)])
+def test_desktop_sync_preserves_safe_failure_context_and_private_logs(tmp_path, monkeypatch, sport, competition, league, error_type, retries):
+    from sports_analyst.application.sync import run_dataset_sync
+
+    settings = Settings(_env_file=None, data_dir=tmp_path, job_backend="sqlite")
+    jobs = SQLiteJobStore(settings.job_database_path)
+    payload = {"sport": sport, "competition": competition, "seasons": [2024], "datasets": ["play_by_play"]}
+    jobs.enqueue("sync-diagnostics", "sync", payload)
+    job = jobs.claim(300)
+    application = MagicMock()
+    application.store.manifests.return_value = []
+    connector = MagicMock()
+    application.connectors = {sport: connector}
+
+    def fail_download(*args, **kwargs):
+        kwargs["progress_callback"]("downloading", "play_by_play", 2024, 0, 1, detail="Season schedule · 1 of 12 months checked")
+        raise error_type("provider diagnostic https://example.test/?token=private-token password=private-password")
+
+    connector.sync.side_effect = fail_download
+    application.sync.side_effect = lambda *args: run_dataset_sync(application, *args)
+    monkeypatch.setattr("sports_analyst.application.service.AnalystApplication", lambda _: application)
+    execute_job(settings, job)
+    # The saved public error and context survive reconnecting to the ledger.
+    status = SQLiteJobStore(settings.job_database_path).status(job["job_id"])
+    assert status["stage"] == ("retrying" if retries else "failed")
+    assert league in status["message"] and status["season_label"] in status["message"] and "Season schedule" in status["message"]
+    assert status["sport"] == sport and status["season"] == 2024 and status["dataset"] == "play_by_play"
+    assert "private-token" not in json.dumps(status) and "private-password" not in json.dumps(status)
+    log = (tmp_path / "logs" / "desktop-job.log").read_text(encoding="utf-8")
+    assert "Traceback" in log and "provider diagnostic" in log and "sync-diagnostics" in log
+    assert "private-token" not in log and "private-password" not in log
 
 
 class MemoryPersistence:
@@ -119,6 +166,28 @@ def test_private_analysis_service_handles_retry_and_duplicate_delivery(monkeypat
     assert run.call_args.args[2] == "follow_up"
     application.jobs.request.return_value = {"kind": "sync", "payload": {}}
     assert client.post("/internal/jobs/job-1").status_code == 409
+
+
+def test_private_sync_service_preserves_safe_context_on_retry_and_terminal_failure(monkeypatch):
+    from sports_analyst import sync_api
+    from sports_analyst.datasets.errors import SyncFailure
+
+    application = MagicMock()
+    application.jobs.request.return_value = {
+        "kind": "sync", "payload": {"seasons": [2024], "sport": "soccer", "competition": "usa.1"}, "max_attempts": 2,
+    }
+    application.jobs.status.return_value = {"stage": "queued"}
+    context = {"sport": "soccer", "competition": "usa.1", "league": "MLS", "season": 2024,
+               "season_label": "2024", "step": "Season schedule", "dataset": "play_by_play"}
+    application.sync.side_effect = SyncFailure(context, TimeoutError("https://private.test/?token=secret"))
+    monkeypatch.setattr(sync_api, "sync_application", lambda: application)
+    client = TestClient(sync_api.app)
+    assert client.post("/internal/jobs/sync-cloud").status_code == 503
+    assert application.jobs.emit.call_args.args[1] == "retrying"
+    assert client.post("/internal/jobs/sync-cloud", headers={"X-CloudTasks-TaskRetryCount": "1"}).json() == {"status": "failed"}
+    event = application.jobs.emit.call_args
+    assert event.args[1] == "failed" and "MLS" in event.args[2] and "Season schedule" in event.args[2]
+    assert event.kwargs["season"] == 2024 and "secret" not in event.args[2]
 
 
 

@@ -138,6 +138,12 @@ The desktop automatically stores its queue and progress history in `%LOCALAPPDAT
 process. It needs no database server or cloud storage. Closing the desktop stops the active child cleanly; unfinished work is released back to the SQLite queue and resumes
 when the application starts again. The command-line development server keeps the simpler in-process `JOB_BACKEND=local` default.
 
+Desktop worker diagnostics persist in `<data directory>/logs/` (normally `%LOCALAPPDATA%\open-sports-analyst\logs\`).
+`desktop-worker.log` records worker startup, job attempts, and child exits; `desktop-job.log` records application diagnostics and exception chains,
+including failed soccer schedule requests. Each log rotates at 2 MiB and retains three backups. Credential environment values, URLs, bearer tokens,
+and common credential assignments are redacted; review logs before sharing them. Sync errors identify the sport/league, season, dataset, and last reported step
+without displaying raw provider exceptions. This context is also retained by cloud jobs; cloud diagnostics continue using platform console logs.
+
 ### Build the installer
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:

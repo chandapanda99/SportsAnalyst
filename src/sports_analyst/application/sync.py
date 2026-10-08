@@ -8,6 +8,7 @@ from threading import Lock
 from time import perf_counter
 
 from sports_analyst.config import Settings
+from sports_analyst.datasets.errors import SyncFailure
 from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.datasets.nfl import NFLVerseConnector
 from sports_analyst.datasets.optional import optional_dependencies
@@ -23,6 +24,14 @@ from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
 from sports_analyst.storage.local import LocalStore
 
 logger = logging.getLogger("sports_analyst.service")
+
+
+def _season_label(sport: str, competition: str | None, season: int) -> str:
+    if season == 0:
+        return "reference data"
+    if sport == "soccer" and competition in SOCCER_COMPETITIONS:
+        return soccer_season_label(competition, season)
+    return f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season)
 
 
 class DatasetSyncApplication:
@@ -58,6 +67,19 @@ def run_dataset_sync(
         sport: str = "nfl",
         competition: str | None = None,
 ) -> list[DatasetManifest]:
+    league = (SOCCER_COMPETITIONS.get(competition, ("Soccer",))[0] if sport == "soccer"
+              else {"nfl": "NFL", "nba": "NBA"}.get(sport, "Unknown sport"))
+    context = {"sport": sport, "competition": competition, "league": league,
+               "seasons": list(seasons), "step": "initializing the data library"}
+    context["season_label"] = ", ".join(_season_label(sport, competition, season) for season in seasons)
+    try:
+        return _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context)
+    except Exception as error:
+        logger.exception("dataset_sync_failed job_id=%s context=%s error_type=%s", job_id, context, type(error).__name__)
+        raise SyncFailure(context, error) from error
+
+
+def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context) -> list[DatasetManifest]:
     if sport not in application.connectors:
         raise ValueError(f"unsupported sport {sport!r}")
     connector = application.connectors[sport]
@@ -109,6 +131,9 @@ def run_dataset_sync(
                     fraction: float | None = None, detail: str | None = None, force: bool = False) -> None:
         nonlocal last_sync_progress, last_detail_at, last_detail_key
         with progress_lock:
+            season_label = _season_label(sport, competition, season)
+            context.update(dataset=dataset, season=season, season_label=season_label,
+                           step=detail.split(" · ")[0] if detail else f"{phase} {dataset.replace('_', ' ')}")
             if total <= 0:
                 return
             if detail:
@@ -118,7 +143,6 @@ def run_dataset_sync(
                     return
                 last_detail_at, last_detail_key = now, detail_key
             label = dataset.replace("_", " ").title()
-            season_label = "reference data" if season == 0 else (soccer_season_label(competition, season) if sport == "soccer" else f"{season - 1}–{str(season)[-2:]}" if sport == "nba" else str(season))
             offsets = {"downloading": 0.0, "processing": 0.65, "downloaded": 0.0, "skipped": 0.0}
             unit_progress = min(total, completed + (max(0.0, fraction) if fraction is not None else offsets.get(phase, 0.0)))
             progress = 0.08 + 0.68 * unit_progress / total
@@ -132,10 +156,13 @@ def run_dataset_sync(
             }
             application.events.emit(
                 key, phase, f"{label} for {season_label} · {detail}" if detail else
-                messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress
+                messages.get(phase, f"Syncing {label} for {season_label}"), last_sync_progress,
+                **context,
             )
 
     def register_manifest(manifest: DatasetManifest) -> None:
+        context.update(dataset=manifest.dataset, season=manifest.season,
+                       season_label=_season_label(sport, competition, manifest.season), step="saving to the data library")
         label = manifest.dataset.replace("_", " ").title()
         application.events.emit(key, "uploading", f"Saving {label} {manifest.season} to the data library", last_sync_progress)
         upload_started_at = perf_counter()
@@ -153,11 +180,16 @@ def run_dataset_sync(
 
     sync_kwargs = {"competition": competition, "progress_detail_callback": report_sync,
                    "refresh_seasons": {current_season} if competition in SOCCER_COMPETITIONS else set()} if sport == "soccer" else {}
+    context["step"] = "downloading selected datasets"
     with optional_dependencies(f"{sport.upper()} dataset sync"):
         manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)
+    context["step"] = "publishing the data catalog"
+    context.pop("season", None)
+    context.pop("dataset", None)
+    context["season_label"] = ", ".join(_season_label(sport, competition, season) for season in seasons)
     application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
     connector.clear_cache()
     application.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])

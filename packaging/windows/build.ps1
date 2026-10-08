@@ -117,7 +117,7 @@ try
         throw "uv.lock is stale; run uv lock and commit the result before packaging"
     }
 
-    uv sync --upgrade --prerelease allow --extra desktop --extra desktop-build
+    uv sync --frozen --prerelease allow --extra desktop --extra desktop-build --extra test
     if ($LASTEXITCODE -ne 0)
     {
         throw "Desktop dependencies could not be synchronized"
@@ -201,10 +201,11 @@ try
     Write-Host "Frozen Desktop Smoke Test: SUCCESS!"
 
     $signingConfigured = [bool]($env:WINDOWS_SIGNING_PFX_PATH -or $env:WINDOWS_SIGNING_CERT_THUMBPRINT)
-    if ($signingConfigured)
+    <#if ($signingConfigured)
     {
         & "$scriptDirectory\sign.ps1" -Path $executable
-    }
+        Write-Host "SIGNING CONFIGURED: Signed EXE with CERT!"
+    }#>
     if ($SkipInstaller)
     {
         Write-Host "Desktop Application built at $executable"
@@ -267,9 +268,12 @@ try
     {
         throw "The installer output was not found"
     }
+
+    $signingConfigured = true
     if ($signingConfigured)
     {
         & "$scriptDirectory\sign.ps1" -Path $installer
+        Write-Host "SIGNING CONFIGURED: Signed EXE with CERT!"
     }
     Write-Host "Windows Installer BUILT!" -ForegroundColor Cyan -BackgroundColor DarkGreen
 }

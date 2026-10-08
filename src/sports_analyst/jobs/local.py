@@ -282,7 +282,8 @@ class SQLiteJobStore:
                 (event.get("investigation_id") or key, _timestamp(), key),
             )
 
-    def fail(self, key: str, token: str, retryable: bool) -> None:
+    def fail(self, key: str, token: str, retryable: bool, *, message: str | None = None, details: dict | None = None) -> None:
+        message = message or "Job failed. Check worker logs, then try again."
         with self._transaction() as db:
             row = self._require_lease(db, key, token)
             retry = retryable and row["attempts"] < row["max_attempts"]
@@ -291,7 +292,7 @@ class SQLiteJobStore:
                    error = ?, available_at = ?, updated_at = ? WHERE job_id = ?""",
                 (
                     "queued" if retry else "failed",
-                    None if retry else "Job failed. Check worker logs, then try again.",
+                    None if retry else message,
                     _timestamp(_now() + timedelta(seconds=min(300, 10 * 2 ** row["attempts"]))),
                     _timestamp(),
                     key,
@@ -301,8 +302,9 @@ class SQLiteJobStore:
                 db,
                 key,
                 "retrying" if retry else "failed",
-                "Temporary failure; waiting to retry." if retry else "Job failed. Check worker logs, then try again.",
+                f"{message} Waiting to retry automatically." if retry else message,
                 0 if retry else 1,
+                **(details or {}),
             )
 
     def release(self, key: str, token: str) -> bool:

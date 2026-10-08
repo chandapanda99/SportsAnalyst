@@ -8,6 +8,7 @@ class QueueFull(RuntimeError):
 
 def retryable_job_error(error: Exception) -> bool:
     """Return whether infrastructure should retry a failed application attempt."""
+    error = getattr(error, "retryable_cause", error)
     status = getattr(error, "status_code", None)
     return (
         isinstance(error, (ConnectionError, TimeoutError))

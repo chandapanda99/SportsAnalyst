@@ -11,6 +11,7 @@ from time import monotonic, perf_counter
 from typing import Any
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.errors import safe_sync_message
 from sports_analyst.jobs.common import retryable_job_error
 
 logger = logging.getLogger("sports_analyst.worker")
@@ -19,14 +20,17 @@ logger = logging.getLogger("sports_analyst.worker")
 def execute_job(settings: Settings, job: dict) -> None:
     # Import the service only in the child. The supervisor stays small and can
     # renew leases while Polars, the model client, or an exporter is busy.
-    from sports_analyst.application.service import AnalystApplication
+    from sports_analyst.observability.logging import configure_logging
+    configure_logging(settings.log_level, log_path=settings.data_dir / "logs" / "desktop-job.log")
     from sports_analyst.jobs.local import LeaseLost, SQLiteJobStore, WorkerEvents
-    from sports_analyst.models import AnalysisRequest
 
     jobs = SQLiteJobStore(settings.job_database_path)
     key, token = job["job_id"], job["lease_token"]
     events = WorkerEvents(jobs, key, token)
     try:
+        from sports_analyst.application.service import AnalystApplication
+        from sports_analyst.models import AnalysisRequest
+
         application = AnalystApplication(settings)
         application.events = events
         application.store.publication_guard = lambda: jobs.publication(key, token, settings.job_lease_seconds)
@@ -64,7 +68,11 @@ def execute_job(settings: Settings, job: dict) -> None:
         logger.error("job_failed job_id=%s error_type=%s", key, type(error).__name__)
         logger.debug("job_failed_details job_id=%s", key, exc_info=True)
         try:
-            jobs.fail(key, token, retryable_job_error(error))
+            if job["kind"] == "sync":
+                jobs.fail(key, token, retryable_job_error(error), message=safe_sync_message(error),
+                          details=getattr(error, "context", {}))
+            else:
+                jobs.fail(key, token, retryable_job_error(error))
         except Exception:
             logger.warning("job_failure_update_unavailable job_id=%s; lease will expire", key)
 
@@ -73,7 +81,7 @@ def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, s
     from sports_analyst.jobs.local import SQLiteJobStore
     from sports_analyst.observability.logging import configure_logging
 
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, log_path=settings.data_dir / "logs" / "desktop-worker.log")
     if settings.job_backend != "sqlite":
         raise ValueError("The desktop worker requires JOB_BACKEND=sqlite")
     jobs = SQLiteJobStore(settings.job_database_path)
@@ -195,8 +203,10 @@ def execute_object_job(settings: Settings, key: str) -> None:
         jobs.emit(
             key,
             "retrying" if retryable else "failed",
+            (safe_sync_message(error) + (" Waiting to retry automatically." if retryable else "")) if kind == "sync" else
             "Temporary failure; waiting to retry." if retryable else "Job failed. Check worker logs, then try again.",
             0 if retryable else 1,
+            **(getattr(error, "context", {}) if kind == "sync" else {}),
         )
         if retryable:
             raise

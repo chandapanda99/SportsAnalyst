@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from sports_analyst.application.sync import DatasetSyncApplication
 from sports_analyst.config import get_settings
+from sports_analyst.datasets.errors import safe_sync_message
 from sports_analyst.jobs.common import retryable_job_error
 from sports_analyst.observability.logging import configure_logging
 
@@ -63,8 +64,9 @@ def execute_sync(job_id: str, request: Request) -> dict[str, str]:
         jobs.emit(
             job_id,
             "retrying" if retryable else "failed",
-            "Temporary failure; waiting to retry." if retryable else "Data download failed. Check worker logs, then try again.",
+            safe_sync_message(error) + (" Waiting to retry automatically." if retryable else ""),
             0 if retryable else 1,
+            **getattr(error, "context", {}),
         )
         if retryable:
             raise HTTPException(503, "Temporary sync failure") from error
