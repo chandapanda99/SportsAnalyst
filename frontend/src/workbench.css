@@ -1,4 +1,8 @@
 /* Guided workbench: a compact, readable layer over the sports theme. */
+.subject-competition-bar {
+    margin-block: 1rem;
+}
+
 .soccer-competition-bar {
     display: grid;
     gap: 8px;

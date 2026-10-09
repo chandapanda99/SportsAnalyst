@@ -725,7 +725,7 @@ describe('Open Sports Analyst workbench', () => {
     const competition = await screen.findByLabelText('Competition');
     const statsBadge = await screen.findByText('Team stats: 4 matches · xG: 2/4 matches · limited source coverage');
     expect(statsBadge.classList.contains('partial')).toBe(false);
-    expect(screen.getByRole('option', {name: 'UEFA Champions League'})).toBeTruthy();
+    expect(within(competition).getByRole('option', {name: 'UEFA Champions League'})).toBeTruthy();
     await fireEvent.change(competition, {target: {value: 'uefa.champions'}});
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
       String(input) === '/api/sports/soccer/options?competition=uefa.champions')).toBe(true));
@@ -734,6 +734,12 @@ describe('Open Sports Analyst workbench', () => {
     expect(dataCard?.contains(competition)).toBe(true);
     const subjectCard = screen.getByRole('heading', {name: 'Who do you want to understand?'}).closest('.scope-card');
     expect(subjectCard?.contains(competition)).toBe(false);
+    const subjectCompetition = screen.getByLabelText('Competition / League');
+    expect(subjectCard?.contains(subjectCompetition)).toBe(true);
+    await fireEvent.change(subjectCompetition, {target: {value: 'uefa.champions'}});
+    await waitFor(() => expect((competition as HTMLSelectElement).value).toBe('uefa.champions'));
+    await fireEvent.change(subjectCompetition, {target: {value: 'eng.1'}});
+    await waitFor(() => expect((competition as HTMLSelectElement).value).toBe('eng.1'));
     await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
     const playerInput = screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement;
     await fireEvent.focus(playerInput);

@@ -2383,6 +2383,20 @@
                 <div><span class="eyebrow">01 · Subject</span>
                   <h3 id="scope-heading" tabindex="-1">Who do you want to understand?</h3></div>
                 <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
+              {#if activeSport === 'soccer'}
+                <div class="soccer-competition-bar subject-competition-bar">
+                  <label for="subject-soccer-competition">Competition / League</label>
+                  <span class="soccer-competition-select">
+                    <select id="subject-soccer-competition" value={selectedCompetition} disabled={busy}
+                            on:change={(event) => void selectCompetition(event.currentTarget.value)}>
+                      {#each soccerCompetitions as competition}
+                        <option value={competition.value}>{competition.label}</option>
+                      {/each}
+                    </select>
+                    <Icon name="chevron-down" size={17}/>
+                  </span>
+                </div>
+              {/if}
               <div class="scope-controls">
                 {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
                   <div class="subject-toggle" role="group" aria-label="Analysis subject">
