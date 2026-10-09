@@ -267,7 +267,9 @@ def main(argv: list[str] | None = None) -> None:
             # test. The worker import is lazy in normal operation and could
             # otherwise disappear from a frozen desktop build.
             from sports_analyst.worker import run_worker  # noqa: F401
+            from sports_analyst.desktop.dependencies import check_runtime_dependencies
 
+            check_runtime_dependencies()
             controller.start_server()
             controller.stop()
         except Exception:

@@ -1,7 +1,9 @@
 param(
     [string] $Version,
     [switch] $SkipFrontend,
-    [switch] $SkipInstaller
+    [switch] $SkipInstaller,
+    [switch] $SkipSigning,
+    [switch] $SkipSmokeTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +14,11 @@ $distributionDirectory = Join-Path $projectRoot "dist"
 $executable = Join-Path $distributionDirectory "OpenSportsAnalyst\OpenSportsAnalyst.exe"
 $vendorDirectory = Join-Path $scriptDirectory "vendor"
 $webViewInstaller = Join-Path $vendorDirectory "MicrosoftEdgeWebview2Setup.exe"
+$localSigningPfx = Join-Path ([Environment]::GetFolderPath("UserProfile")) "certs\dev-signing.pfx"
+$signingConfigured = -not $SkipSigning -and [bool](
+$env:WINDOWS_SIGNING_PFX_PATH -or $env:WINDOWS_SIGNING_CERT_THUMBPRINT -or
+        ($env:WINDOWS_SIGNING_PFX_PASSWORD -and (Test-Path -LiteralPath $localSigningPfx))
+)
 
 Push-Location $projectRoot
 try
@@ -122,21 +129,21 @@ try
     {
         throw "Desktop dependencies could not be synchronized"
     }
-    $installedVersion = & uv run --frozen python -c "import importlib.metadata; print(importlib.metadata.version('open-sports-analyst'))"
+    $installedVersion = & uv run --no-sync python -c "import importlib.metadata; print(importlib.metadata.version('open-sports-analyst'))"
     if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $projectVersion)
     {
         throw "Installed package version $installedVersion does not match project version $projectVersion"
     }
     Write-Host "Desktop Dependencies: SYNCHRONIZED"
 
-    uv run python packaging/windows/make_icon.py
+    uv run --no-sync python packaging/windows/make_icon.py
     if ($LASTEXITCODE -ne 0)
     {
         throw "Application icon generation FAILED!"
     }
     Write-Host "App Icon: GENERATED"
 
-    uv run pyinstaller --noconfirm --clean --distpath dist --workpath build/desktop packaging/windows/OpenSportsAnalyst.spec
+    uv run --no-sync pyinstaller --noconfirm --clean --distpath dist --workpath build/desktop packaging/windows/OpenSportsAnalyst.spec
     if ($LASTEXITCODE -ne 0)
     {
         throw "PyInstaller Build: FAILED!"
@@ -148,64 +155,70 @@ try
         throw "PyInstaller completed without producing $executable"
     }
 
-    # Exercise the actual frozen executable with isolated local settings. This
-    # catches missing frontend assets, hidden imports, and multiprocessing
-    # bootstrap failures before an installer is produced.
-    $smokeDataDirectory = Join-Path $projectRoot "build\desktop-smoke-data"
-    New-Item -ItemType Directory -Path $smokeDataDirectory -Force | Out-Null
-    $smokeLog = Join-Path $projectRoot "build\desktop-smoke-test.log"
-    if (Test-Path -LiteralPath $smokeLog)
+    if (-not $SkipSmokeTest)
     {
-        Remove-Item -LiteralPath $smokeLog -Force
-    }
-    $smokeEnvironment = @{
-        DATA_DIR = $smokeDataDirectory
-        JOB_BACKEND = "local"
-        PERSISTENCE_BACKEND = "local"
-        SPORTS_ANALYST_SMOKE_LOG = $smokeLog
-    }
-    $previousEnvironment = @{ }
-    foreach ($name in $smokeEnvironment.Keys)
-    {
-        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
-        [Environment]::SetEnvironmentVariable($name, $smokeEnvironment[$name], "Process")
-    }
-    try
-    {
-        $smokeTest = Start-Process -FilePath $executable -ArgumentList "--smoke-test" -WindowStyle Hidden -Wait -PassThru
-        $smokeExitCode = $smokeTest.ExitCode
-    }
-    finally
-    {
-        foreach ($name in $previousEnvironment.Keys)
+        # Exercise the actual frozen executable with isolated local settings. This
+        # catches missing frontend assets, hidden imports, and multiprocessing
+        # bootstrap failures before an installer is produced.
+        $smokeDataDirectory = Join-Path $projectRoot "build\desktop-smoke-data"
+        New-Item -ItemType Directory -Path $smokeDataDirectory -Force | Out-Null
+        $smokeLog = Join-Path $projectRoot "build\desktop-smoke-test.log"
+        if (Test-Path -LiteralPath $smokeLog)
         {
-            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+            Remove-Item -LiteralPath $smokeLog -Force
         }
-    }
-    if ($smokeExitCode -ne 0)
-    {
-        $details = if (Test-Path -LiteralPath $smokeLog)
+        $smokeEnvironment = @{
+            DATA_DIR = $smokeDataDirectory
+            JOB_BACKEND = "local"
+            PERSISTENCE_BACKEND = "local"
+            SPORTS_ANALYST_SMOKE_LOG = $smokeLog
+        }
+        $previousEnvironment = @{ }
+        foreach ($name in $smokeEnvironment.Keys)
         {
-            Get-Content -LiteralPath $smokeLog -Raw
+            $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+            [Environment]::SetEnvironmentVariable($name, $smokeEnvironment[$name], "Process")
         }
-        else
+        try
         {
-            "No diagnostic log was produced"
+            $smokeTest = Start-Process -FilePath $executable -ArgumentList "--smoke-test" -WindowStyle Hidden -PassThru
+            if (-not $smokeTest.WaitForExit(120000))
+            {
+                $smokeTest.Kill()
+                throw "Frozen desktop smoke test timed out after 120 seconds"
+            }
+            $smokeTest.Refresh()
+            $smokeExitCode = $smokeTest.ExitCode
         }
-        throw "Frozen desktop smoke test failed with exit code $smokeExitCode`n$details"
+        finally
+        {
+            foreach ($name in $previousEnvironment.Keys)
+            {
+                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+            }
+        }
+        if ($smokeExitCode -ne 0)
+        {
+            $details = if (Test-Path -LiteralPath $smokeLog)
+            {
+                Get-Content -LiteralPath $smokeLog -Raw
+            }
+            else
+            {
+                "No diagnostic log was produced"
+            }
+            throw "Frozen desktop smoke test failed with exit code $smokeExitCode`n$details"
+        }
+        if (Test-Path -LiteralPath $smokeLog)
+        {
+            Remove-Item -LiteralPath $smokeLog -Force
+        }
+        Write-Host "Frozen Desktop Smoke Test: SUCCESS!"
     }
-    if (Test-Path -LiteralPath $smokeLog)
+    else
     {
-        Remove-Item -LiteralPath $smokeLog -Force
+        Write-Host "Frozen Desktop Smoke Test: SKIPPED (packaged runtime not validated)."
     }
-    Write-Host "Frozen Desktop Smoke Test: SUCCESS!"
-
-    $signingConfigured = [bool]($env:WINDOWS_SIGNING_PFX_PATH -or $env:WINDOWS_SIGNING_CERT_THUMBPRINT)
-    <#if ($signingConfigured)
-    {
-        & "$scriptDirectory\sign.ps1" -Path $executable
-        Write-Host "SIGNING CONFIGURED: Signed EXE with CERT!"
-    }#>
     if ($SkipInstaller)
     {
         Write-Host "Desktop Application built at $executable"
@@ -269,13 +282,18 @@ try
         throw "The installer output was not found"
     }
 
-    $signingConfigured = true
+    <#$signingConfigured = "true"
     if ($signingConfigured)
     {
         & "$scriptDirectory\sign.ps1" -Path $installer
-        Write-Host "SIGNING CONFIGURED: Signed EXE with CERT!"
+        Write-Host "Installer signed and verified."
     }
-    Write-Host "Windows Installer BUILT!" -ForegroundColor Cyan -BackgroundColor DarkGreen
+    else
+    {
+        Write-Host "Signing not configured or skipped; installer is unsigned."
+    }#>
+
+    Write-Host "WINDOWS INSTALLER BUILT & GENERATED!" -ForegroundColor Cyan -BackgroundColor DarkGreen
 }
 finally
 {

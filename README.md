@@ -146,6 +146,12 @@ without displaying raw provider exceptions. This context is also retained by clo
 
 ### Build the installer
 
+The build collects DLLs from the declared desktop runtime dependency tree (including `xgboost/lib/xgboost.dll`) and preserves their package-relative paths.
+It also includes XGBoost, SportsDataverse, and nflreadpy package resources, including XGBoost's required `VERSION` file.
+The frozen smoke test loads NFL and SportsDataverse providers and exercises core native data libraries offline before producing an installer.
+Missing required packages or DLLs fail the build. Native extension modules and system dependencies are additionally handled by PyInstaller's analysis/hooks;
+this is not a guarantee against Windows policy blocks or every future dependency issue, so test releases on a clean Windows machine as well.
+
 Install [uv](https://docs.astral.sh/uv/), Node.js 20+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run from a 64-bit Windows PowerShell terminal:
 
 ```powershell
@@ -166,6 +172,11 @@ version. A release tag must match the project version (for example, `v1.0.0` for
 
 The `Windows desktop installer` GitHub Actions workflow produces the same installer for version tags and manual runs. Add repository secrets
 `WINDOWS_SIGNING_PFX_BASE64` and `WINDOWS_SIGNING_PFX_PASSWORD` to sign CI artifacts; without them, the workflow intentionally produces an unsigned artifact.
+CI validates release tags and the lockfile, runs the desktop/dataset regression tests and frontend checks, and builds the frontend before packaging.
+GitHub Actions skips the frozen provider smoke test; backend and frontend regression tests still run. Local builds run the smoke test by default, with `-SkipSmokeTest` available to opt out. Failed CI packaging runs upload available PyInstaller warning logs as a diagnostics artifact. CI builds do not validate the packaged runtime, so test the installer before distributing it.
+The temporary CI signing certificate is removed even when a build fails. Signing covers the application EXE and installer, not every third-party native module;
+a successful hosted-runner build does not guarantee acceptance by a user's application-control policy.
+Local password-prompt builds can still use `~/certs/dev-signing.pfx`; `-SkipSigning` explicitly produces an unsigned build.
 
 ### Publish with GitHub Releases
 

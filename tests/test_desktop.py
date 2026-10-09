@@ -7,10 +7,51 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from sports_analyst.api import bundled_frontend_directory
 from sports_analyst.desktop import app as desktop
 from sports_analyst.desktop.app import DesktopController, _run_desktop_worker
 from sports_analyst.desktop.config import DesktopConfigStore
+
+
+def test_windows_packaging_collects_runtime_dlls_and_preserves_loader_paths(tmp_path, monkeypatch):
+    import importlib.util
+
+    source = Path(__file__).resolve().parents[1] / "packaging" / "windows" / "native_dependencies.py"
+    spec = importlib.util.spec_from_file_location("desktop_native_dependencies", source)
+    collector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(collector)
+    root = tmp_path / "site-packages"
+    dlls = ["xgboost/lib/xgboost.dll", "numpy.libs/math.dll", "webview/lib/bridge.dll"]
+    assets = ["xgboost/VERSION", "xgboost/data/example.json"]
+    for relative in [*dlls, *assets]:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"native fixture")
+    distributions = {
+        "open-sports-analyst": types.SimpleNamespace(
+            requires=["xgboost>=2", "pywebview; extra == 'desktop'", "pytest; extra == 'test'"], files=[]),
+        "xgboost": types.SimpleNamespace(requires=["numpy>=2"], files=[Path(dlls[0]), *map(Path, assets)]),
+        "numpy": types.SimpleNamespace(requires=[], files=[Path(dlls[1])]),
+        "pywebview": types.SimpleNamespace(requires=[], files=[Path(dlls[2])]),
+    }
+    for distribution in distributions.values():
+        distribution.locate_file = lambda relative: root / relative
+    monkeypatch.setattr(collector.metadata, "distribution", distributions.__getitem__)
+    runtime = collector.desktop_distributions()
+    assert set(runtime) == set(distributions)  # Build/test/cloud extras do not enter the runtime bundle.
+    binaries = collector.collect_runtime_dlls(runtime)
+    assert (str((root / dlls[0]).resolve()), "xgboost/lib") in binaries
+    assert (str((root / dlls[1]).resolve()), "numpy.libs") in binaries
+    assert (str((root / dlls[2]).resolve()), "webview/lib") in binaries
+    resources = collector.collect_provider_resources(runtime)
+    assert (str((root / assets[0]).resolve()), "xgboost") in resources
+    assert (str((root / assets[1]).resolve()), "xgboost/data") in resources
+    # A stale/incomplete installation must fail packaging rather than shipping.
+    distributions["xgboost"].files = [Path("xgboost/lib/missing.dll")]
+    with pytest.raises(FileNotFoundError, match="Required runtime DLL is missing"):
+        collector.collect_runtime_dlls(runtime)
 
 
 def test_public_entrypoints_open_without_optional_sports_providers(tmp_path: Path) -> None:

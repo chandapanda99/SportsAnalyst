@@ -3,7 +3,16 @@ param(
     [string[]] $Path
 )
 
-$env:WINDOWS_SIGNING_PFX_PATH = "C:\Users\AChanda\certs\dev-signing.pfx"
+$WINDOWS_SIGNING_PFX_PATH = if ($env:WINDOWS_SIGNING_PFX_PATH)
+{
+    $env:WINDOWS_SIGNING_PFX_PATH
+}
+else
+{
+    $localPfx = Join-Path ([Environment]::GetFolderPath("UserProfile")) "certs\dev-signing.pfx"
+    if (-not $env:WINDOWS_SIGNING_CERT_THUMBPRINT -and (Test-Path -LiteralPath $localPfx)) { $localPfx }
+}
+
 $ErrorActionPreference = "Stop"
 $timestampUrl = if ($env:WINDOWS_TIMESTAMP_URL)
 {
@@ -31,9 +40,9 @@ foreach ($target in $Path)
 {
     $resolved = (Resolve-Path -LiteralPath $target).Path
     $arguments = @("sign", "/fd", "SHA256", "/td", "SHA256", "/tr", $timestampUrl)
-    if ($env:WINDOWS_SIGNING_PFX_PATH)
+    if ($WINDOWS_SIGNING_PFX_PATH)
     {
-        $arguments += @("/f", $env:WINDOWS_SIGNING_PFX_PATH)
+        $arguments += @("/f", $WINDOWS_SIGNING_PFX_PATH)
         if ($env:WINDOWS_SIGNING_PFX_PASSWORD)
         {
             $arguments += @("/p", $env:WINDOWS_SIGNING_PFX_PASSWORD)

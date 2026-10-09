@@ -28,6 +28,7 @@ dependencies = [
     "uvicorn[standard]>=0.37",
     "vl-convert-python>=1.8,<2",
     "pyarrow>=25.0.1",
+    "scikit-learn>=1.9.1",
 ]
 
 [project.optional-dependencies]
