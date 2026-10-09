@@ -24,6 +24,10 @@
   function normalizeEvents(source: MatchEvent[]): MatchEvent[] {
     const result: MatchEvent[] = [];
     for (const original of source) {
+      // Half-start feed entries often have no clock and would sort after the final plays.
+      // The timeline already supplies non-interactive kickoff and half-time landmarks.
+      if (/kick\s*off/i.test(original.type)
+          || /^(?:first|second|1st|2nd) half begins\.?$/i.test(original.text.trim())) continue;
       const event = {...original};
       if (kindOf(event) === 'substitution') {
         const replacement = event.text.match(/(?:^|\.\s)([^.]+?) replaces ([^.]+)/i);

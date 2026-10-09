@@ -707,6 +707,8 @@ describe('Open Sports Analyst workbench', () => {
                        visualization: {sport: 'soccer', game_date: '2024-09-15', home_team_name: 'Home FC', away_team_name: 'Away FC',
                                        home_score: 2, away_score: 0, home_expected_goals: 1.574, away_expected_goals: 0,
                                        soccer_timeline: [
+                                         {clock: '', type: 'Kickoff', text: 'First Half begins.', side: 'neutral'},
+                                         {clock: '', type: 'Kickoff', text: 'Second Half begins.', side: 'neutral'},
                                          {clock: "42'", type: 'Goal', text: 'Alex scores', side: 'home', scoring_play: true},
                                          {clock: "60'", type: 'Yellow Card', text: 'Morgan cautioned', side: 'away', scoring_play: false},
                                          {clock: "65'", type: 'Substitution', text: 'Substitution, Home FC. Robin replaces Alex.', side: 'home'},
@@ -777,6 +779,8 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByText('Alex scores')).toBeTruthy();
     expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();
     const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});
+    expect(within(timeline).queryByRole('button', {name: /Kickoff/})).toBeNull();
+    expect(within(timeline).getByText('Kickoff · 0′')).toBeTruthy();
     const substitution = within(timeline).getByRole('button', {name: "65' Substitution — Home FC"});
     expect(within(substitution).getByText('On: Robin')).toBeTruthy();
     expect(within(substitution).getByText('Off: Alex')).toBeTruthy();
