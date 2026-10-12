@@ -337,7 +337,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.change(screen.getByLabelText('From season'), {target: {value: '2024'}});
     await waitFor(() => expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).disabled).toBe(false));
     await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'My own football question'}});
-    await fireEvent.click(screen.getByRole('button', {name: /NBA.*Bulk data mode/}));
+    await fireEvent.click(screen.getByRole('button', {name: 'NBA'}));
     await screen.findByRole('button', {name: /Offense.*Team offense/});
     await fireEvent.click(screen.getByRole('button', {name: 'NFL'}));
     await screen.findByRole('button', {name: /Passing.*Quarterback/});
@@ -453,7 +453,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.focus(nflTeam);
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Kansas City Chiefs/ }));
 
-    await fireEvent.click(screen.getByRole('button', { name: /NBA.*Bulk data mode/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'NBA' }));
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nba');
     expect(document.querySelector('main')?.classList.contains('nba-background')).toBe(true);
     expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(true);

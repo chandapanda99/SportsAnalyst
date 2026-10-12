@@ -2177,8 +2177,6 @@
         <button type="button" class:active={activeSport === sport.value} aria-pressed={activeSport === sport.value}
                 disabled={!sport.available || busy} on:click={() => switchSport(sport.value)}>
           <strong>{sport.label}</strong>
-          {#if sport.value === 'nba'}<small
-              title={sport.live_message ?? 'Analysis uses downloaded data; optional live sources can add detail.'}>{sport.live_available ? 'Live enrichments ready' : 'Bulk data mode'}</small>{/if}
         </button>
       {/each}
     </nav>
@@ -2270,6 +2268,9 @@
               <div class="data-setup-header">
                 <div class="sync-guidance">
                   <strong>{setup?.label ?? 'Recommended Data'}</strong><span>{setup?.description ?? 'Choose seasons and download their recorded plays to begin.'}</span>
+                  {#if activeSport === 'nba' && sports.find(sport => sport.value === 'nba')?.live_available}
+                    <span class="nba-additional-data-note">Additional NBA Stats data available. Optional sources can add detail to your downloaded datasets; availability depends on the selected source.</span>
+                  {/if}
                 </div>
                 {#if !workspaceLoading && analysisOptions}
                   <div class="data-setup-actions">

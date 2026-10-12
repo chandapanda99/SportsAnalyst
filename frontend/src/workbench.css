@@ -1,4 +1,12 @@
 /* Guided workbench: a compact, readable layer over the sports theme. */
+.sync-guidance .nba-additional-data-note {
+    margin-top: .5rem;
+    padding: .5rem .75rem;
+    border-left: 2px solid var(--color-accent-primary);
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
 .subject-competition-bar {
     margin-block: 1rem;
 }

@@ -157,9 +157,8 @@ try
 
     if (-not $SkipSmokeTest)
     {
-        # Exercise the actual frozen executable with isolated local settings. This
-        # catches missing frontend assets, hidden imports, and multiprocessing
-        # bootstrap failures before an installer is produced.
+        # Exercise the actual frozen executable with isolated local settings. This catches missing frontend assets,
+        # hidden imports, and multiprocessing bootstrap failures before an installer is produced.
         $smokeDataDirectory = Join-Path $projectRoot "build\desktop-smoke-data"
         New-Item -ItemType Directory -Path $smokeDataDirectory -Force | Out-Null
         $smokeLog = Join-Path $projectRoot "build\desktop-smoke-test.log"
