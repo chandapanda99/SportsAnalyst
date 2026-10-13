@@ -55,6 +55,9 @@ class SyncRequest(BaseModel):
     seasons: list[int] = Field(min_length=1, max_length=64)
     datasets: list[str] | None = Field(default=None, min_length=1, max_length=64)
     competition: str | None = None
+    team_ids: list[str] | None = Field(default=None, min_length=1, max_length=60)
+    subdivision: str | None = None
+    conference_id: str | None = None
 
 
 class FollowUpRequest(BaseModel):
@@ -175,6 +178,45 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             return service.analysis_options(sport, competition)
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:
+            logger.exception("analysis_options_unavailable sport=%s competition=%s", sport, competition)
+            raise HTTPException(503, "Sport discovery could not load. Retry or check worker logs.") from error
+
+
+    @api.get("/api/sports/cfb/catalog")
+    def cfb_catalog(season: int | None = Query(None, ge=1999, le=2100), subdivision: str | None = None,
+                    conference_id: str | None = None):
+        try:
+            return service.connectors["cfb"].catalog(season, subdivision, conference_id)
+        except Exception as error:
+            logger.exception("cfb_catalog_unavailable season=%s subdivision=%s", season, subdivision)
+            raise HTTPException(503, "College-football catalog could not load. Retry or check worker logs.") from error
+
+    @api.get("/api/sports/cfb/players/{athlete_id}/seasons")
+    def cfb_player_seasons(athlete_id: str):
+        try:
+            return {"seasons": service.connectors["cfb"].player_seasons(athlete_id)}
+        except Exception as error:
+            logger.exception("cfb_player_history_unavailable athlete_id=%s", athlete_id)
+            raise HTTPException(503, "Player season/transfer history could not be verified. Retry before investigating.") from error
+
+    def resolve_cfb_sync(sport, request):
+        if sport != "cfb":
+            return
+        connector = service.connectors["cfb"]
+        if not request.team_ids and request.conference_id:
+            ids = set()
+            for season in set(request.seasons):
+                catalog = connector.catalog(season, request.subdivision, request.conference_id)
+                ids.update(team["value"] for team in catalog["teams"])
+            request.team_ids = sorted(ids)
+        if not request.team_ids or len(request.team_ids) * len(set(request.seasons)) > 200:
+            raise HTTPException(422, "Select college-football teams; a download may contain at most 200 team-season selections.")
+        for identity in request.team_ids:
+            try:
+                connector.validate_id(identity)
+            except ValueError as error:
+                raise HTTPException(422, "College-football team IDs must be valid source identifiers.") from error
 
     @api.get("/api/sports/{sport}/metrics/{metric}", response_model=MetricDefinition)
     def metric_definition(sport: str, metric: str) -> MetricDefinition:
@@ -191,15 +233,22 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.get("/api/sports/{sport}/players", response_model=list[PlayerOption])
-    def players(sport: str, query: str = "", competition: str | None = None) -> list[PlayerOption]:
+    def players(sport: str, query: str = "", competition: str | None = None,
+                team_id: str | None = None, season: int | None = None,
+                subdivision: str | None = None, conference_id: str | None = None) -> list[PlayerOption]:
         refresh_catalog()
         try:
-            return service.resolve_players(query, sport, competition)
+            return service.resolve_players(query, sport, competition,
+                                           **({"team_id": team_id, "season": season} if sport == "cfb" else {}))
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:
+            logger.exception("player_search_unavailable sport=%s", sport)
+            raise HTTPException(503, "Player roster could not load. Retry or check worker logs.") from error
 
     @api.post("/api/datasets/{sport}/sync", status_code=202)
     def sync_datasets(sport: str, request: SyncRequest, background_tasks: BackgroundTasks) -> dict[str, str | int]:
+        resolve_cfb_sync(sport, request)
         try:
             service._sport(sport)
         except ValueError as error:
@@ -218,7 +267,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
         def execute() -> None:
             try:
-                service.sync(request.seasons, job_id, request.datasets, sport, request.competition)
+                service.sync(request.seasons, job_id, request.datasets, sport, request.competition,
+                             **({"team_ids": request.team_ids} if sport == "cfb" else {}))
             except Exception as error:
                 logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
                 logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
@@ -230,6 +280,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     @api.post("/api/datasets/{sport}/sync-stream")
     async def sync_datasets_stream(sport: str, request: SyncRequest) -> StreamingResponse:
         """Keep cloud dataset work and progress on one request and one application instance."""
+        await asyncio.to_thread(resolve_cfb_sync, sport, request)
         try:
             service._sport(sport)
         except ValueError as error:
@@ -249,7 +300,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                          "X-Job-Timeout-Seconds": str(timeout_seconds)},
             )
         return StreamingResponse(
-            _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds, request.competition),
+            _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds, request.competition,
+                                 request.team_ids),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -431,6 +483,36 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @api.post("/api/investigations/{investigation_id}/evidence/{evidence_id}/plays")
+    def cfb_game_plays(investigation_id: str, evidence_id: str):
+        try:
+            item = service.evidence(investigation_id, evidence_id)
+            if getattr(item, "sport", None) != "cfb":
+                raise HTTPException(422, "Recorded college-football game evidence is required")
+            context = item.visualization.cfb_statistics if item.visualization else None
+            modeled = (context or {}).get("modeled_plays") or []
+            if modeled and all("participants" in row for row in modeled):
+                first = modeled[0]
+                return {"plays": [{**row, "id": row["play_id"]} for row in modeled],
+                        "teams": (context or {}).get("teams") or [],
+                        "coverage": f"{len(modeled)}/{first['source_play_count']} source plays processed; modeled EPA and spread-free WPA",
+                        "message": f"SportsDataverse {first['provider_version']}; athlete IDs from structured ESPN participants only"}
+            detail = service.connectors["cfb"].game_plays(item.game_id, item.season)
+            if modeled:
+                by_id = {row["play_id"]: row for row in modeled}
+                for row in detail["plays"]:
+                    saved = by_id.get(row["id"], {})
+                    row.update({field: saved.get(field) for field in ("epa", "wpa", "cpoe", "xpass", "pass_oe")})
+                detail["coverage"] += f"; {len(modeled)} plays have saved modeled values"
+            return detail
+        except KeyError as error:
+            raise HTTPException(404, "Game evidence was not found") from error
+        except HTTPException:
+            raise
+        except Exception as error:
+            logger.exception("cfb_game_plays_unavailable investigation_id=%s", investigation_id)
+            raise HTTPException(503, "Recorded play detail could not load. Retry or check worker logs.") from error
+
     @api.get("/api/investigations/{investigation_id}/export")
     def export(investigation_id: str, export_format: str = "html") -> FileResponse:
         if export_format not in {"html", "markdown"}:
@@ -465,7 +547,6 @@ async def _event_stream(
         heartbeat_interval: float = 15.0,
         after: int = 0,
 ):
-    offset = 0
     loop = asyncio.get_running_loop()
     timeout = timeout_seconds if timeout_seconds is not None else service.settings.event_stream_timeout_seconds
     deadline = loop.time() + timeout
@@ -493,11 +574,10 @@ async def _event_stream(
                 next_heartbeat = loop.time() + heartbeat_interval
             await asyncio.sleep(max(2, poll_interval))
             continue
-        events = service.events.events(key)
-        while offset < len(events):
-            event = events[offset]
-            offset += 1
-            yield _sse(event)
+        events = service.events.events(key, after)
+        for event in events:
+            after = int(event["sequence"])
+            yield f"id: {after}\n" + _sse(event)
             deadline = loop.time() + timeout
             if event["stage"] in {"complete", "failed"}:
                 return
@@ -523,12 +603,13 @@ async def _dataset_sync_stream(
         datasets: list[str] | None,
         timeout_seconds: float,
         competition: str | None = None,
+        team_ids: list[str] | None = None,
 ):
     """Run a blocking dataset sync while its SSE response keeps the hosting instance active."""
 
     def execute() -> None:
         try:
-            service.sync(seasons, job_id, datasets, sport, competition)
+            service.sync(seasons, job_id, datasets, sport, competition, **({"team_ids": team_ids} if sport == "cfb" else {}))
         except Exception as error:
             logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
             logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)

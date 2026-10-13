@@ -1,4 +1,4 @@
-import type { AnalysisOptions, Capabilities, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption } from './types';
+import type { AnalysisOptions, Capabilities, CFBRecordedPlay, CFBTeamContext, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption, TeamOption } from './types';
 
 let progressTransport: 'stream' | 'poll' = 'stream';
 const pendingKey = 'sports-analyst:pending-job:v1';
@@ -131,7 +131,15 @@ export const api = {
   },
   sports: () => json<SportOption[]>('/api/sports'),
   analysisOptions: (sport = 'nfl', competition?: string) => json<AnalysisOptions>(`/api/sports/${sport}/options${competition ? `?competition=${encodeURIComponent(competition)}` : ''}`),
-  players: (sport: string, query = '', competition?: string) => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}`),
+  players: (sport: string, query = '', competition?: string, teamId?: string, season?: number) => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}${teamId ? `&team_id=${encodeURIComponent(teamId)}` : ''}${season ? `&season=${season}` : ''}`),
+  cfbCatalog: (season?: number, subdivision?: string, conferenceId?: string) => json<{
+    seasons?: number[]; subdivisions?: Array<{value: string; label: string}>; conferences: TeamOption[]; teams: TeamOption[]; cached: boolean;
+  }>(`/api/sports/cfb/catalog?${new URLSearchParams({...season ? {season: String(season)} : {}, ...subdivision ? {subdivision} : {}, ...conferenceId ? {conference_id: conferenceId} : {}})}`),
+  cfbPlayerSeasons: (id: string) => json<{seasons: number[]}>(`/api/sports/cfb/players/${encodeURIComponent(id)}/seasons`),
+  cfbPlays: (investigation: string, evidence: string) => json<{
+    plays: CFBRecordedPlay[]; teams?: CFBTeamContext[];
+    coverage: string; message?: string;
+  }>(`/api/investigations/${encodeURIComponent(investigation)}/evidence/${encodeURIComponent(evidence)}/plays`, {method: 'POST'}),
   datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),
   clearDatasets: (sport: string, competition?: string, token?: string) => json<{deleted_packages: number}>(`/api/datasets/${sport}`, {
     method: 'DELETE', headers: {'content-type': 'application/json', ...(token ? {'X-Data-Admin-Token': token} : {})},
@@ -160,9 +168,9 @@ export const api = {
   sync: (sport: string, seasons: number[], datasets: string[], competition?: string) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition })
   }),
-  syncStream: (sport: string, seasons: number[], datasets: string[], competition?: string) =>
+  syncStream: (sport: string, seasons: number[], datasets: string[], competition?: string, teamIds?: string[], cfbScope?: {subdivision: string; conference_id: string}) =>
     eventStream(`/api/datasets/${sport}/sync-stream`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition })
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition, ...(teamIds ? {team_ids: teamIds} : {}), ...cfbScope })
     }, 'Dataset'),
   investigate: (request: InvestigationRequest) =>
     json<{ investigation_id: string }>('/api/investigations', {

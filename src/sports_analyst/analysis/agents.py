@@ -534,9 +534,11 @@ class EvidenceBoundAgent:
                 return json.dumps(filtered[: max(1, min(limit, 25))], indent=2, default=str)
 
             tools: list[Any] = [inspect_analysis_context, inspect_aggregate_evidence, inspect_representative_plays]
-            sport_label = {"nba": "NBA", "soccer": "Soccer", "nfl": "NFL"}.get(sport, sport.upper())
-            sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football"}.get(sport, sport)
+            sport_label = {"nba": "NBA", "soccer": "Soccer", "nfl": "NFL", "cfb": "College Football"}.get(sport, sport.upper())
+            sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football", "cfb": "college football"}.get(sport, sport)
             voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
+            if sport == "cfb":
+                voice_guide = "Write as an experienced college-football analyst. Distinguish recorded game production, opportunity, opponent mix and transfers; do not imply NFL-specific metric definitions."
             common = (
                     "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
                     f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "

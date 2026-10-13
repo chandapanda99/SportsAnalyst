@@ -8,6 +8,7 @@ from threading import Lock
 from time import perf_counter
 
 from sports_analyst.config import Settings
+from sports_analyst.datasets.cfb import SportsDataverseCFBConnector
 from sports_analyst.datasets.errors import SyncFailure
 from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.datasets.nfl import NFLVerseConnector
@@ -44,6 +45,7 @@ class DatasetSyncApplication:
             "nfl": NFLVerseConnector(settings),
             "nba": SportsDataverseNBAConnector(settings),
             "soccer": SportsDataverseSoccerConnector(settings),
+            "cfb": SportsDataverseCFBConnector(settings),
         }
         polling = settings.job_progress_transport == "poll"
         self.jobs = ObjectJobStore(
@@ -52,11 +54,13 @@ class DatasetSyncApplication:
             status_min_interval=0.5 if polling else 0,
         )
         self.events = self.jobs
+        self.connectors["cfb"].source.persistence = self.store.persistence
 
     def sync(
-            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None,
+            *, team_ids: list[str] | None = None,
     ) -> list[DatasetManifest]:
-        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition, team_ids=team_ids)
 
 
 def run_dataset_sync(
@@ -66,13 +70,34 @@ def run_dataset_sync(
         datasets: list[str] | None = None,
         sport: str = "nfl",
         competition: str | None = None,
+        *, team_ids: list[str] | None = None,
 ) -> list[DatasetManifest]:
     league = (SOCCER_COMPETITIONS.get(competition, ("Soccer",))[0] if sport == "soccer"
-              else {"nfl": "NFL", "nba": "NBA"}.get(sport, "Unknown sport"))
+              else {"nfl": "NFL", "nba": "NBA", "cfb": "College Football"}.get(sport, "Unknown sport"))
     context = {"sport": sport, "competition": competition, "league": league,
                "seasons": list(seasons), "step": "initializing the data library"}
     context["season_label"] = ", ".join(_season_label(sport, competition, season) for season in seasons)
     try:
+        if sport == "cfb":
+            connector = application.connectors[sport]
+            application.store.invalidate_reset_cache(sport)
+            key = job_id or stable_id("sync", {"sport": sport, "teams": team_ids, "seasons": seasons, "time": datetime.now(UTC)})
+
+            def report(phase, dataset, season, completed, total, fraction=None, detail=None, force=False):
+                context.update(season=season, season_label=str(season), dataset=dataset, step=detail or phase)
+                application.events.emit(key, phase, f"College Football · {season} · {detail or dataset}",
+                                        0.1 + 0.7 * (fraction or 0), **context)
+
+            manifests = connector.sync(seasons, datasets, team_ids=team_ids, progress_callback=report,
+                                       manifest_callback=application.store.save_manifest)
+            gaps = [item for item in manifests if item.availability != "available"]
+            message = "Selected college-football data ready"
+            if gaps:
+                message = "College-football sync finished with coverage gaps: " + "; ".join(
+                    f"{item.partition_key} · {item.season} · {item.dataset}: {item.availability_message}" for item in gaps)
+            application.events.emit(key, "complete", message, 1,
+                                    manifest_ids=[item.manifest_id for item in manifests])
+            return manifests
         return _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context)
     except Exception as error:
         logger.exception("dataset_sync_failed job_id=%s context=%s error_type=%s", job_id, context, type(error).__name__)

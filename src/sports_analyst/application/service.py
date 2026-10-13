@@ -11,7 +11,9 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.analysis.instructions import evidence_brief
+from sports_analyst.application.preparation import prepare_investigation
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.cfb import CFB_DATASETS, CFBCoverageUnavailable, SportsDataverseCFBConnector
 from sports_analyst.datasets.nba import NBA_DATASETS, SportsDataverseNBAConnector, nba_live_transport_available
 from sports_analyst.datasets.nfl import NFLVerseConnector
 from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector
@@ -29,11 +31,14 @@ from sports_analyst.models import (
     RunStatus,
     RuntimeCapabilities,
     SportOption,
+    TeamOption,
     ToolDefinition,
     stable_id,
 )
 from sports_analyst.observability.logging import configure_logging
 from sports_analyst.plugins import NBAPlugin, NFLPlugin
+from sports_analyst.plugins.cfb import ADVANCED as CFB_ADVANCED_METRICS
+from sports_analyst.plugins.cfb import CFBPlugin
 from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULT_METRICS
 from sports_analyst.plugins.soccer import SEASON_METRICS, SoccerPlugin
 from sports_analyst.storage.local import EventRegistry, LocalStore
@@ -74,8 +79,14 @@ class AnalystApplication:
             "nfl": nfl_connector,
             "nba": SportsDataverseNBAConnector(self.settings),
             "soccer": SportsDataverseSoccerConnector(self.settings),
+            "cfb": SportsDataverseCFBConnector(self.settings),
         }
         self.plugins: dict[str, Any] = {"nfl": nfl_plugin, "nba": NBAPlugin(), "soccer": SoccerPlugin()}
+        self.plugins["cfb"] = CFBPlugin()
+        self.connectors["cfb"].source.persistence = self.store.persistence
+        from sports_analyst.datasets.cfb_source import CFBSource
+        self.connectors["soccer"].source_cache = CFBSource(self.settings.data_dir / "raw" / "soccer",
+                                                         self.store.persistence, namespace="soccer")
         # Compatibility aliases for integrations that still customize the NFL
         # application through these public attributes.
         self.connector = nfl_connector
@@ -130,6 +141,7 @@ class AnalystApplication:
                 live_message=None if live else "Install the nba-live extra to enable live NBA Stats fallbacks.",
             ),
             SportOption(value="soccer", label="Soccer", available=True),
+            SportOption(value="cfb", label="College Football", available=True),
         ]
 
     def _sport(self, sport: str) -> tuple[Any, Any]:
@@ -186,10 +198,15 @@ class AnalystApplication:
     def analysis_options(self, sport: str = "nfl", competition: str | None = None) -> AnalysisOptions:
         connector, plugin = self._sport(sport)
         manifests = self.store.manifests(sport=sport)
+        if sport == "cfb":
+            return plugin.analysis_options(manifests)
         if sport == "soccer":
             competition = competition or "eng.1"
             schedules = {item.season: self._load_dataset(connector, item) for item in self.store.manifests("play_by_play", sport, competition)}
-            return plugin.analysis_options(manifests, {"competition": competition, "schedules": schedules})
+            options = plugin.analysis_options(manifests, {"competition": competition, "schedules": schedules})
+            if not options.teams:
+                options = options.model_copy(update={"teams": [TeamOption.model_validate(team) for team in connector.team_directory(competition)]})
+            return self._preparation_options(options)
         if sport == "nfl":
             team_manifests = self.store.manifests("teams", sport)
             context = self._load_dataset(connector, team_manifests[0]) if team_manifests else None
@@ -200,7 +217,22 @@ class AnalystApplication:
                 "teams": pl.concat(team_frames, how="diagonal_relaxed") if team_frames else pl.DataFrame(),
                 "schedules": schedule_frames,
             }
-        return plugin.analysis_options(manifests, context)
+        return self._preparation_options(plugin.analysis_options(manifests, context))
+
+    @staticmethod
+    def _preparation_options(options):
+        years = options.syncable_seasons
+        if options.sport == "nba":
+            years = [year for year in years if year in NBA_DATASETS["play_by_play"].available_seasons]
+        metrics = []
+        for metric in options.metrics:
+            eligible = years
+            if options.sport == "nba" and metric.value.startswith("lineup_"):
+                eligible = [year for year in years if year in NBA_DATASETS["lineups"].available_seasons]
+            metrics.append(metric.model_copy(update={"preparable_seasons": list(eligible)}))
+        setup = options.data_setup.model_copy(update={"description": "Missing required investigation data prepares automatically. "
+                                                       "Explicit downloads are still available for offline use; source coverage is checked before analysis."})
+        return options.model_copy(update={"automatic_preparation": True, "preparable_seasons": list(years), "metrics": metrics, "data_setup": setup})
 
     def explain_metric(self, metric: str, sport: str = "nfl") -> MetricDefinition:
         return self._sport(sport)[1].explain_metric(metric)
@@ -208,8 +240,35 @@ class AnalystApplication:
     def tool_definitions(self, sport: str = "nfl") -> list[ToolDefinition]:
         return self._sport(sport)[1].tools()
 
-    def resolve_players(self, query: str, sport: str = "nfl", competition: str | None = None) -> list[PlayerOption]:
+    def resolve_players(self, query: str, sport: str = "nfl", competition: str | None = None,
+                        team_id: str | None = None, season: int | None = None) -> list[PlayerOption]:
         connector, plugin = self._sport(sport)
+        if sport == "cfb":
+            if not team_id or not season:
+                raise ValueError("Select a college-football school and roster season")
+            try:
+                return connector.players(team_id, season, query)
+            except CFBCoverageUnavailable:
+                # Only previously downloaded, attributed participants are used.
+                manifests = [item for item in self.store.manifests("player_stats", "cfb")
+                             if item.season == season and item.partition_key == f"team:{team_id}" and item.row_count]
+                players = {}
+                for manifest in manifests:
+                    data = self._load_dataset(connector, manifest)
+                    for row in data.select("athlete_id", "name", "team_id").unique().iter_rows(named=True):
+                        if row["team_id"] == team_id and row["name"]:
+                            players[row["athlete_id"]] = PlayerOption(
+                                player_id=row["athlete_id"], name=row["name"], teams=[team_id], seasons=[season],
+                                discovery_source="recorded_game_participants")
+                if not players:
+                    raise ValueError(
+                        "Roster unavailable for this season. Sync selected-school player statistics to discover "
+                        "recorded game participants; this is not a complete roster."
+                    ) from None
+                return sorted(
+                    (player for player in players.values() if query.casefold() in player.name.casefold()),
+                    key=lambda player: player.name,
+                )[:25]
         if sport == "soccer":
             manifests = self.store.manifests("lineups", sport, competition)
             sources = [(manifest.season, self._load_dataset(connector, manifest)) for manifest in manifests]
@@ -234,18 +293,19 @@ class AnalystApplication:
         return plugin.resolve_players(query, sources)
 
     def sync(
-            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None,
+            *, team_ids: list[str] | None = None,
     ) -> list[DatasetManifest]:
         from sports_analyst.application.sync import run_dataset_sync
 
-        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition, team_ids=team_ids)
 
     def dataset_sync_timeout_seconds(
             self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
     ) -> int:
         """Size the inactivity timeout to the selected bulk-download workload."""
         baseline = self.settings.event_stream_timeout_seconds
-        if sport == "soccer":
+        if sport in {"soccer", "cfb"}:
             return max(baseline, 3600)
         if sport != "nba":
             return baseline
@@ -280,6 +340,48 @@ class AnalystApplication:
             return root.run.investigation_id
         except KeyError:
             return parent_id
+
+    def _prepare_cfb(self, request: AnalysisRequest, identifier: str):
+        connector = self.connectors["cfb"]
+        subject = request.subject
+        if not subject:
+            raise ValueError("Select a college-football team or player")
+        partition = f"{subject.type}:{connector.validate_id(subject.id)}"
+        self.store.invalidate_reset_cache("cfb")
+        seasons = request.scope.included_seasons
+        if subject.type == "player":
+            history = connector.player_seasons(subject.id)
+            if not {request.scope.baseline_season, request.scope.comparison_season} <= set(history):
+                raise ValueError("A comparison endpoint is absent from the player's verified history")
+            seasons = [season for season in seasons if season in history]
+        for season in seasons:
+            self.store.refresh_durable_datasets("cfb", [season], CFB_DATASETS, partition_key=partition)
+            installed = {item.dataset: item for item in self.store.manifests(sport="cfb", partition_key=partition)
+                         if item.season == season}
+            complete = all(dataset in installed and installed[dataset].coverage.get("expected_matches", 0) > 0
+                           and installed[dataset].coverage.get("completed_matches", 0) >= installed[dataset].coverage.get("expected_matches", 0)
+                           for dataset in {"schedules", "team_stats", "player_stats", "scoring_events"})
+
+            def progress(phase, dataset, year, completed, total, fraction=None, detail=None, force=False):
+                self.events.emit(identifier, "preparing", f"Preparing {partition} · {year} · {detail or dataset}", 0.15,
+                                 season=year, partition_key=partition, dataset=dataset)
+
+            if not (complete and season < datetime.now(UTC).year):
+                connector.prepare(season, team_id=subject.id if subject.type == "team" else None,
+                                  athlete_id=subject.id if subject.type == "player" else None,
+                                  progress=progress, manifest_callback=self.store.save_manifest)
+            if set(request.metrics) & CFB_ADVANCED_METRICS.keys() and season in {request.scope.baseline_season, request.scope.comparison_season}:
+                schedule_manifest = self.store.manifest_for_season(season, "schedules", "cfb", partition_key=partition)
+                schedule = connector.load(schedule_manifest)
+                window = request.scope.baseline if season == request.scope.baseline_season else request.scope.comparison
+                selected_schedule = self.plugins["cfb"].window(schedule, window, request)
+                if request.scope.baseline_season == request.scope.comparison_season:
+                    selected_schedule = pl.concat([selected_schedule, self.plugins["cfb"].window(schedule, request.scope.comparison, request)]).unique(subset=["game_id"])
+                def model_progress(game, index, total):
+                    self.events.emit(identifier, "preparing", f"Modeling college-football plays · {season} · game {game} · {index + 1}/{total}", 0.18,
+                                     season=season, partition_key=partition, dataset="enriched_plays")
+                connector.prepare_enriched(season, partition, selected_schedule, self.store.save_manifest, model_progress)
+        return partition, seasons
 
     def _investigation_metadata(self, request: AnalysisRequest, identifier: str, thread_id: str) -> dict[str, Any]:
         subject = request.subject
@@ -354,8 +456,11 @@ class AnalystApplication:
             plan = plugin.default_plan(request)
             self.telemetry.add_outputs(plan_span, {"planned_tool_count": len(plan.calls)})
         with self.telemetry.span("sports-analyst.load-datasets", metadata=trace_metadata, parent=root_span, run_type="tool") as load_span:
+            partition, prepared_seasons = prepare_investigation(self, request, identifier)
             manifests = {
-                season: self.store.manifest_for_season(season, "play_by_play", request.sport, request.scope.competition) for season in request.scope.included_seasons
+                season: self.store.manifest_for_season(season, "schedules" if request.sport == "cfb" else "play_by_play",
+                                                     request.sport, request.scope.competition, partition)
+                for season in prepared_seasons
             }
             pbp_columns = plugin.required_play_by_play_columns(request)
             datasets = {
@@ -371,6 +476,8 @@ class AnalystApplication:
             endpoint_seasons = {request.scope.baseline_season, request.scope.comparison_season}
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
             for manifest in self.store.manifests(sport=request.sport, competition=request.scope.competition):
+                if request.sport in {"cfb", "soccer"} and manifest.partition_key != partition:
+                    continue
                 if manifest.dataset in {"play_by_play", "teams"}:
                     continue
                 if manifest.dataset not in required_supplemental:
@@ -734,8 +841,10 @@ class AnalystApplication:
             raise KeyError(f"evidence not found: {missing}")
         return [lookup[identifier] for identifier in evidence_ids]
 
-    def query_sql(self, sql: str, sport: str = "nfl") -> list[dict[str, Any]]:
-        manifests = self.store.manifests(sport=sport)
+    def query_sql(self, sql: str, sport: str = "nfl", partition_key: str | None = None) -> list[dict[str, Any]]:
+        if sport == "cfb" and not partition_key:
+            raise ValueError("College-football SQL requires an explicit selected-subject partition")
+        manifests = self.store.manifests(sport=sport, partition_key=partition_key)
         if not manifests:
             raise ValueError("no datasets are registered")
         rows, _duration = execute_read_only_sql(

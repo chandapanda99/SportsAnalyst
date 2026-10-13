@@ -81,6 +81,7 @@ from sports_analyst.application.service import AnalystApplication
 from sports_analyst.datasets.nfl import NFLVerseConnector
 from sports_analyst.datasets.nba import SportsDataverseNBAConnector
 from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector
+from sports_analyst.datasets.cfb import SportsDataverseCFBConnector
 assert callable(desktop.main) and callable(worker.main)
 assert callable(api.create_app) and cli.app is not None
 assert all(name not in sys.modules for name in ('nflreadpy', 'sportsdataverse', 'pandas', 'scipy', 'sklearn'))

@@ -119,6 +119,85 @@ disjoint tournament phases. Missing partitions or fields are not treated as zero
 cannot be used for date-range comparisons or inferred match events. Season xG/non-penalty xG metrics are offered only where cached season statistics record those fields;
 historical team/player season endpoint samples also lacked xG. In-season snapshots are refreshed when requested.
 
+## Automatic investigation preparation
+
+NFL, NBA, soccer and college-football investigations now check their selected data scope before analysis and prepare missing dependencies in the investigation worker.
+Progress remains attached to the investigation; a separate manual sync is no longer required when a valid subject and preparable periods can be selected.
+The UI distinguishes **locally available** seasons from **preparable** source seasons. A preparable metric is not a promise that both windows contain usable values:
+the deterministic analysis still verifies attribution, required fields and qualifying samples. Player selection requires a discoverable identity; this flow does not
+invent player history, historical roster membership or missing source statistics. Explicit library downloads remain available for offline use and bulk research.
+
+NFL/NBA retain their published bulk package formats. Ordinary preparation fetches core/metric dependencies rather than every optional package.
+Successful historical snapshots are reused; incomplete acquisition is retried. Automatic current-season preparation reuses snapshots acquired within one hour,
+then refreshes needed packages. Explicit sync retains its existing current-season refresh behavior. Preparation leases coalesce desktop workers on shared local storage
+and cloud replicas when durable conditional-write persistence is configured. Without durable persistence, cloud caches/coordination remain instance-local.
+
+Soccer team investigations prepare **team/competition/season partitions**, fetching summaries only for that team's fixtures, including its opponents.
+An existing complete competition snapshot can be projected locally without source downloads or overwriting that snapshot; original acquisition time and provenance
+are preserved. Fixtures still use the provider's competition schedule discovery; this is scoped match-detail acquisition, not a claim of team-filtered network
+scoreboard downloads. Successful raw summaries are shared locally and, when configured, durably across preparations. Simultaneous current-season summary refreshes
+may reuse a five-second hot cache. Results-only preparation does not request xG; explicit Team Match Statistics downloads still bundle xG as before.
+Soccer player investigations retain competition-wide preparation to avoid excluding transfer appearances. Empty libraries can use a cached lightweight team directory;
+historical clubs not in that current directory can still be discovered through explicit season fixture downloads. Library package badges describe full competition
+downloads, not a small team snapshot. Clearing a competition removes its scoped snapshots and raw caches without deleting saved investigations.
+
+## College football: FBS and FCS
+
+The College Football tab discovers teams by **browse season → subdivision → conference/independents → school**.
+Conference membership is season-specific and only organizes selection: team analysis includes recorded nonconference and cross-subdivision games.
+Directories load on demand; selecting a conference does not download its rosters or game statistics. Player searches are limited to the chosen school/roster season,
+with a maximum of 25 matches. Selecting a player verifies their historical seasons through ESPN's statistics log.
+
+Run an investigation to prepare only the selected subject's missing game summaries and statistics. Team results and offensive box-score comparisons are supported,
+as are quarterback, rushing and receiving player metrics. Player investigations follow ESPN athlete IDs and season game logs across transfers rather than matching names.
+Rates use summed numerators and denominators. Missing sections and incomplete samples are shown as coverage gaps, never assumed to be zero.
+Historical data is reused; current-season directories and snapshots refresh on bounded cache intervals. No national CFB season play-by-play or roster download is required.
+
+CFB packages distinguish available data, partial downloads, missing source sections, failed requests, and unverified seasons. Missing rosters do not block usable
+team game statistics. Roster responses are cached for at most an hour (five minutes for the current season), rather than retaining an empty historical roster for a year;
+failed requests remain retryable. Rosters are fetched only when selected. When a verified roster is unavailable, player search can use the selected school's downloaded
+offensive game participants, explicitly labeled as an incomplete roster substitute. Availability metadata persists alongside snapshots in local and durable storage.
+Empty or unverifiable team-roster responses now fall back to paginated, season-specific school athlete references, with bounded concurrent athlete resolution.
+Verified completed games provide an additional historical game-roster fallback, labeled as incomplete season coverage. Fully resolved school/season rosters are cached
+as a lightweight player-search directory; no national roster scan is needed. Conference downloads report cumulative school/season progress, and local progress streams
+use permanent event sequence numbers so completion remains visible when old updates are trimmed.
+
+The data manager supports explicit selected-school downloads; the conference selector also provides an explicit conference download for the selected sync seasons.
+Scoped snapshots coexist in the catalog using team/player partition identities, while game summaries are shared across schools. Cloud replicas coordinate source requests
+through durable leases; desktop processes use local leases. Clearing College Football data clears its source cache and snapshots, not saved investigations.
+
+Game evidence shows recorded opponents, score, offensive statistics and scoring events. Opening CFB evidence automatically loads the selected game's recorded plays
+through bounded, cached ESPN play requests. A searchable selector and previous/next controls open the college-football field tablet. Start/end yard positions,
+down/distance, recorded scores and involved athlete IDs come from the source. School colors and provided home logos brand the field and markers.
+The feed's participants are play actors, not a complete 22-player lineup; marker locations are explicitly illustrative. It does not supply actual formations,
+routes, coverage assignments or tracking coordinates. Names resolve by athlete ID from that game's box score, without unrelated roster or per-athlete fan-out.
+Older saved evidence without the new context can load recorded details while keeping its saved modeled values.
+Enriched investigations also show offensive EPA/play, qualifying plays and game counts for the prepared comparison-window sample—not a national/conference ranking.
+Optional advanced metrics trigger SportsDataverse's per-game processing pipeline against the cached summary, joined to bounded ESPN play/participant requests.
+The **Enriched Plays** package can also be downloaded explicitly. Basic investigations do not run this heavier pipeline.
+
+Supported modeled comparisons include offensive/passing/rushing EPA per qualifying scrimmage play, EPA-positive play rate, and spread-free offensive WPA.
+Completion over expected (CPOE), expected pass rate and pass rate over expected are available when the provider returns finite values in both windows.
+CPOE and pass-over-expected are percentage-point differences: `100*(observed indicator - modeled probability)`, averaged over qualifying plays.
+Passing, rushing and receiving player EPA/WPA require structured ESPN athlete IDs on the corresponding plays; regex-extracted names and provider name-only ID matches
+are never used for these comparisons. Receiver values describe attributed targets, including incompletions, not catches alone. WPA sums indicate game-state leverage,
+not isolated individual contribution or the team's total change in win probability. EPA-positive success is defined as EPA > 0, not a yards-to-go success rule.
+
+The shared enrichment cache retains the provider pipeline and advanced box outputs, package version, raw-summary checksum, processed/source play counts and identity policy.
+Only normalized, explicitly defined metrics are offered for analysis. Partial sequences are labeled and retried on bounded cache intervals; missing plays remain missing.
+Both comparison windows must use the same provider version. Model outputs are not independently calibrated here for FBS/FCS parity or historical eras.
+Fourth-down/two-point decision surfaces remain disabled until verified market inputs and their definitions are integrated. Other pipeline columns are retained
+in the provider output but are not automatically offered as validated comparison metrics. Opponent-adjusted ratings, recruiting projections, polls, betting analysis and
+predictive
+utilities need their own coverage/provenance and analytical contracts; their presence in the package does not make them interchangeable with observed match statistics.
+
+App-wide preparation uses automatic coverage-driven preparation over persistent scoped caches, with a source-specific acquisition strategy.
+Use per-game/team loading for CFB and soccer where supported; retain efficient season/package downloads for NFL/NBA bulk-only sources. Do not download a national file
+and present post-download filtering as reduced network traffic. Keep explicit downloads and clearing available, historical cache reuse, current-season refresh,
+bounded worker progress and missing-data messages. NFL/NBA bulk file formats remain unchanged; soccer team match-detail preparation is now scoped.
+
+CLI example: `uv run sports-analyst data sync cfb --season 2025 --team 333 --team 52`. Use `data list cfb` to inspect scoped snapshots.
+
 ## Windows desktop application
 
 The desktop edition runs the same FastAPI service and compiled Svelte application inside a native WebView2 window. It binds the API to a random loopback-only port for the
@@ -129,7 +208,8 @@ remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.
 development installation, run `uv run sports-analyst-desktop --configure`.
 
 Workspace startup identifies the settings/catalog requests still loading and provides a retryable error if they stall. Health checks have a 5-second deadline and ordinary
-requests through the shared API client have a 30-second deadline, including response-body loading; long-running sync and analysis progress streams are not cut off by that deadline. Investigation
+requests through the shared API client have a 30-second deadline, including response-body loading; long-running sync and analysis progress streams are not cut off by that
+deadline. Investigation
 history loads independently with its own loading indicator and retry action, so it does not prevent opening the investigation form. Optional sports-provider libraries
 load when their feature is used. Missing or Windows-blocked provider libraries produce a feature-specific error without preventing access to the core app or existing
 local data; core runtime libraries such as DuckDB and Polars are still required. These changes do not disable or bypass Windows application-control policies.
@@ -173,7 +253,9 @@ version. A release tag must match the project version (for example, `v1.0.0` for
 The `Windows desktop installer` GitHub Actions workflow produces the same installer for version tags and manual runs. Add repository secrets
 `WINDOWS_SIGNING_PFX_BASE64` and `WINDOWS_SIGNING_PFX_PASSWORD` to sign CI artifacts; without them, the workflow intentionally produces an unsigned artifact.
 CI validates release tags and the lockfile, runs the desktop/dataset regression tests and frontend checks, and builds the frontend before packaging.
-GitHub Actions skips the frozen provider smoke test; backend and frontend regression tests still run. Local builds run the smoke test by default, with `-SkipSmokeTest` available to opt out. Failed CI packaging runs upload available PyInstaller warning logs as a diagnostics artifact. CI builds do not validate the packaged runtime, so test the installer before distributing it.
+GitHub Actions skips the frozen provider smoke test; backend and frontend regression tests still run. Local builds run the smoke test by default, with `-SkipSmokeTest`
+available to opt out. Failed CI packaging runs upload available PyInstaller warning logs as a diagnostics artifact. CI builds do not validate the packaged runtime, so test the
+installer before distributing it.
 The temporary CI signing certificate is removed even when a build fails. Signing covers the application EXE and installer, not every third-party native module;
 a successful hosted-runner build does not guarantee acceptance by a user's application-control policy.
 Local password-prompt builds can still use `~/certs/dev-signing.pfx`; `-SkipSigning` explicitly produces an unsigned build.

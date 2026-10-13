@@ -5,7 +5,7 @@ import importlib
 def check_runtime_dependencies() -> None:
     for module in (
         "duckdb", "polars", "pyarrow", "vl_convert", "webview", "nflreadpy",
-        "sportsdataverse.soccer", "sportsdataverse.nba.nba_loaders", "sportsdataverse.dl_utils",
+        "sportsdataverse.soccer", "sportsdataverse.nba.nba_loaders", "sportsdataverse.cfb", "sportsdataverse.cfb.cfb_pbp", "sportsdataverse.dl_utils",
     ):
         try:
             importlib.import_module(module)

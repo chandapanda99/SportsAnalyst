@@ -70,6 +70,7 @@ class SportsDataverseSoccerConnector:
         self._cache: OrderedDict[str, pl.DataFrame] = OrderedDict()
         self._fixture_coverage: dict[tuple[str, int], tuple[int, int]] = {}
         self._lock = RLock()
+        self.source_cache = None
         self.expected_goals = ExpectedGoalsSource(self.data_dir, self.settings.dataset_sync_concurrency)
         self.season_statistics = SeasonStatisticsSource(self.data_dir)
 
@@ -80,11 +81,31 @@ class SportsDataverseSoccerConnector:
 
         arguments = {"event_id" if name == "event" else name: value for name, value in params.items()}
         try:
-            return getattr(soccer, f"espn_soccer_{endpoint}")(
+            function = "espn_soccer_teams_site" if endpoint == "teams" else f"espn_soccer_{endpoint}"
+            return getattr(soccer, function)(
                 league=competition, return_parsed=False, timeout=30, num_retries=2, **arguments,
             )
         except SportsDataverseError as error:
             raise OSError(str(error)) from error
+
+    def team_directory(self, competition):
+        if competition not in SOCCER_COMPETITIONS:
+            raise ValueError("Select a supported soccer competition")
+        key = f"{competition}/reference/teams.json"
+        cached = self.source_cache._cached(key, 86400) if self.source_cache else None
+        if cached is None:
+            raw = self._request(competition, "teams", {"limit": 100})
+            records = [item.get("team", item) for sport in raw.get("sports", [])
+                       for league in sport.get("leagues", []) for item in league.get("teams", [])]
+            if not records or len(records) > 100:
+                raise ValueError("Soccer team directory is unavailable or exceeds its supported bound")
+            cached = {"teams": [{"value": str(item["id"]), "label": item.get("displayName") or str(item["id"])}
+                                for item in records if str(item.get("id", "")).isdigit()]}
+            if not cached["teams"]:
+                raise ValueError("No verified soccer team IDs were returned")
+            if self.source_cache:
+                self.source_cache.store(key, cached)
+        return cached["teams"]
 
     @staticmethod
     def _parse_scoreboard(payload: dict[str, Any]) -> pl.DataFrame:
@@ -196,6 +217,21 @@ class SportsDataverseSoccerConnector:
         return frame.with_columns(pl.lit(season).alias("season"), pl.lit(competition).alias("competition"))
 
     def _summary(self, competition: str, season: int, event_id: str, *, refresh: bool = False) -> dict[str, Any]:
+        if self.source_cache is None:
+            return self._summary_local(competition, season, event_id, refresh=refresh)
+        if not event_id.isdigit() or competition not in SOCCER_COMPETITIONS:
+            raise ValueError("Invalid soccer match scope")
+        key = f"{competition}/{season}/shared-events/{event_id}.json"
+        with self.source_cache.lease(f"soccer-summary:{competition}:{season}:{event_id}", seconds=180):
+            # Coalesce hot current-season refreshes, while historical successes persist.
+            cached = self.source_cache._cached(key, 5 if refresh else 365 * 86400)
+            if cached is not None:
+                return cached
+            raw = self._summary_local(competition, season, event_id, refresh=refresh)
+            self.source_cache.store(key, raw)
+            return raw
+
+    def _summary_local(self, competition: str, season: int, event_id: str, *, refresh: bool = False) -> dict[str, Any]:
         if not event_id.isdigit():
             raise ValueError("Invalid ESPN soccer event ID")
         checkpoint = self.data_dir / competition / str(season) / "events" / f"{event_id}.json"
@@ -207,7 +243,7 @@ class SportsDataverseSoccerConnector:
             except (OSError, json.JSONDecodeError):
                 logger.warning("soccer_summary_cache_invalid competition=%s event=%s", competition, event_id)
         raw = self._request(competition, "summary", {"event": event_id})
-        if not isinstance(raw, dict) or not raw.get("header"):
+        if not isinstance(raw, dict) or not raw.get("header") or str(raw["header"].get("id", event_id)) != event_id:
             raise ValueError(f"Match {event_id} returned no summary header")
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         temporary = checkpoint.with_suffix(".tmp")
@@ -226,13 +262,17 @@ class SportsDataverseSoccerConnector:
         competition: str | None = None,
         refresh_seasons: set[int] | None = None,
         progress_detail_callback: Callable[[str, str, int, int, int, float, str, bool], None] | None = None,
+        team_id: str | None = None,
+        include_expected_goals: bool = True,
     ) -> list[DatasetManifest]:
         if competition not in SOCCER_COMPETITIONS:
             raise ValueError(f"Unsupported soccer competition: {competition}")
+        if team_id is not None and not team_id.isdigit():
+            raise ValueError("Scoped soccer preparation requires a numeric ESPN team ID")
         selected = list(dict.fromkeys(datasets or SOCCER_DEFAULT_DATASETS))
         # Preserve legacy explicit xG sync requests; keep the separate snapshot
         # internally for independent coverage, retries and existing investigations.
-        if "team_stats" in selected and "expected_goals" not in selected:
+        if include_expected_goals and "team_stats" in selected and "expected_goals" not in selected:
             selected.append("expected_goals")
         if set(selected) - (set(SOCCER_DATASETS) | {"expected_goals"}):
             raise ValueError(f"Unsupported soccer datasets: {sorted(set(selected) - set(SOCCER_DATASETS))}")
@@ -266,6 +306,11 @@ class SportsDataverseSoccerConnector:
                 f"Season schedule · {done} of {total} months checked", done == total)
             schedule = (self._scoreboard(competition, season, schedule_progress) if progress_detail_callback
                         else self._scoreboard(competition, season))
+            if team_id:
+                schedule = schedule.filter((pl.col("home_team_id").cast(pl.String) == team_id)
+                                           | (pl.col("away_team_id").cast(pl.String) == team_id))
+                if schedule.is_empty():
+                    raise FixtureDiscoveryError(f"No fixtures for the selected team in {competition} {season}")
             final = schedule.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
             ids = final.get_column("event_id").cast(pl.String).to_list()
             summaries: dict[str, dict] = {}
@@ -332,12 +377,15 @@ class SportsDataverseSoccerConnector:
                     continue
                 frame = frame.with_columns(pl.lit(season).alias("season"), pl.lit(competition).alias("competition"))
                 path = self.data_dir / competition / str(season) / f"{dataset}.parquet"
+                if team_id:
+                    path = self.data_dir / competition / "partitions" / "team" / team_id / str(season) / f"{dataset}.parquet"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 frame.write_parquet(path)
                 completed_count, expected_count = (self._fixture_coverage.get((competition, season), (1, 1))
                                                    if dataset == "play_by_play" else (len(summaries), len(ids)))
                 recorded_count = (frame.get_column("game_id").n_unique() if dataset != "play_by_play" and "game_id" in frame.columns else 0)
-                manifest = self.manifest_for(path, competition, season, dataset, frame, completed_count, expected_count, recorded_count)
+                manifest = self.manifest_for(path, competition, season, dataset, frame, completed_count, expected_count, recorded_count,
+                                             partition_key=f"team:{team_id}" if team_id else None)
                 produced.append(manifest)
                 if manifest_callback:
                     manifest_callback(manifest)
@@ -346,7 +394,8 @@ class SportsDataverseSoccerConnector:
         return produced
 
     def manifest_for(self, path: Path, competition: str, season: int, dataset: str, frame: pl.DataFrame,
-                     completed_matches: int = 0, expected_matches: int = 0, recorded_matches: int = 0) -> DatasetManifest:
+                     completed_matches: int = 0, expected_matches: int = 0, recorded_matches: int = 0,
+                     partition_key: str | None = None) -> DatasetManifest:
         checksum = sha256_file(path)
         stat = path.stat()
         coverage = ({"fetched_intervals": completed_matches, "expected_intervals": expected_matches}
@@ -360,8 +409,9 @@ class SportsDataverseSoccerConnector:
         elif dataset == "expected_goals" or dataset.startswith("player_expected_goals_"):
             source_url = f"{CORE_ROOT}/{competition}/events/"
         return DatasetManifest(
-            manifest_id=stable_id("dataset", {"sport": "soccer", "competition": competition, "season": season, "dataset": dataset, "sha256": checksum}),
-            sport="soccer", competition=competition, dataset=dataset, season=season,
+            manifest_id=stable_id("dataset", {"sport": "soccer", "competition": competition, "season": season, "dataset": dataset,
+                                               "partition_key": partition_key, "sha256": checksum}),
+            sport="soccer", competition=competition, partition_key=partition_key, dataset=dataset, season=season,
             source_url=source_url,
             sha256=checksum, row_count=frame.height, columns=frame.columns,
             package_version=importlib.metadata.version("sportsdataverse"),

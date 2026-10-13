@@ -382,7 +382,8 @@ main.sport-background {
     background-size: max(100%, 1440px) auto, 100% min(900px, 100vh)
 }
 
-main.nfl-background {
+main.nfl-background,
+main.cfb-background {
     background-image: url("/NFL/Background/Desktop.svg"),
         radial-gradient(circle at 75% -15%, var(--color-canvas-glow) 0, transparent 35%)
 }

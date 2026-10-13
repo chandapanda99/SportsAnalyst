@@ -31,6 +31,7 @@ class DatasetManifest(BaseModel):
     manifest_id: str
     sport: str = "nfl"
     competition: str | None = None
+    partition_key: str | None = Field(default=None, pattern=r"^(team|player|game):[0-9]+$")
     dataset: str = "play_by_play"
     season: int = Field(ge=0, le=2100, description="NFL season, or 0 for a shared reference table")
     source_url: str
@@ -46,6 +47,8 @@ class DatasetManifest(BaseModel):
     file_size: int | None = Field(default=None, ge=0)
     modified_ns: int | None = Field(default=None, ge=0)
     coverage: dict[str, int] = Field(default_factory=dict)
+    availability: Literal["available", "partial", "source_unavailable", "download_failed", "season_unverified"] = "available"
+    availability_message: str | None = None
 
 
 class AnalysisWindow(BaseModel):
@@ -231,6 +234,7 @@ class MetricOption(BaseModel):
     description: str
     analysis_domain: str = "passing"
     available_seasons: list[int] = Field(default_factory=list)
+    preparable_seasons: list[int] = Field(default_factory=list)
     subject_types: list[str] = Field(default_factory=lambda: ["team"])
 
 
@@ -253,6 +257,7 @@ class PlayerOption(BaseModel):
     positions: list[str] = Field(default_factory=list)
     seasons: list[int] = Field(default_factory=list)
     seasons_by_domain: dict[str, list[int]] = Field(default_factory=dict)
+    discovery_source: str | None = None
 
 
 class SplitDimensionOption(BaseModel):
@@ -277,6 +282,8 @@ class DataSetup(BaseModel):
 
 
 class AnalysisOptions(BaseModel):
+    automatic_preparation: bool = False
+    preparable_seasons: list[int] = Field(default_factory=list)
     data_setup: DataSetup = Field(default_factory=DataSetup)
     sport: str
     teams: list[TeamOption]
@@ -470,6 +477,8 @@ class PlayVisualization(BaseModel):
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
     soccer_timeline: list[dict[str, str | bool]] = Field(default_factory=list)
+    cfb_statistics: dict[str, Any] = Field(default_factory=dict)
+    cfb_scoring_events: list[dict[str, Any]] = Field(default_factory=list)
     competition_stage: str | None = None
     match_status_detail: str | None = None
     match_notes: str | None = None

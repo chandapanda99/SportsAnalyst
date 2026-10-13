@@ -4,6 +4,7 @@ import pytest
 from sports_analyst.config import Settings
 from sports_analyst.datasets.optional import OptionalDependencyError, optional_dependencies
 from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector
+from sports_analyst.datasets.cfb_source import CFBSource, CORE
 
 
 def test_soccer_sync_reports_blocked_provider_instead_of_missing_fixtures(tmp_path, monkeypatch):
@@ -24,3 +25,15 @@ def test_dependency_boundary_keeps_network_errors_distinct():
     with pytest.raises(OSError, match="network unavailable"):
         with optional_dependencies("NBA dataset sync"):
             raise OSError("network unavailable")
+
+
+def test_college_provider_failure_is_not_cached_as_missing_data(tmp_path, monkeypatch):
+    source = CFBSource(tmp_path)
+
+    def blocked_import(*args):
+        raise ImportError("DLL load failed: An Application Control policy has blocked this file")
+
+    monkeypatch.setattr("sports_analyst.datasets.cfb_source.load_optional_module", blocked_import)
+    with pytest.raises(OptionalDependencyError, match="provider libraries could not initialize"):
+        source.get(f"{CORE}/seasons/2025")
+    assert not list(tmp_path.rglob("*.json"))

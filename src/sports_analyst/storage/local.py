@@ -78,7 +78,8 @@ class LocalStore:
                     FROM (
                         SELECT manifest_id,
                                row_number() OVER (
-                                   PARTITION BY sport, coalesce(json_extract_string(payload, '$.competition'), ''), dataset, season
+                                   PARTITION BY sport, coalesce(json_extract_string(payload, '$.competition'), ''),
+                                                coalesce(json_extract_string(payload, '$.partition_key'), ''), dataset, season
                                    ORDER BY acquired_at DESC, manifest_id DESC
                                ) AS version_rank
                         FROM datasets
@@ -114,11 +115,15 @@ class LocalStore:
 
     @staticmethod
     def _dataset_metadata_key(manifest: DatasetManifest) -> str:
-        return LocalStore._dataset_metadata_lookup_key(manifest.sport, manifest.dataset, manifest.season, manifest.competition)
+        return LocalStore._dataset_metadata_lookup_key(manifest.sport, manifest.dataset, manifest.season,
+                                                      manifest.competition, manifest.partition_key)
 
     @staticmethod
-    def _dataset_metadata_lookup_key(sport: str, dataset: str, season: int, competition: str | None = None) -> str:
+    def _dataset_metadata_lookup_key(sport: str, dataset: str, season: int, competition: str | None = None,
+                                     partition_key: str | None = None) -> str:
         branch = f"{sport}/{competition}" if competition else sport
+        if partition_key:
+            branch += f"/partitions/{partition_key.replace(':', '/')}"
         return normalize_object_key(f"metadata/datasets/{branch}/{dataset}/{season}.json")
 
     @staticmethod
@@ -132,8 +137,9 @@ class LocalStore:
             update={"local_path": str(self._local_object_path(object_path))}
         )
         db.execute(
-            "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ?",
-            [manifest.sport, manifest.dataset, manifest.season, manifest.competition or ""],
+            "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ? "
+            "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ?",
+            [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or ""],
         )
         db.execute(
             """INSERT OR REPLACE INTO datasets
@@ -228,15 +234,16 @@ class LocalStore:
         return {"manifest": manifest.model_dump(mode="json"), "object_path": object_path}
 
     @staticmethod
-    def _dataset_record_key(record: dict) -> tuple[str, str, str, int]:
+    def _dataset_record_key(record: dict) -> tuple[str, str, str, int, str]:
         manifest = record["manifest"]
-        return str(manifest.get("sport", "nfl")), str(manifest.get("competition") or ""), str(manifest["dataset"]), int(manifest["season"])
+        return (str(manifest.get("sport", "nfl")), str(manifest.get("competition") or ""),
+                str(manifest["dataset"]), int(manifest["season"]), str(manifest.get("partition_key") or ""))
 
     def publish_dataset_catalog(self, manifests: list[DatasetManifest]) -> None:
         if not self.persistence.durable or not manifests:
             return
         replacements = {
-            (manifest.sport, manifest.competition or "", manifest.dataset, manifest.season): self._dataset_catalog_record(
+            (manifest.sport, manifest.competition or "", manifest.dataset, manifest.season, manifest.partition_key or ""): self._dataset_catalog_record(
                 manifest, self._managed_relative_path(Path(manifest.local_path))
             )
             for manifest in manifests
@@ -249,12 +256,13 @@ class LocalStore:
 
         self._mutate_catalog(self.DATASET_CATALOG_KEY, merge)
 
-    def refresh_durable_datasets(self, sport: str, seasons: list[int], datasets: list[str], competition: str | None = None) -> None:
+    def refresh_durable_datasets(self, sport: str, seasons: list[int], datasets: list[str], competition: str | None = None,
+                                partition_key: str | None = None) -> None:
         """Restore only packages relevant to one sync instead of scanning the whole bucket."""
         if not self.persistence.durable:
             return
         keys = {
-            self._dataset_metadata_lookup_key(sport, dataset, season, competition)
+            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key)
             for dataset in datasets
             for season in {*seasons, 0}
         }
@@ -322,8 +330,9 @@ class LocalStore:
             with self.connect() as db:
                 db.execute("BEGIN TRANSACTION")
                 db.execute(
-                    "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ?",
-                    [manifest.sport, manifest.dataset, manifest.season, manifest.competition or ""],
+                    "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ? "
+                    "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ?",
+                    [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or ""],
                 )
                 db.execute(
                     """
@@ -353,7 +362,7 @@ class LocalStore:
 
     def clear_datasets(self, sport: str, competition: str | None = None) -> int:
         """Remove a sport/league library, including source checkpoints, not investigations."""
-        if sport not in {"nfl", "nba", "soccer"}:
+        if sport not in {"nfl", "nba", "soccer", "cfb"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
             from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
@@ -367,7 +376,7 @@ class LocalStore:
             manifests = self.manifests(sport=sport, competition=competition)
             paths = [self._local_object_path(self._managed_relative_path(Path(item.local_path))) for item in manifests]
             # Validate every target before deleting anything.
-            cache_key = f"raw/soccer/{competition}" if sport == "soccer" else "raw/nba" if sport == "nba" else "raw/nflverse"
+            cache_key = f"raw/soccer/{competition}" if sport == "soccer" else f"raw/{sport}" if sport in {"nba", "cfb"} else "raw/nflverse"
             cache_path = self._local_object_path(cache_key) if cache_key else None
             if any(cache_path not in path.parents for path in paths):
                 raise ValueError("Dataset file is outside the selected sport's source directory")
@@ -397,7 +406,7 @@ class LocalStore:
     def invalidate_reset_cache(self, sport: str, competition: str | None = None) -> None:
         if not self.persistence.durable:
             return
-        if sport not in {"nfl", "nba", "soccer"}:
+        if sport not in {"nfl", "nba", "soccer", "cfb"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
             from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
@@ -409,14 +418,15 @@ class LocalStore:
         if generation is None or (marker.exists() and marker.read_bytes() == generation):
             return
         cache = self._local_object_path(f"raw/soccer/{competition}" if sport == "soccer" else
-                                        "raw/nba" if sport == "nba" else "raw/nflverse")
+                                        f"raw/{sport}" if sport in {"nba", "cfb"} else "raw/nflverse")
         if cache.exists():
             shutil.rmtree(cache)
         cache.mkdir(parents=True, exist_ok=True)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(generation)
 
-    def manifests(self, dataset: str | None = None, sport: str | None = None, competition: str | None = None) -> list[DatasetManifest]:
+    def manifests(self, dataset: str | None = None, sport: str | None = None, competition: str | None = None,
+                  partition_key: str | None = None) -> list[DatasetManifest]:
         with self.connect(read_only=True) as db:
             clauses, parameters = [], []
             if dataset is not None:
@@ -428,17 +438,23 @@ class LocalStore:
             if competition is not None:
                 clauses.append("json_extract_string(payload, '$.competition') = ?")
                 parameters.append(competition)
+            if partition_key is not None:
+                clauses.append("json_extract_string(payload, '$.partition_key') = ?")
+                parameters.append(partition_key)
             where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
             rows = db.execute(f"SELECT payload FROM datasets{where} ORDER BY season DESC, acquired_at DESC", parameters).fetchall()
         manifests = [DatasetManifest.model_validate_json(row[0]) for row in rows]
         return manifests
 
-    def manifest_for_season(self, season: int, dataset: str = "play_by_play", sport: str = "nfl", competition: str | None = None) -> DatasetManifest:
-        matches = [manifest for manifest in self.manifests(dataset, sport, competition) if manifest.season == season]
+    def manifest_for_season(self, season: int, dataset: str = "play_by_play", sport: str = "nfl", competition: str | None = None,
+                            partition_key: str | None = None) -> DatasetManifest:
+        matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key)
+                   if manifest.season == season and manifest.partition_key == partition_key]
         if not matches and self._refresh_durable_record(
-            self._dataset_metadata_lookup_key(sport, dataset, season, competition), self._register_durable_dataset
+            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key), self._register_durable_dataset
         ):
-            matches = [manifest for manifest in self.manifests(dataset, sport, competition) if manifest.season == season]
+            matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key)
+                       if manifest.season == season and manifest.partition_key == partition_key]
         if not matches:
             raise KeyError(f"{sport} {dataset} season {season} has not been synced")
         return matches[0]
@@ -670,6 +686,7 @@ class EventRegistry:
 
     def __init__(self) -> None:
         self._events: dict[str, list[dict[str, object]]] = {}
+        self._sequences: dict[str, int] = {}
         self._completed_at: dict[str, float] = {}
         self._lock = RLock()
         self._retention_seconds = 900.0
@@ -679,16 +696,19 @@ class EventRegistry:
         with self._lock:
             self._purge_expired()
             events = self._events.setdefault(key, [])
-            events.append({"timestamp": datetime.now(UTC).isoformat(), "stage": stage, "message": message, "progress": progress, **extra})
+            sequence = self._sequences.get(key, 0) + 1
+            self._sequences[key] = sequence
+            events.append({"timestamp": datetime.now(UTC).isoformat(), "stage": stage, "message": message,
+                           "progress": progress, **extra, "sequence": sequence})
             if len(events) > self._max_events_per_key:
                 del events[: -self._max_events_per_key]
             if stage in {"complete", "failed"}:
                 self._completed_at[key] = time.monotonic()
 
-    def events(self, key: str) -> list[dict[str, object]]:
+    def events(self, key: str, after: int = 0) -> list[dict[str, object]]:
         with self._lock:
             self._purge_expired()
-            return list(self._events.get(key, []))
+            return [event for event in self._events.get(key, []) if int(event["sequence"]) > after]
 
     def has_active_work(self) -> bool:
         with self._lock:
@@ -700,4 +720,5 @@ class EventRegistry:
         expired = [key for key, completed_at in self._completed_at.items() if completed_at < cutoff]
         for key in expired:
             self._events.pop(key, None)
+            self._sequences.pop(key, None)
             self._completed_at.pop(key, None)

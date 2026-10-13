@@ -27,15 +27,19 @@ def data_sync(
     season: Annotated[list[int] | None, typer.Option("--season")] = None,
     dataset: Annotated[list[str] | None, typer.Option("--dataset")] = None,
     competition: Annotated[str | None, typer.Option("--competition", help="Soccer competition code, e.g. eng.1 or usa.1")] = None,
+    team: Annotated[list[str] | None, typer.Option("--team", help="Selected ESPN college-football school IDs")] = None,
 ) -> None:
     sport = sport.lower()
-    if sport not in {"nfl", "nba", "soccer"}:
-        raise typer.BadParameter("sport must be nfl, nba, or soccer")
+    if sport not in {"nfl", "nba", "soccer", "cfb"}:
+        raise typer.BadParameter("sport must be nfl, nba, soccer, or cfb")
+    if sport == "cfb" and not team:
+        raise typer.BadParameter("college football requires at least one --team ESPN school ID")
     if sport == "soccer" and competition not in SOCCER_COMPETITIONS:
         raise typer.BadParameter("soccer requires --competition with a supported league code")
     if not season:
         raise typer.BadParameter("provide at least one --season")
-    manifests = AnalystApplication().sync(season, datasets=dataset, sport=sport, competition=competition)
+    manifests = AnalystApplication().sync(season, datasets=dataset, sport=sport, competition=competition,
+                                         **({"team_ids": team} if sport == "cfb" else {}))
     for manifest in manifests:
         typer.echo(f"{manifest.sport} {manifest.season} {manifest.dataset}: {manifest.row_count:,} rows · {manifest.manifest_id}")
 
@@ -43,8 +47,8 @@ def data_sync(
 @data_app.command("list")
 def data_list(sport: str | None = typer.Option(None, help="Filter by nfl, nba, or soccer"),
               competition: str | None = typer.Option(None, help="Filter soccer datasets by competition code")) -> None:
-    if sport and sport.lower() not in {"nfl", "nba", "soccer"}:
-        raise typer.BadParameter("sport must be nfl, nba, or soccer")
+    if sport and sport.lower() not in {"nfl", "nba", "soccer", "cfb"}:
+        raise typer.BadParameter("sport must be nfl, nba, soccer, or cfb")
     if competition and competition not in SOCCER_COMPETITIONS:
         raise typer.BadParameter("unsupported soccer competition")
     for manifest in AnalystApplication().store.manifests(sport=sport.lower() if sport else None, competition=competition):

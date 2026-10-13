@@ -1,11 +1,27 @@
+export type CFBParticipant = {
+  athlete_id: string; name?: string | null; position?: string | null; role: string; team_id?: string | null;
+  identity_source?: string;
+};
+export type CFBTeamContext = {
+  id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
+};
+export type CFBRecordedPlay = {
+  id: string; text?: string | null; quarter?: number | null; clock?: string | null; down?: number | null; distance?: number | null;
+  team_id?: string | null; end_team_id?: string | null; yards_to_goal?: number | null; end_yards_to_goal?: number | null;
+  home_score?: number | null; away_score?: number | null; yards_gained?: number | null; play_type?: string | null;
+  epa?: number | null; wpa?: number | null; cpoe?: number | null; participants?: CFBParticipant[];
+};
 export type DatasetManifest = {
+  availability?: 'available' | 'partial' | 'source_unavailable' | 'download_failed' | 'season_unverified';
+  availability_message?: string | null;
   source_url?: string; package_version?: string; attribution?: string; license?: string;
-  manifest_id: string; sport: string; competition?: string | null; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
+  manifest_id: string; sport: string; competition?: string | null; partition_key?: string | null; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
   coverage?: {completed_matches?: number; expected_matches?: number; recorded_matches?: number; fetched_intervals?: number; expected_intervals?: number};
 };
 export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string };
 export type TeamOption = { value: string; label: string };
 export type PlayerOption = {
+  discovery_source?: string | null;
   player_id: string;
   name: string;
   teams: string[];
@@ -15,6 +31,7 @@ export type PlayerOption = {
 };
 export type AnalysisSubject = { type: 'team' | 'player'; id: string; team_id?: string; display_name?: string };
 export type MetricOption = {
+  preparable_seasons?: number[];
   value: string; label: string; category: string; description: string; analysis_domain: string; available_seasons: number[]; subject_types?: string[];
 };
 export type SplitDimensionOption = {
@@ -22,6 +39,7 @@ export type SplitDimensionOption = {
 };
 export type ComparisonWindowOption = { value: string; label: string; description: string };
 export type AnalysisOptions = {
+  automatic_preparation?: boolean; preparable_seasons?: number[];
   data_setup?: { required_datasets: string[]; recommended_datasets: string[]; descriptions: Record<string, string>; label: string; description: string };
   sport: string;
   teams: TeamOption[];
@@ -62,6 +80,9 @@ export type Evidence = {
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {
+  cfb_statistics?: {rows?: Array<Record<string, string | number | null>>; schools?: Record<string, string>;
+    covered_team_epa?: Array<{team_id: string; team_name?: string | null; epa_per_play: number; plays: number; games: number}>};
+  cfb_scoring_events?: Array<{text?: string; quarter?: number; clock?: string; team_id?: string}>;
   sport?: string;
   source_packages?: string[];
   week?: number; quarter?: number; clock?: string; down?: number; yards_to_go?: number; yardline_100?: number;

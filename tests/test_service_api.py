@@ -294,6 +294,22 @@ def test_event_stream_timeout_is_recoverable(tmp_path: Path) -> None:
     assert any('"stage": "timeout"' in chunk for chunk in chunks)
     assert not any('"stage": "failed"' in chunk for chunk in chunks)
 
+    async def trimmed_history() -> list[str]:
+        application.events.emit("long-download", "downloading", "Starting", 0.1)
+        stream = _event_stream(application, "long-download", timeout_seconds=0.05, poll_interval=0.001)
+        updates = [await anext(stream)]
+        for index in range(450):
+            application.events.emit("long-download", "downloading", f"School {index}", 0.8)
+        application.events.emit("long-download", "complete", "Saved", 1)
+        updates.extend([event async for event in stream])
+        return updates
+
+    updates = asyncio.run(trimmed_history())
+    assert '"stage": "complete"' in updates[-1]
+    assert updates[-1].startswith("id: 452\n")
+    assert len(application.events.events("long-download")) == 200
+    assert len(application.events.events("long-download", after=450)) == 2
+
     client = TestClient(create_app(application))
     pending = client.get("/api/investigations/pending-investigation/status")
     assert pending.json()["stage"] == "pending"

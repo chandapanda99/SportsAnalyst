@@ -263,6 +263,36 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByRole('button', { name: /Run analysis/i })).toBeTruthy();
   });
 
+  it('starts an investigation with preparable seasons even when its library is empty', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/datasets?sport=')) return new Response('[]');
+      if (url.endsWith('/sports/nfl/options')) {
+        const options = await (await baseFetch(input, init)).json();
+        options.available_seasons = [];
+        options.automatic_preparation = true;
+        options.preparable_seasons = [2024, 2025];
+        options.metrics = options.metrics.map((metric: any) => ({...metric, available_seasons: [], preparable_seasons: [2024, 2025]}));
+        return new Response(JSON.stringify(options));
+      }
+      if (url.endsWith('/investigations/stream') && init?.method === 'POST') {
+        return new Response('data: {"stage":"preparing","message":"Preparing missing NFL data","progress":0.15}\n\n',
+                            {headers: {'content-type': 'text/event-stream'}});
+      }
+      return baseFetch(input, init);
+    });
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText('Missing data prepares automatically; coverage is checked')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/sync-stream'))).toBe(false);
+  });
+
   it('guides an empty library through explicit quick setup and remembers onboarding dismissal', async () => {
     const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
     let downloaded = false;

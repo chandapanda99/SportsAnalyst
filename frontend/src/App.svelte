@@ -8,6 +8,8 @@
   import SoccerLoadingAnimation from './SoccerLoadingAnimation.svelte';
   import BasketballPlayTablet from './BasketballPlayTablet.svelte';
   import SoccerMatchTablet from './SoccerMatchTablet.svelte';
+  import CFBDiscovery from './CFBDiscovery.svelte';
+  import CFBGameTablet from './CFBGameTablet.svelte';
   import Icon from './Icon.svelte';
   import CompletionToast from './CompletionToast.svelte';
   import PlayTablet from './PlayTablet.svelte';
@@ -421,6 +423,15 @@
   let activePlayerIndex = 0;
   let playerSearchVersion = 0;
   let playerTeamId = '';
+  let cfbBrowseSeason = 2025;
+  let cfbSubdivision = 'fbs';
+  let cfbConference = '';
+  let cfbLoading = false;
+  let cfbError = '';
+  let cfbHistoryLoading = false;
+  let cfbSeasons: number[] = [];
+  let cfbTeams: Array<{value: string; label: string}> = [];
+  let cfbSearchTimer: ReturnType<typeof setTimeout>;
   let scopeSeasons: number[] = [];
   let seasonType: 'REG' | 'POST' | 'ALL' = 'REG';
   let selectedMetrics: string[] = [];
@@ -480,12 +491,16 @@
   let metricInfoLoading = false;
   let metricInfoVersion = 0;
   $: setup = analysisOptions?.data_setup;
-  $: requiredSources = setup?.required_datasets?.length ? setup.required_datasets : ['play_by_play'];
+  $: requiredSources = (setup?.required_datasets?.length ? setup.required_datasets : ['play_by_play'])
+      .filter(source => !(analysisOptions?.automatic_preparation && activeSport === 'nba'
+          && source === (subjectType === 'player' ? 'team_boxscores' : 'player_boxscores')));
   $: suggestedSources = [...new Set([...requiredSources, ...(setup?.recommended_datasets ?? [])])];
-  $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
-  $: dataReady = Boolean(analysisOptions && requiredSeasons.length && !sourceGaps.length);
+  $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition)
+      && (!item.partition_key || item.partition_key === `${subjectType}:${resolvedSubject}`))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
+  $: dataReady = activeSport === 'cfb' ? Boolean(analysisOptions && !cfbLoading && !cfbError && !cfbHistoryLoading)
+      : Boolean(analysisOptions && requiredSeasons.length && (analysisOptions.automatic_preparation || !sourceGaps.length));
   $: readiness = [
-    {ready: dataReady, label: dataReady ? 'Required data downloaded' : 'Prepare required data', target: 'data-setup'},
+    {ready: dataReady, label: activeSport === 'cfb' || analysisOptions?.automatic_preparation ? 'Missing data prepares automatically; coverage is checked' : dataReady ? 'Required data downloaded' : 'Prepare required data', target: 'data-setup'},
     {ready: Boolean(resolvedSubject), label: resolvedSubject ? 'Subject selected' : 'Choose a team or player', target: 'scope-heading'},
     {
       ready: windowsDiffer && hasSubjectData && hasRequiredData,
@@ -641,7 +656,7 @@
     previousQuestionContext = nextQuestionContext;
   }
   $: scopeSeasons = (() => {
-    const local = [...(analysisOptions?.available_seasons ?? [])].sort((left, right) => right - left);
+    const local = [...new Set([...(analysisOptions?.available_seasons ?? []), ...(analysisOptions?.automatic_preparation ? analysisOptions.preparable_seasons ?? [] : [])])].sort((left, right) => right - left);
     if (subjectType !== 'player' || !selectedPlayer) return local;
     const played = new Set(playerSeasonsForDomain(selectedPlayer, analysisDomain, activeSport).map(Number));
     return local.filter((season) => played.has(season));
@@ -661,13 +676,14 @@
   $: windowsDiffer = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
       || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
-          : activeSport === 'soccer'
+          : ['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges'
               ? baseline !== comparison || baselineStartDate !== comparisonStartDate || baselineEndDate !== comparisonEndDate
               : baseline !== comparison
               || baselineStartWeek !== comparisonStartWeek
               || baselineEndWeek !== comparisonEndWeek);
   $: missingRequiredSeasons = requiredSeasons.filter((season) => !analysisOptions?.available_seasons.includes(season));
-  $: hasRequiredData = requiredSeasons.every((season) => analysisOptions?.available_seasons.includes(season));
+  $: hasRequiredData = requiredSeasons.every((season) => analysisOptions?.available_seasons.includes(season)
+      || (analysisOptions?.automatic_preparation && analysisOptions.preparable_seasons?.includes(season)));
   $: missingPlayerSeasons = subjectType === 'player' && selectedPlayer
       ? requiredSeasons.filter((season) => !scopeSeasons.includes(season))
       : [];
@@ -681,7 +697,7 @@
       metric.analysis_domain === analysisDomain && (!metric.subject_types?.length || metric.subject_types.includes(subjectType))
   );
   $: metricCategories = [...new Set(domainMetrics.map((metric) => metric.category))];
-  $: availableMetrics = domainMetrics.filter(metric => requiredSeasons.every(season => metric.available_seasons.includes(season))
+  $: availableMetrics = domainMetrics.filter(metric => metricAvailable(metric, requiredSeasons, analysisOptions?.automatic_preparation)
       && !(activeSport === 'soccer' && metric.value.startsWith('season_') && comparisonMode !== 'full_seasons'));
   $: availableMetricIds = new Set(availableMetrics.map(metric => metric.value));
   $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
@@ -768,7 +784,9 @@
           }
         ];
       }
-      analysisOptions = nextOptions;
+      analysisOptions = sport === 'cfb' && cfbSeasons.length
+        ? {...nextOptions, available_seasons: cfbSeasons, syncable_seasons: cfbSeasons, teams: cfbTeams,
+           metrics: nextOptions.metrics.map(metric => ({...metric, available_seasons: cfbSeasons}))} : nextOptions;
       datasets = sport === 'soccer' ? nextDatasets.filter(item => item.competition === selectedCompetition) : nextDatasets;
       initializeSelections();
       initialWorkspaceReady = true;
@@ -855,6 +873,9 @@
   }
 
   function resetDraft(sport: string) {
+    cfbHistoryLoading = false;
+    cfbLoading = sport === 'cfb'; cfbError = '';
+    clearTimeout(cfbSearchTimer);
     initializedSelections = false;
     team = '';
     teamInput = '';
@@ -874,7 +895,7 @@
     splitWeek = 10;
     seasonType = 'REG';
     subjectType = 'team';
-    analysisDomain = sport === 'nba' ? 'offense' : sport === 'soccer' ? 'results' : 'passing';
+    analysisDomain = sport === 'nba' ? 'offense' : ['soccer', 'cfb'].includes(sport) ? 'results' : 'passing';
     comparisonMode = sport === 'nba' ? 'season_segments' : 'full_seasons';
     baselineSegment = 'regular_season';
     comparisonSegment = 'post_all_star';
@@ -919,7 +940,7 @@
 
   function initializeSelections() {
     if (!analysisOptions) return;
-    const seasons = [...analysisOptions.available_seasons].sort((left, right) => right - left);
+    const seasons = [...new Set([...analysisOptions.available_seasons, ...(analysisOptions.automatic_preparation ? analysisOptions.preparable_seasons ?? [] : [])])].sort((left, right) => right - left);
     if (seasons.length) {
       if (!seasons.includes(comparison)) comparison = seasons[0];
       if (!seasons.includes(baseline)) baseline = seasons[1] ?? seasons[0];
@@ -996,7 +1017,11 @@
     playersLoading = true;
     playerLoadError = '';
     try {
-      const matches = await api.players(sport, '', sport === 'soccer' ? selectedCompetition : undefined);
+      const scopeKey = `${resolvedTeam}:${cfbBrowseSeason}`;
+      if (sport === 'cfb' && !resolvedTeam) { players = []; return; }
+      const matches = await api.players(sport, sport === 'cfb' ? playerFilter : '', sport === 'soccer' ? selectedCompetition : undefined,
+                                       sport === 'cfb' ? resolvedTeam : undefined, sport === 'cfb' ? cfbBrowseSeason : undefined);
+      if (sport === 'cfb' && scopeKey !== `${resolvedTeam}:${cfbBrowseSeason}`) return;
       if (version === playerSearchVersion && sport === activeSport) players = matches;
     } catch (problem) {
       if (version === playerSearchVersion && sport === activeSport) playerLoadError = String(problem);
@@ -1007,6 +1032,36 @@
 
   function playerDisplay(player: PlayerOption) {
     return `${player.name}${player.teams.length ? ` · ${player.teams.map(team => playerTeamLabel(team)).join('/')}` : ''}`;
+  }
+
+  function cfbSelectionChanged(selection: {season: number; seasons: number[]; teams: Array<{value: string; label: string}>;
+                                          team: string; subdivision: string; conference: string; loading: boolean; error: string}) {
+    if (activeSport !== 'cfb') return;
+    const changed = team !== selection.team || cfbBrowseSeason !== selection.season;
+    cfbBrowseSeason = selection.season;
+    cfbSubdivision = selection.subdivision;
+    cfbConference = selection.conference;
+    cfbLoading = selection.loading;
+    cfbError = selection.error;
+    if (analysisOptions && selection.seasons.length) {
+      cfbSeasons = selection.seasons; cfbTeams = selection.teams;
+      const firstCatalog = !analysisOptions.syncable_seasons.length;
+      analysisOptions = {...analysisOptions, teams: selection.teams, available_seasons: selection.seasons,
+                         syncable_seasons: selection.seasons,
+                         metrics: analysisOptions.metrics.map(metric => ({...metric, available_seasons: selection.seasons}))};
+      if (firstCatalog) { initializedSelections = false; initializeSelections(); }
+      if (!syncSeasons.length) syncSeasons = selection.seasons.slice(0, 2);
+      if (syncDatasets.includes('play_by_play')) syncDatasets = [...suggestedSources];
+    }
+    team = selection.team;
+    teamInput = selection.teams.find(option => option.value === team)?.label ?? '';
+    if (changed) {
+      selectedPlayerId = ''; players = []; playerInput = ''; playerFilter = ''; playerTeamId = '';
+      cfbHistoryLoading = false;
+      playerSearchVersion += 1;
+      clearTimeout(cfbSearchTimer);
+      if (subjectType === 'player' && team && !selection.loading) void tick().then(() => loadPlayers());
+    }
   }
 
   function playerTeamLabel(team: string) {
@@ -1026,9 +1081,14 @@
     playerTeamId = '';
     playerComboboxOpen = true;
     activePlayerIndex = 0;
+    if (activeSport === 'cfb') {
+      clearTimeout(cfbSearchTimer);
+      playerSearchVersion += 1;
+      cfbSearchTimer = setTimeout(() => { if (activeSport === 'cfb') void loadPlayers(); }, 250);
+    }
   }
 
-  function selectPlayer(player: PlayerOption) {
+  async function selectPlayer(player: PlayerOption) {
     playerSearchVersion += 1;
     playersLoading = false;
     playerLoadError = '';
@@ -1036,12 +1096,29 @@
     playerInput = playerDisplay(player);
     playerFilter = '';
     playerTeamId = player.teams.length === 1 ? player.teams[0] : '';
+    if (activeSport === 'cfb') {
+      const version = playerSearchVersion;
+      cfbHistoryLoading = true;
+      try {
+        const history = await api.cfbPlayerSeasons(player.player_id);
+        if (activeSport !== 'cfb' || version !== playerSearchVersion) return;
+        player = {...player, seasons: history.seasons};
+        players = players.map(option => option.player_id === player.player_id ? player : option);
+      } catch (problem) {
+        if (version === playerSearchVersion) { playerLoadError = String(problem); selectedPlayerId = ''; }
+        return;
+      } finally { if (version === playerSearchVersion) cfbHistoryLoading = false; }
+    }
     if (activeSport === 'nfl') {
       const role = playerRole(player);
       const preferredDomain = role === 'quarterback' ? 'quarterback'
           : role === 'running back' ? 'running'
               : role === 'receiver' ? 'receiving' : analysisDomain;
       selectAnalysisDomain(preferredDomain, true, player);
+    } else if (activeSport === 'cfb') {
+      const positions = new Set(player.positions.map(position => position.toUpperCase()));
+      selectAnalysisDomain(positions.has('QB') ? 'quarterback'
+        : ['RB', 'FB', 'HB'].some(position => positions.has(position)) ? 'rushing' : 'receiving', true, player);
     } else {
       selectAnalysisDomain(analysisDomain, true, player);
     }
@@ -1050,7 +1127,7 @@
   }
 
   function normalizePlayerSeasonSelection(player: PlayerOption) {
-    const local = new Set(analysisOptions?.available_seasons ?? []);
+    const local = new Set([...(analysisOptions?.available_seasons ?? []), ...(analysisOptions?.automatic_preparation ? analysisOptions.preparable_seasons ?? [] : [])]);
     const seasons = playerSeasonsForDomain(player).map(Number).filter((season) => local.has(season)).sort((left, right) => right - left);
     if (!seasons.length) return;
     if (!seasons.includes(comparison)) comparison = seasons[0];
@@ -1149,8 +1226,9 @@
     return team;
   }
 
-  function metricAvailable(metric: MetricOption) {
-    return requiredSeasons.every((season) => metric.available_seasons.includes(season));
+  function metricAvailable(metric: MetricOption, seasons = requiredSeasons, automatic = analysisOptions?.automatic_preparation) {
+    return activeSport === 'cfb' || seasons.every((season) => metric.available_seasons.includes(season)
+        || (automatic && metric.preparable_seasons?.includes(season)));
   }
 
   function toggleMetric(metric: string) {
@@ -1256,6 +1334,21 @@
   }
 
   function examplesFor(sport = activeSport, type = subjectType, domain = analysisDomain, player = selectedPlayer) {
+    if (sport === 'cfb') {
+      const questions = type === 'team'
+        ? ['How did scoring margin and win rate change, and how much could differences in the opponents faced affect that comparison?',
+           'Did offensive production improve through passing yards, rushing efficiency, or third-down conversion?',
+           'How did turnover frequency change across these covered games?',
+           'How does the regular-season sample differ from the bowl or playoff sample?']
+        : domain === 'quarterback' ? ['Did the quarterback’s passing production change through attempt volume, completion rate, or yards per attempt?',
+                                     'How did passing touchdowns and interceptions change relative to attempts and games played?']
+        : domain === 'rushing' ? ['Did the runner’s production change through workload or yards per carry?',
+                                 'How did rushing touchdowns compare across these covered game samples?']
+        : ['Did receiving production change through receptions or yards per reception?',
+           'How did receiving touchdowns change, accounting for games and receptions?',
+           'Which schools and covered games are represented before and after the player’s transfer?'];
+      return questions;
+    }
     const primary = questionBanks[sport]?.[type]?.[domain] ?? [initialQuestion];
     const supplemental = supplementalQuestionBanks[sport]?.[type]?.[domain] ?? [];
     const base = [...primary, ...supplemental];
@@ -1445,7 +1538,9 @@
   }
 
   function syncedPackages(season: number) {
-    return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season && (activeSport !== 'soccer' || dataset.competition === selectedCompetition)).map((dataset) => dataset.dataset));
+    return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season
+      && (activeSport !== 'soccer' || (dataset.competition === selectedCompetition && !dataset.partition_key))
+      && (activeSport !== 'cfb' || dataset.partition_key === `team:${resolvedTeam}`)).map((dataset) => dataset.dataset));
   }
 
   function isReferenceDataset(dataset: string) {
@@ -1498,7 +1593,7 @@
     return minimumLabel || 'offered for selected seasons';
   }
 
-  function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons) {
+  function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons, selectedTeam = resolvedTeam) {
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => item.dataset === dataset)
           ? {state: 'installed', label: 'Installed'}
@@ -1508,12 +1603,22 @@
     if (!eligibleSeasons.length) return null;
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
+    if (activeSport === 'cfb') {
+      const snapshots = datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${selectedTeam}`
+        && item.dataset === dataset && eligibleSeasons.includes(item.season));
+      if (snapshots.some(item => item.availability === 'download_failed')) return {state: 'partial', label: 'Download failed · retry'};
+      if (snapshots.some(item => item.availability === 'season_unverified')) return {state: 'partial', label: 'Season unverified · recheck'};
+      if (snapshots.some(item => item.availability === 'source_unavailable')) return {state: 'partial', label: 'Limited source coverage · recheck hourly'};
+      if (snapshots.every(item => item.row_count === 0)) return {state: 'partial', label: 'No recorded rows'};
+      if (snapshots.some(item => (item.coverage?.completed_matches ?? 0) < (item.coverage?.expected_matches ?? 0)))
+        return {state: 'partial', label: 'Partial · resume sync'};
+    }
     if (activeSport === 'soccer' && dataset === 'team_stats') {
-      const teamSources = datasets.filter(item => item.sport === 'soccer' && item.dataset === 'team_stats' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      const teamSources = datasets.filter(item => item.sport === 'soccer' && !item.partition_key && item.dataset === 'team_stats' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
       const teamMatches = teamSources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const statsLabel = teamSources.every(item => item.coverage?.recorded_matches !== undefined)
           ? `Team stats: ${teamMatches} matches` : `Team stats: ${local}/${eligibleSeasons.length} seasons`;
-      const sources = datasets.filter(item => item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      const sources = datasets.filter(item => !item.partition_key && item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
       const covered = sources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const expected = sources.reduce((sum, item) => sum + (item.coverage?.expected_matches ?? 0), 0);
       const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season));
@@ -1536,12 +1641,18 @@
   }
 
   function soccerPackageIncomplete(dataset: string, season: number) {
+    if (activeSport === 'cfb') {
+      const snapshot = datasets.find(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`
+        && item.dataset === dataset && item.season === season);
+      return Boolean(snapshot && ((snapshot.availability && snapshot.availability !== 'available')
+        || (snapshot.coverage?.completed_matches ?? 0) < (snapshot.coverage?.expected_matches ?? 0)));
+    }
     if (activeSport !== 'soccer') return false;
     if (dataset === 'team_stats') {
-      const xg = datasets.find(item => item.sport === 'soccer' && item.competition === selectedCompetition && item.dataset === 'expected_goals' && item.season === season);
+      const xg = datasets.find(item => item.sport === 'soccer' && !item.partition_key && item.competition === selectedCompetition && item.dataset === 'expected_goals' && item.season === season);
       if (!xg || (xg.coverage?.completed_matches ?? 0) < (xg.coverage?.expected_matches ?? 0)) return true;
     }
-    const manifest = datasets.find(item => item.sport === 'soccer' && item.competition === selectedCompetition && item.dataset === dataset && item.season === season);
+    const manifest = datasets.find(item => item.sport === 'soccer' && !item.partition_key && item.competition === selectedCompetition && item.dataset === dataset && item.season === season);
     const completed = dataset === 'play_by_play' ? manifest?.coverage?.fetched_intervals : manifest?.coverage?.completed_matches;
     const expected = dataset === 'play_by_play' ? manifest?.coverage?.expected_intervals : manifest?.coverage?.expected_matches;
     return completed !== undefined && expected !== undefined && completed < expected;
@@ -1557,7 +1668,9 @@
     const currentSoccerSeason = activeSport === 'soccer' ? now.getFullYear() +
         (!soccerCompetitions.find(item => item.value === selectedCompetition)?.calendar && now.getMonth() >= 6 ? 1 : 0) : null;
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
-        season === currentNflSeason || season === currentNbaSeason || season === currentSoccerSeason || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
+        season === currentNflSeason || season === currentNbaSeason || season === currentSoccerSeason
+        || (activeSport === 'cfb' && season === now.getUTCFullYear())
+        || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
   }
 
   function seasonLabel(season: number) {
@@ -1847,7 +1960,7 @@
       } else if (activeSport === 'nba') {
         baselineWindow = {season: baseline, weeks: [1, 22], segment: 'full_season'};
         comparisonWindow = {season: comparison, weeks: [1, 22], segment: 'full_season'};
-      } else if (activeSport === 'soccer' && comparisonMode === 'date_ranges') {
+      } else if (['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges') {
         baselineWindow = {...baselineWindow, ...(baselineStartDate ? {start_date: baselineStartDate} : {}), ...(baselineEndDate ? {end_date: baselineEndDate} : {})};
         comparisonWindow = {...comparisonWindow, ...(comparisonStartDate ? {start_date: comparisonStartDate} : {}), ...(comparisonEndDate ? {end_date: comparisonEndDate} : {})};
       }
@@ -1915,6 +2028,7 @@
   }
 
   async function syncData() {
+    if (activeSport === 'cfb' && !resolvedTeam) { error = 'Choose a college-football school before an explicit sync.'; return; }
     if (!syncSeasons.length || !syncDatasets.length) return;
     const offeredDatasets = new Set(analysisOptions?.syncable_datasets ?? []);
     const requestedDatasets = syncDatasets.filter((dataset) =>
@@ -1930,7 +2044,8 @@
     progress = 0.03;
     try {
       const missingSeasons = [...new Set(requestedDatasets.flatMap(dataset => missingSyncSeasons(dataset, requestedSeasons)))];
-      const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets, activeSport === 'soccer' ? selectedCompetition : undefined);
+      const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets, activeSport === 'soccer' ? selectedCompetition : undefined,
+                                          activeSport === 'cfb' ? [resolvedTeam] : undefined);
       await streamDatasetSync(stream);
       await refresh();
       syncComplete = true;
@@ -1947,6 +2062,18 @@
       busy = false;
       syncing = false;
     }
+  }
+
+  async function syncCFBConference() {
+    if (activeSport !== 'cfb' || !cfbTeams.length || !syncSeasons.length) return;
+    error = ''; busy = syncing = true; progress = 0.03; stage = 'Preparing selected conference teams';
+    try {
+      const stream = await api.syncStream('cfb', syncSeasons, suggestedSources, undefined, undefined,
+          {subdivision: cfbSubdivision, conference_id: cfbConference});
+      await streamDatasetSync(stream);
+      await refresh(); syncComplete = true;
+    } catch (problem) { error = String(problem); }
+    finally { busy = syncing = false; }
   }
 
   function clearEvidenceSelection() {
@@ -2182,7 +2309,7 @@
     </nav>
     <header class="topbar">
       <div><span class="eyebrow">{activeSport.toUpperCase()} · Evidence Workbench</span>
-        <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : 'Football'} analysis`}</h1>
+        <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
       </div>
       <div class="status-chip">
         <Icon name="database" size={16}/>{indexedSeasonCount} seasons · {datasets.length} data packages
@@ -2260,7 +2387,7 @@
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
-              <span><strong>{dataReady ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${datasets.length} local files`}
+              <span><strong>{dataReady && !sourceGaps.length ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{analysisOptions?.automatic_preparation ? 'Missing investigation data prepares automatically; explicit downloads remain available.' : dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
               </i></b></summary>
@@ -2346,7 +2473,7 @@
                     </legend>
                     <div class="dataset-options">
                       {#each (customizeSources ? analysisOptions?.syncable_datasets ?? [] : suggestedSources.filter(source => analysisOptions?.syncable_datasets.includes(source))) as dataset}
-                        {@const installStatus = packageInstallStatus(dataset, syncSeasons)}
+                        {@const installStatus = packageInstallStatus(dataset, syncSeasons, resolvedTeam)}
                         <label><input type="checkbox" aria-label={datasetLabel(dataset)}
                                       checked={syncDatasets.includes(dataset)}
                                       disabled={!packageEligible(dataset, syncSeasons)}
@@ -2359,7 +2486,12 @@
                           </span>
                           <small><span class="source-role"
                                        class:required-source={requiredSources.includes(dataset)}>{sourceRole(dataset)}</span> · {packageCoverage(dataset, syncSeasons)}</small>
-                          {#if setup?.descriptions[dataset]}<small>{setup.descriptions[dataset]}</small>{/if}</span></label>
+                          {#if setup?.descriptions[dataset]}<small>{setup.descriptions[dataset]}</small>{/if}
+                          {#if activeSport === 'cfb'}
+                            {#each datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}` && item.dataset === dataset && syncSeasons.includes(item.season) && item.availability_message) as snapshot}
+                              <small class="validation">{snapshot.season}: {snapshot.availability_message}</small>
+                            {/each}
+                          {/if}</span></label>
                       {/each}
                     </div>
                   </fieldset>
@@ -2384,6 +2516,10 @@
                 <div><span class="eyebrow">01 · Subject</span>
                   <h3 id="scope-heading" tabindex="-1">Who do you want to understand?</h3></div>
                 <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
+              {#if activeSport === 'cfb'}
+                <CFBDiscovery initialSeason={comparison} disabled={busy} onchange={cfbSelectionChanged} ondownload={() => void syncCFBConference()}/>
+                {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
+              {/if}
               {#if activeSport === 'soccer'}
                 <div class="soccer-competition-bar subject-competition-bar">
                   <label for="subject-soccer-competition">Competition / League</label>
@@ -2431,10 +2567,16 @@
                             <div class="combobox-loading" role="status"><span class="button-spinner" aria-hidden="true"></span>
                               <span>Loading {activeSport.toUpperCase()} players…</span></div>
                           {:else if playerLoadError}
-                            <div class="combobox-error"><span>Player list is unavailable.</span>
+                            <div class="combobox-error"><span>{playerLoadError}</span>
                               <button type="button" on:mousedown|preventDefault={() => loadPlayers()}>Retry</button>
                             </div>
                           {:else}
+                            {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'recorded_game_participants')}
+                              <div class="combobox-loading" role="status">Recorded offensive game participants · not a complete roster.</div>
+                            {/if}
+                            {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'partial_recorded_roster')}
+                              <div class="combobox-loading" role="status">Recorded roster players · season roster coverage is incomplete.</div>
+                            {/if}
                             {#each filteredPlayers as player, index}
                               <button id={`player-option-${player.player_id}`} type="button" role="option"
                                       aria-selected={selectedPlayerId === player.player_id}
@@ -2510,7 +2652,7 @@
                     {/each}
                   </select>
                 </label>
-                {#if activeSport === 'nfl'}<label>Season type
+                {#if ['nfl', 'cfb'].includes(activeSport)}<label>Season type
                   <select bind:value={seasonType}>
                     <option value="REG">Regular season</option>
                     <option value="POST">Postseason</option>
@@ -2521,7 +2663,7 @@
 
               <p class="section-help">{analysisOptions?.comparison_windows.find(option => option.value === comparisonMode)?.description ?? ''}</p>
               {#if scopeSeasons.length}
-                {#if activeSport === 'soccer'}
+                {#if activeSport === 'soccer' || (activeSport === 'cfb' && comparisonMode === 'date_ranges')}
                   <div class="window-grid">
                     <fieldset>
                       <legend>Reference period</legend>
@@ -2663,8 +2805,8 @@
                     <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
                   {/if}
                   {#if windowsDiffer && missingRequiredSeasons.length}
-                    <p class="validation">Sync the missing season{missingRequiredSeasons.length === 1 ? '' : 's'} before running this
-                      range: {missingRequiredSeasons.join(', ')}.</p>
+                    <p class="validation">{analysisOptions?.automatic_preparation ? 'Data will prepare automatically for' : 'Sync the missing seasons before running'}
+                      this range: {missingRequiredSeasons.join(', ')}. Coverage is verified before analysis.</p>
                   {/if}
                   {#if windowsDiffer && missingPlayerSeasons.length}
                     <p class="validation">The selected player has no recorded data for season{missingPlayerSeasons.length === 1 ? '' : 's'}
@@ -2956,7 +3098,7 @@
         </div>
       </section>
       <section class="plays">
-        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : 'Plays'}</span><small>Examples
+        <div class="section-title"><span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : activeSport === 'cfb' ? 'Games' : 'Plays'}</span><small>Examples
           from both periods—not the entire
           sample</small>
         </div>
@@ -2979,7 +3121,7 @@
                                                               class:supporting={play.evidence_role ? play.evidence_role !== 'counterexample' : play.supporting}
                                                               class:typical={play.evidence_role === 'typical'}>{evidenceRoleLabel(play)}</span>
                   <span class="play-reference"><strong>{play.game_id}</strong>
-                    {#if activeSport !== 'soccer'}<small>Play #{play.play_id}</small>{/if}</span>
+                    {#if !['soccer', 'cfb'].includes(activeSport)}<small>Play #{play.play_id}</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
                       class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
@@ -2989,7 +3131,9 @@
           </div>
         {/each}
         {#if selectedPlay}
-          {#if selectedPlay.visualization?.sport === 'soccer'}
+          {#if selectedPlay.visualization?.sport === 'cfb'}
+            <CFBGameTablet play={selectedPlay} investigationId={active.run.investigation_id} onclose={() => selectedPlay = null}/>
+          {:else if selectedPlay.visualization?.sport === 'soccer'}
             <SoccerMatchTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
           {:else if selectedPlay.visualization?.sport === 'nba'}
             <BasketballPlayTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
