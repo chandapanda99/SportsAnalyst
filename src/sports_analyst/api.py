@@ -487,8 +487,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     def cfb_game_plays(investigation_id: str, evidence_id: str):
         try:
             item = service.evidence(investigation_id, evidence_id)
+            if getattr(item, "sport", None) == "nfl":
+                from sports_analyst.application.nfl_game import game_plays
+                return game_plays(service, investigation_id, evidence_id)
             if getattr(item, "sport", None) != "cfb":
-                raise HTTPException(422, "Recorded college-football game evidence is required")
+                raise HTTPException(422, "Recorded NFL or college-football play evidence is required")
             context = item.visualization.cfb_statistics if item.visualization else None
             modeled = (context or {}).get("modeled_plays") or []
             if modeled and all("participants" in row for row in modeled):
@@ -497,7 +500,19 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                         "teams": (context or {}).get("teams") or [],
                         "coverage": f"{len(modeled)}/{first['source_play_count']} source plays processed; modeled EPA and spread-free WPA",
                         "message": f"SportsDataverse {first['provider_version']}; athlete IDs from structured ESPN participants only"}
-            detail = service.connectors["cfb"].game_plays(item.game_id, item.season)
+            selected = (context or {}).get("selected_play")
+            try:
+                detail = service.connectors["cfb"].game_plays(item.game_id, item.season)
+            except Exception:
+                if not selected:
+                    raise
+                return {"plays": [selected], "teams": (context or {}).get("teams") or [],
+                        "coverage": "Saved selected-play evidence; the remaining game could not load",
+                        "message": "Saved evidence is preserved. Full-game browsing requires a source retry."}
+            if selected:
+                detail["plays"] = [selected if row["id"] == selected["id"] else row for row in detail["plays"]]
+                if not any(row["id"] == selected["id"] for row in detail["plays"]):
+                    detail["plays"].append(selected)
             if modeled:
                 by_id = {row["play_id"]: row for row in modeled}
                 for row in detail["plays"]:
@@ -510,7 +525,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         except HTTPException:
             raise
         except Exception as error:
-            logger.exception("cfb_game_plays_unavailable investigation_id=%s", investigation_id)
+            logger.exception("game_plays_unavailable investigation_id=%s", investigation_id)
             raise HTTPException(503, "Recorded play detail could not load. Retry or check worker logs.") from error
 
     @api.get("/api/investigations/{investigation_id}/export")

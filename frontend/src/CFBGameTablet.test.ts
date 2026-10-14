@@ -26,6 +26,12 @@ it('opens recorded plays with involved actors, a college field, and scoped model
   expect(screen.getByRole('region', {name: /schematic for play p1/})).toBeTruthy();
   expect(screen.getByText(/not a full lineup|No full lineup/)).toBeTruthy();
   expect(screen.getByRole('heading', {name: /Recorded involved players \(2\)/})).toBeTruthy();
+  const field = document.querySelector('.football-tablet .field');
+  expect(field?.querySelectorAll('.yard-line')).toHaveLength(19);
+  expect(field?.querySelectorAll('.inbound-hash')).toHaveLength(160);
+  expect(Number(field?.querySelector('.inbound-hash')?.getAttribute('y1'))).toBeCloseTo(20 - 1 / 3);
+  expect([...field!.querySelectorAll('.endzone-name')].map(node => node.textContent)).toEqual(['Home', 'Home']);
+  expect(field?.querySelector('.box-area')).toBeNull();
   const marker = screen.getByRole('button', {name: /Verified QB.*illustrative placement/});
   await fireEvent.focus(marker);
   expect(document.querySelector('svg > g:last-child.tooltip')).toBeTruthy();
@@ -47,4 +53,25 @@ it('ignores stale game responses and offers a retry instead of an empty particip
   await waitFor(() => expect(screen.queryByRole('region', {name: /old-play/})).toBeNull());
   await fireEvent.click(screen.getByRole('button', {name: 'Retry play detail'}));
   await screen.findByRole('region', {name: /new-play/});
+});
+
+it('opens the cited play directly and shows its selection reason and recorded formation context', async () => {
+  const selectedId = '401756849101855201'; // ESPN IDs exceed JavaScript's safe integer range.
+  const plays = detail();
+  plays.plays[1] = {...plays.plays[1], id: selectedId};
+  vi.spyOn(api, 'cfbPlays').mockResolvedValue({...plays, plays: plays.plays.map(play => play.id === selectedId
+    ? {...play, formation: 'Shotgun', formation_source: 'Recorded play narrative',
+       personnel_context: {status: 'not_recorded', entries: [], scope: 'No verified personnel data for this selected play'}} : play)});
+  const cited = evidence('game');
+  render(CFBGameTablet, {play: {...cited, play_id: Number(selectedId), selection_metric: 'Third-down conversion rate',
+    visualization: {...cited.visualization, cfb_statistics: {selected_play: {id: selectedId}}},
+    evidence_role: 'counterexample', selection_reason: 'Counterexample in the measured comparison window.'},
+    investigationId: 'investigation', onclose: vi.fn()});
+  await screen.findByRole('region', {name: new RegExp(`schematic for play ${selectedId}`)});
+  expect((screen.getByLabelText('Select recorded play') as HTMLSelectElement).value).toBe(selectedId);
+  expect(screen.getByText('Counterexample in the measured comparison window.')).toBeTruthy();
+  expect(screen.getByText(/Formation: Shotgun/)).toBeTruthy();
+  expect(screen.getByText(/Personnel source: not recorded/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', {name: 'Previous play'}));
+  await screen.findByRole('region', {name: /schematic for play p1/});
 });

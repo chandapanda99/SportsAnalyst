@@ -26,6 +26,7 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
+from sports_analyst.plugins.cfb_evidence import select_plays
 from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 # label, subject, domain, numerator, denominator (None means per game), unit
@@ -203,7 +204,8 @@ class CFBPlugin:
 
     @staticmethod
     def required_supplemental_datasets(request):
-        return {"team_stats", "player_stats", "scoring_events"} | ({"enriched_plays"} if set(request.metrics) & ADVANCED.keys() else set())
+        return {"team_stats", "player_stats", "scoring_events", "recorded_plays"} | (
+            {"enriched_plays"} if set(request.metrics) & ADVANCED.keys() else set())
 
     def explain_metric(self, metric):
         if metric not in METRICS:
@@ -452,6 +454,11 @@ class CFBPlugin:
                         ),
                     )
                 )
+        selected_plays = select_plays(request, schedules, supplemental, supplemental_manifests,
+                                      aggregates, execution_id, METRICS, ADVANCED)
+        if selected_plays:
+            covered_windows = {item.window for item in selected_plays}
+            evidence = selected_plays + [item for item in evidence if item.window not in covered_windows]
         execution = ToolExecutionRecord(
             execution_id=execution_id,
             tool="compare_cfb_windows",
@@ -477,6 +484,9 @@ class CFBPlugin:
             evidence_ids=[item.evidence_id for item in aggregates],
         )
         caveats = [
+            "Play examples are selected from covered, attributed plays in each window; "
+            "box-score aggregates retain their own full-sample denominators. "
+            "A play example is illustrative, not causal proof. Game-only context is retained when no eligible play evidence is available.",
             "College-football comparisons are descriptive and not adjusted for opponent strength or FBS/FCS schedule composition.",
             "Conference membership changes and transfers can change the sample; use recorded game identities, not present-day affiliations.",
             "No recruiting impact, tracking locations, or unrecorded formations are inferred. "

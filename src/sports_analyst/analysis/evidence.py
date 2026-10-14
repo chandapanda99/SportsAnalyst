@@ -108,13 +108,13 @@ def _reason(role: EvidenceRole, window: EvidenceWindow, metric_label: str | None
 
 
 def select_diverse_evidence(candidates: list[EvidenceCandidate], metric_label: str | None = None, per_window: int = 4,
-                            max_per_game: int = 1) -> list[SelectedEvidence]:
+                            max_per_game: int = 1, direction: float | None = None) -> list[SelectedEvidence]:
     """Fill stable evidence roles while preferring different games and contexts."""
     if not candidates:
         return []
     candidates = list({candidate.key: candidate for candidate in candidates}.values())
     percentiles = _percentiles(candidates)
-    direction = _observed_direction(candidates)
+    direction = _observed_direction(candidates) if direction is None else direction
     roles: list[EvidenceRole] = ["typical", "metric_example", "supports_change", "counterexample"]
     if per_window > len(roles):
         roles.extend(["metric_example"] * (per_window - len(roles)))

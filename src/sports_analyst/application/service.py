@@ -370,13 +370,15 @@ class AnalystApplication:
                 connector.prepare(season, team_id=subject.id if subject.type == "team" else None,
                                   athlete_id=subject.id if subject.type == "player" else None,
                                   progress=progress, manifest_callback=self.store.save_manifest)
-            if set(request.metrics) & CFB_ADVANCED_METRICS.keys() and season in {request.scope.baseline_season, request.scope.comparison_season}:
+            if season in {request.scope.baseline_season, request.scope.comparison_season}:
                 schedule_manifest = self.store.manifest_for_season(season, "schedules", "cfb", partition_key=partition)
-                schedule = connector.load(schedule_manifest)
+                schedule = self._load_dataset(connector, schedule_manifest)
                 window = request.scope.baseline if season == request.scope.baseline_season else request.scope.comparison
                 selected_schedule = self.plugins["cfb"].window(schedule, window, request)
                 if request.scope.baseline_season == request.scope.comparison_season:
                     selected_schedule = pl.concat([selected_schedule, self.plugins["cfb"].window(schedule, request.scope.comparison, request)]).unique(subset=["game_id"])
+                connector.prepare_recorded(season, partition, selected_schedule, self.store.save_manifest, progress)
+            if set(request.metrics) & CFB_ADVANCED_METRICS.keys() and season in {request.scope.baseline_season, request.scope.comparison_season}:
                 def model_progress(game, index, total):
                     self.events.emit(identifier, "preparing", f"Modeling college-football plays · {season} · game {game} · {index + 1}/{total}", 0.18,
                                      season=season, partition_key=partition, dataset="enriched_plays")
@@ -555,6 +557,17 @@ class AnalystApplication:
                 run_type="tool",
         ) as analysis_span:
             result = plugin.analyze(request, datasets, manifests, supplemental, supplemental_manifests)
+            if request.sport == "cfb":
+                for index, evidence in enumerate(result.play_evidence):
+                    if not evidence.play_id or not evidence.visualization:
+                        continue
+                    self.events.emit(identifier, "analyzing", f"Checking selected-play personnel · {index + 1}/{len(result.play_evidence)}", 0.55)
+                    context = dict(evidence.visualization.cfb_statistics)
+                    selected_play = dict(context.get("selected_play") or {})
+                    selected_play["personnel_context"] = connector.play_personnel(evidence.game_id, evidence.season, evidence.play_id)
+                    context["selected_play"] = selected_play
+                    visualization = evidence.visualization.model_copy(update={"cfb_statistics": context})
+                    result.play_evidence[index] = evidence.model_copy(update={"visualization": visualization})
             self.telemetry.add_outputs(
                 analysis_span,
                 {

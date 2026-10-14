@@ -6,6 +6,8 @@ export type CFBTeamContext = {
   id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
 };
 export type CFBRecordedPlay = {
+  formation?: string | null; formation_source?: string | null;
+  personnel_context?: {status: string; source_url?: string; scope?: string; entries?: Array<Record<string, unknown>>};
   id: string; text?: string | null; quarter?: number | null; clock?: string | null; down?: number | null; distance?: number | null;
   team_id?: string | null; end_team_id?: string | null; yards_to_goal?: number | null; end_yards_to_goal?: number | null;
   home_score?: number | null; away_score?: number | null; yards_gained?: number | null; play_type?: string | null;
@@ -80,7 +82,7 @@ export type Evidence = {
   visualization?: PlayVisualization;
 };
 export type PlayVisualization = {
-  cfb_statistics?: {rows?: Array<Record<string, string | number | null>>; schools?: Record<string, string>;
+  cfb_statistics?: {selected_play?: CFBRecordedPlay; rows?: Array<Record<string, string | number | null>>; schools?: Record<string, string>;
     covered_team_epa?: Array<{team_id: string; team_name?: string | null; epa_per_play: number; plays: number; games: number}>};
   cfb_scoring_events?: Array<{text?: string; quarter?: number; clock?: string; team_id?: string}>;
   sport?: string;

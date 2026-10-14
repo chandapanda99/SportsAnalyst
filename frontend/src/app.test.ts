@@ -637,6 +637,14 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     expect(await screen.findByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.queryByText('The follow-up found a consistent shift.')).toBeNull();
+    await screen.findByText('Which games changed the most?');
+    const galleryLogo = document.querySelector('.recent-subject-badge img') as HTMLImageElement;
+    expect(galleryLogo.getAttribute('src')).toBe('https://a.espncdn.com/i/teamlogos/nfl/500/kc.png');
+    await fireEvent.load(galleryLogo);
+    expect(galleryLogo.classList.contains('loaded')).toBe(true);
+    await fireEvent.error(galleryLogo);
+    expect(document.querySelector('.recent-subject-badge img')).toBeNull();
+    expect(document.querySelector('.recent-subject-badge')?.textContent?.trim()).toBe('KC');
     await fireEvent.click(await screen.findByText('Which games changed the most?'));
     expect(await screen.findByText('Was it consistent across the sample?')).toBeTruthy();
     expect(screen.getByText('The follow-up found a consistent shift.')).toBeTruthy();

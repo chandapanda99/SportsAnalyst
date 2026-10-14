@@ -141,6 +141,13 @@ Soccer player investigations retain competition-wide preparation to avoid exclud
 historical clubs not in that current directory can still be discovered through explicit season fixture downloads. Library package badges describe full competition
 downloads, not a small team snapshot. Clearing a competition removes its scoped snapshots and raw caches without deleting saved investigations.
 
+## NFL game browsing
+
+NFL representative-play tablets also provide a recorded-game browser: search, previous/next, and return to the cited play. Browsing reads only that game's rows
+from the synced season, without applying the investigation's team, player or situation filters. Opponent, special-teams and missing-EPA plays remain visible.
+Available participation, charting and identity data enrich the same schematic. Browsing does not modify report evidence; a changed snapshot is labeled, and
+the original cited play remains available when full-game data has been cleared or cannot load. Local installations and durable-storage deployments use the same path.
+
 ## College football: FBS and FCS
 
 The College Football tab discovers teams by **browse season → subdivision → conference/independents → school**.
@@ -161,6 +168,13 @@ Empty or unverifiable team-roster responses now fall back to paginated, season-s
 Verified completed games provide an additional historical game-roster fallback, labeled as incomplete season coverage. Fully resolved school/season rosters are cached
 as a lightweight player-search directory; no national roster scan is needed. Conference downloads report cumulative school/season progress, and local progress streams
 use permanent event sequence numbers so completion remains visible when old updates are trimmed.
+
+CFB investigations prepare cached recorded plays for the endpoint windows before evidence selection. The shared diversity selector chooses metric-relevant typical,
+supporting and counterexample plays from covered games; player examples require structured athlete-role IDs. Penalty/no-play rows are excluded from the evidence pool.
+Box-score aggregates keep their own game/attempt denominators; play examples do not replace those totals or establish causality. Selected play IDs, selection reasons,
+narrative formation labels and per-play personnel-source status are available to synthesis, follow-ups and exports. The tablet opens on the cited play and keeps
+full-game browsing available as secondary context. Missing play coverage falls back to explicitly labeled game context. All marker positions remain illustrative;
+formation labels and personnel endpoint entries do not establish tracking, routes, defensive assignments or a verified full on-field lineup.
 
 The data manager supports explicit selected-school downloads; the conference selector also provides an explicit conference download for the selected sync seasons.
 Scoped snapshots coexist in the catalog using team/player partition identities, while game summaries are shared across schools. Cloud replicas coordinate source requests

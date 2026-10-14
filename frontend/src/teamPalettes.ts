@@ -104,6 +104,13 @@ export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette 
 }
 
 export function teamLogoUrl(team: string, sport = 'nfl'): string | null {
+    sport = sport.toLowerCase();
+    if (sport === 'cfb' || sport === 'soccer') {
+        const id = team.trim();
+        if (!/^[1-9]\d*$/.test(id)) return null;
+        return `https://a.espncdn.com/i/teamlogos/${sport === 'cfb' ? 'ncaa' : 'soccer'}/500/${id}.png`;
+    }
+    if (sport !== 'nfl' && sport !== 'nba') return null;
     const normalizedSport = sport.toLowerCase() === 'nba' ? 'nba' : 'nfl';
     const normalized = team.trim().toUpperCase();
     const canonical = normalizedSport === 'nba' ? (NBA_TEAM_ALIASES[normalized] ?? normalized) : normalized;

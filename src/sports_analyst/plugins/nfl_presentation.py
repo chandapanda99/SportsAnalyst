@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.analysis.evidence import EvidenceCandidate, SelectedEvidence, select_diverse_evidence
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisWindow,
@@ -40,7 +40,11 @@ class NFLPresentationMixin:
         primary_source: str = "epa",
         metric_label: str = "EPA",
         per_window: int = 4,
+        include_all: bool = False,
     ) -> list[PlayEvidence]:
+        if include_all:
+            frame = frame.with_columns(
+                (pl.col("epa").cast(pl.Float64, strict=False) if "epa" in frame.columns else pl.lit(None, dtype=pl.Float64)).alias("_epa"))
         required = {"game_id", "play_id", "_epa"}
         if not required <= set(frame.columns):
             return []
@@ -50,7 +54,8 @@ class NFLPresentationMixin:
         metric_column = f"_{primary_source}"
         candidates: list[EvidenceCandidate] = []
         for window, source_frame, source_manifest in sources:
-            scoped = source_frame.filter(pl.col("_epa").is_not_null() & (pl.col("_epa").abs() >= minimum_absolute_epa))
+            scoped = source_frame if include_all else source_frame.filter(
+                pl.col("_epa").is_not_null() & (pl.col("_epa").abs() >= minimum_absolute_epa))
             for row in scoped.iter_rows(named=True):
                 metric_value = row.get(metric_column)
                 if primary_source == "plays_per_game" or metric_value is None:
@@ -85,7 +90,9 @@ class NFLPresentationMixin:
                         period=str(row.get("qtr") or ""),
                     )
                 )
-        selected = select_diverse_evidence(candidates, metric_label=metric_label, per_window=per_window)
+        selected = ([SelectedEvidence(candidate, "typical", "Game browsing context; not selected as report evidence", None, len(candidates))
+                     for candidate in candidates] if include_all
+                    else select_diverse_evidence(candidates, metric_label=metric_label, per_window=per_window))
         records = []
         for selection in selected:
             row, source_manifest = selection.candidate.payload
@@ -154,14 +161,14 @@ class NFLPresentationMixin:
                     description=str(row.get("desc") or "Play description unavailable"),
                     epa=round(float(row["_epa"]), 4) if row["_epa"] is not None else None,
                     supporting=selection.role != "counterexample",
-                    window=selection.candidate.window,
-                    evidence_role=selection.role,
+                    window=None if include_all else selection.candidate.window,
+                    evidence_role=None if include_all else selection.role,
                     selection_reason=selection.reason,
                     selection_metric=selection.selection_metric,
-                    candidate_pool_size=selection.candidate_pool_size,
-                    selector_version=selection.selector_version,
+                    candidate_pool_size=None if include_all else selection.candidate_pool_size,
+                    selector_version=None if include_all else selection.selector_version,
                     dataset_manifest_id=source_manifest.manifest_id,
-                    tool_execution_id=execution_id,
+                    tool_execution_id=None if include_all else execution_id,
                     visualization=visualization,
                 )
             )

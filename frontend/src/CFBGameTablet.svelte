@@ -24,7 +24,9 @@
       const response = await api.cfbPlays(investigationId, evidenceId);
       if (play.evidence_id === evidenceId && version === requestVersion) {
         detail = response;
-        selectedId = (response.plays.find(event => event.down != null && event.down > 0 && !/kickoff|punt|field goal|extra point/i.test(event.play_type ?? '')) ?? response.plays[0])?.id ?? '';
+        selectedId = (response.plays.find(event => event.id === String(play.visualization?.cfb_statistics?.selected_play?.id ?? play.play_id))
+          ?? response.plays.find(event => event.down != null && event.down > 0 && !/kickoff|punt|field goal|extra point/i.test(event.play_type ?? ''))
+          ?? response.plays[0])?.id ?? '';
       }
     } catch (problem) { if (play.evidence_id === evidenceId && version === requestVersion) detailError = String(problem); }
     finally { if (play.evidence_id === evidenceId && version === requestVersion) loading = false; }
@@ -46,13 +48,17 @@
     <p>{context?.game_date?.slice(0, 10)} · {play.window} · Game {play.game_id}</p></div>
     <button type="button" aria-label="Close game evidence" on:click={onclose}>×</button></header>
   <p>These are recorded box-score statistics and scoring events, not tracking data or an inferred formation.</p>
+  {#if play.play_id !== 0}
+    <p><strong>Selected play · {play.selection_metric ?? 'Recorded context'}</strong> · {play.evidence_role ?? 'example'}</p>
+    <p>{play.selection_reason}</p>
+  {/if}
   {#each rows as row}
     <p>Recorded school: {context?.cfb_statistics?.schools?.[String(row.team_id)] ?? `ESPN team ${row.team_id ?? 'not recorded'}`}</p>
     <dl>{#each Object.entries(row).filter(([key]) => !['game_id', 'season', 'team_id', 'athlete_id'].includes(key)) as [key, value]}
       <div><dt>{key.replaceAll('_', ' ')}</dt><dd>{value ?? 'Not recorded'}</dd></div>
     {/each}</dl>
   {/each}
-  <h4>Recorded scoring events</h4>
+  <h4>Recorded scoring events · game context</h4>
   {#if events.length}<ol>{#each events as event}<li>Q{event.quarter ?? '?'} {event.clock ?? ''} · {event.text}</li>{/each}</ol>
   {:else}<p>No scoring-event section was recorded in this snapshot.</p>{/if}
   {#if loading}<p role="status">Loading recorded plays and participants…</p>{/if}

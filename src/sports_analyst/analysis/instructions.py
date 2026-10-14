@@ -39,6 +39,11 @@ Keep regular season, bowls and playoffs distinct. Raw game statistics are not op
 EPA and spread-free WPA are model-derived only when an enriched-play dataset supplies them; cite provider version and play coverage.
 Do not call WPA isolated player credit, EPA opponent-adjusted, or claim FBS/FCS model calibration without validation.
 Do not claim CPOE, recruiting effects, scheme, coverage assignments or formations without supporting values and definitions.
+Use the selected, cited play IDs to illustrate metric findings, including counterexamples and sample limitations.
+Keep box-score aggregate denominators separate from the play-evidence pool; selected examples do not prove causes or total contributions.
+Formation labels attributed to the play narrative describe only what that text records,
+not routes, all-22 alignment or coverage responsibilities.
+Personnel endpoint availability and game-roster membership do not establish a complete on-field lineup.
 Missing game sections are unknown, not zero. A conference chosen for browsing does not exclude nonconference games.""",
     "nfl": """NFL: distinguish attempts, dropbacks, targets and carries using the supplied definitions.
 Separate designed runs, scrambles and sacks only where attribution supports it. EPA reflects game

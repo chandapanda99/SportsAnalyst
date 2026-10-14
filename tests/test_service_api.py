@@ -127,6 +127,12 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
 
     monkeypatch.setattr(application.agent, "synthesize", capture_synthesis)
     for season, frame in pbp_pair.items():
+        if season == 2025:
+            context = frame.head(1).with_columns(
+                pl.lit(101).alias("play_id"), pl.lit("BUF").alias("posteam"), pl.lit("KC").alias("defteam"),
+                pl.lit(None, dtype=pl.Float64).alias("epa"), pl.lit(0).alias("qb_dropback"),
+                pl.lit("kickoff").alias("play_type"), pl.lit("Opponent kickoff game context").alias("desc"))
+            frame = pl.concat([frame, context], how="vertical_relaxed")
         source = tmp_path / f"source-{season}.parquet"
         frame.write_parquet(source)
         application.store.save_manifest(application.connector.register_local(source, season))
@@ -229,6 +235,27 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert f'filename="{bundle.run.investigation_id}_analysis_report.html"' in exported.headers["content-disposition"]
     evidence_id = bundle.claims[0].evidence_ids[0]
     assert client.get(f"/api/investigations/{bundle.run.investigation_id}/evidence/{evidence_id}").status_code == 200
+    cited = next(play for play in bundle.play_evidence if play.game_id == "2025_01_KC_BUF")
+    game_url = f"/api/investigations/{bundle.run.investigation_id}/evidence/{cited.evidence_id}/plays"
+    browsed = client.post(game_url)
+    assert browsed.status_code == 200
+    game_plays = browsed.json()["plays"]
+    assert len(game_plays) == 41
+    assert {play["game_id"] for play in game_plays} == {cited.game_id}
+    kickoff = next(play for play in game_plays if play["play_id"] == 101)
+    assert kickoff["epa"] is None and kickoff["visualization"]["possession_team"] == "BUF"
+    assert kickoff["evidence_role"] is None
+    assert next(play for play in game_plays if play["play_id"] == cited.play_id) == cited.model_dump(mode="json")
+    assert len(application.store.get_investigation(bundle.run.investigation_id).play_evidence) == len(bundle.play_evidence)
+    def removed_snapshot(*args, **kwargs):
+        raise FileNotFoundError("Removed snapshot")
+
+    with monkeypatch.context() as missing_data:
+        missing_data.setattr(application, "_load_dataset", removed_snapshot)
+        unavailable = client.post(game_url)
+        assert unavailable.status_code == 200 and unavailable.json()["retryable"]
+        assert unavailable.json()["plays"] == [cited.model_dump(mode="json")]
+    assert client.post(f"/api/investigations/{bundle.run.investigation_id}/evidence/not-a-saved-play/plays").status_code == 404
     batch = client.post(
         f"/api/investigations/{bundle.run.investigation_id}/evidence/batch",
         json={"evidence_ids": bundle.claims[0].evidence_ids},

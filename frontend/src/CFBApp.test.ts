@@ -38,7 +38,12 @@ it('starts a selected-school investigation without requiring a national download
       dataset: 'rosters', season: 2025, row_count: 0, sha256: 'empty', acquired_at: '2026-10-13T19:00:00Z', columns: [],
       availability: 'source_unavailable', availability_message: 'No recorded roster is available for this school/season',
       coverage: {expected_matches: 1, completed_matches: 0}}]);
-    if (url.pathname === '/api/investigations') return response([]);
+    if (url.pathname === '/api/investigations') return response(url.searchParams.get('sport') === 'cfb' ? [{
+      run: {investigation_id: 'saved-school', sport: 'cfb', question: 'Saved college comparison',
+        subject: {type: 'team', id: '1', display_name: 'Selected School'}, created_at: '2026-10-13T19:00:00Z',
+        scope: {team: '1', season_type: 'REG', baseline: {season: 2024, weeks: [1, 22]}, comparison: {season: 2025, weeks: [1, 22]}}},
+      summary: 'Recorded comparison', fallback_used: true,
+    }] : []);
     if (url.pathname === '/api/investigations/stream' && init?.method === 'POST') {
       submitted = JSON.parse(String(init.body));
       return new Response('data: {"stage":"preparing","message":"Preparing selected school games","progress":0.15}\n\n',
@@ -49,6 +54,8 @@ it('starts a selected-school investigation without requiring a national download
   vi.stubGlobal('fetch', fetch);
   render(App);
   await fireEvent.click(await screen.findByRole('button', {name: 'College Football'}));
+  await screen.findByText('Saved college comparison');
+  expect(document.querySelector('.recent-subject-badge img')?.getAttribute('src')).toBe('https://a.espncdn.com/i/teamlogos/ncaa/500/1.png');
   await screen.findByRole('option', {name: 'Selected Conference'});
   await fireEvent.change(screen.getByLabelText('Conference'), {target: {value: '8'}});
   await screen.findByRole('option', {name: 'Selected School'});

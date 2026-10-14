@@ -151,15 +151,18 @@ def source(monkeypatch):
             return {
                 "items": [
                     {
-                        "id": f"{game}-pass",
-                        "text": "Transfer QB recorded pass",
-                        "type": {"text": "Pass"},
-                        "start": {"down": 1, "distance": 10, "yardsToEndzone": 60, "team": {"id": "1"}},
+                        "id": f"{game}0000000000001",
+                        "text": "Shotgun Transfer QB complete to receiver",
+                        "type": {"text": "Pass Reception"},
+                        "statYardage": 15,
+                        "start": {"down": 3, "distance": 10, "yardsToEndzone": 60, "team": {"id": "1"}},
                         "end": {"yardsToEndzone": 45, "team": {"id": "1"}},
                         "participants": [{"type": "passer", "athlete": {"id": "10"}}],
                     }
                 ]
             }
+        if path.endswith("/personnel"):
+            return {"items": [{"description": "Recorded personnel context"}]}
         if path.endswith("/summary"):
             game = query["event"][0]
             if game in failing:
@@ -476,6 +479,15 @@ def test_investigation_prepares_team_and_transfer_player_evidence_with_weighted_
 
     application.agent = Agent()
     bundle = application.investigate(request, "cfb-end-to-end")
+    assert all(play.play_id > 0 for play in bundle.play_evidence)
+    assert {play.window for play in bundle.play_evidence} == {"baseline", "comparison"}
+    assert all(play.selection_reason and play.candidate_pool_size for play in bundle.play_evidence)
+    assert all(play.visualization.cfb_statistics["selected_play"]["formation"] == "Shotgun" for play in bundle.play_evidence)
+    assert all(play.visualization.cfb_statistics["selected_play"]["personnel_context"]["status"] == "recorded"
+               for play in bundle.play_evidence)
+    from sports_analyst.presentation.reports import render_markdown
+    exported = render_markdown(bundle)
+    assert "Formation: Shotgun" in exported and str(bundle.play_evidence[0].play_id) in exported
     assert client.get("/api/investigations/cfb-end-to-end").status_code == 200
     game = bundle.play_evidence[0]
     assert client.get(f"/api/investigations/cfb-end-to-end/evidence/{game.evidence_id}").json()["sport"] == "cfb"
@@ -485,6 +497,7 @@ def test_investigation_prepares_team_and_transfer_player_evidence_with_weighted_
     assert detail.json()["plays"][0]["yards_to_goal"] == 60
     child = application.follow_up("cfb-end-to-end", "Which games were covered?", "cfb-follow-up")
     assert child.run.sport == "cfb" and child.aggregate_evidence == bundle.aggregate_evidence
+    assert child.play_evidence == bundle.play_evidence
 
 
 def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, monkeypatch):
@@ -502,6 +515,69 @@ def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, mo
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(lambda source: source.get(url), sources)) == [{"id": "1"}, {"id": "1"}]
     assert count[url] == 1
+
+
+def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified_plays(tmp_path, source, monkeypatch):
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, langsmith_tracing=False))
+    original = CFBSource._request
+    failed = [True]
+
+    def request_source(url):
+        if urlparse(url).path.endswith("/plays"):
+            game = urlparse(url).path.split("/competitions/")[1].split("/")[0]
+            if game == "20242" and failed[0]:
+                failed[0] = False
+                raise TimeoutError("One source game will succeed on retry")
+            prototype = original(url)["items"][0]
+            return {"items": [{**prototype, "id": f"{game}{index + 1:02}", "statYardage": yards,
+                "text": "Shotgun complete to receiver" if index != 3 else "Penalty, NO PLAY",
+                "participants": [{"type": "passer", "athlete": {"id": "99" if index == 2 else "10"}}]}
+                for index, yards in enumerate((0, 10, 20, 99))]}
+        return original(url)
+
+    monkeypatch.setattr(CFBSource, "_request", staticmethod(request_source))
+    request = AnalysisRequest(sport="cfb", question="Explain third-down conversion", analysis_domain="offense",
+        subject={"type": "team", "id": "1"}, metrics=["third_down_rate"],
+        scope={"team": "1", "baseline_season": 2024, "comparison_season": 2025, "comparison_design": "full_seasons"})
+    partition, _ = application._prepare_cfb(request, "partial-play-evidence")
+    assert application.store.manifest_for_season(2024, "recorded_plays", "cfb", partition_key=partition).availability == "partial"
+    application._prepare_cfb(request, "resumed-play-evidence")
+    manifests = {year: application.store.manifest_for_season(year, "schedules", "cfb", partition_key=partition) for year in (2024, 2025)}
+    datasets = {year: application._load_dataset(application.connectors["cfb"], manifest) for year, manifest in manifests.items()}
+    supplemental, saved = {}, {}
+    for dataset in ("recorded_plays", "team_stats", "player_stats"):
+        saved[dataset] = {year: application.store.manifest_for_season(year, dataset, "cfb", partition_key=partition) for year in manifests}
+        supplemental[dataset] = {year: application._load_dataset(application.connectors["cfb"], manifest)
+                                 for year, manifest in saved[dataset].items()}
+    result = CFBPlugin().analyze(request, datasets, manifests, supplemental, saved)
+    assert len(result.play_evidence) == 8
+    assert {play.evidence_role for play in result.play_evidence} == {"typical", "metric_example", "supports_change", "counterexample"}
+    assert all(play.candidate_pool_size == 6 and not str(play.play_id).endswith("04") for play in result.play_evidence)
+    assert result.aggregate_evidence[0].baseline_value == .2 and result.aggregate_evidence[0].comparison_value == .4
+    player = request.model_copy(update={"subject": request.subject.model_copy(update={"type": "player", "id": "10"}),
+                                       "analysis_domain": "quarterback", "metrics": ["passing_yards"]})
+    player_partition, _ = application._prepare_cfb(player, "player-play-evidence")
+    for year in manifests:
+        player_manifest = application.store.manifest_for_season(year, "player_stats", "cfb", partition_key=player_partition)
+        supplemental["player_stats"][year] = application._load_dataset(application.connectors["cfb"], player_manifest)
+    result = CFBPlugin().analyze(player, datasets, manifests, supplemental, saved)
+    assert result.play_evidence and all(not str(play.play_id).endswith(("03", "04")) for play in result.play_evidence)
+    assert all(play.dataset_manifest_id in {manifest.manifest_id for manifest in saved["recorded_plays"].values()}
+               for play in result.play_evidence)
+    supplemental["enriched_plays"], saved["enriched_plays"] = {}, {}
+    for year, frame in supplemental["recorded_plays"].items():
+        supplemental["enriched_plays"][year] = pl.from_dicts([
+            {**row, "scrimmage": row["scrimmage"] and not row["play_id"].endswith("01"),
+             "epa": .2 if row["play_id"].endswith("02") else -.3,
+             "provider_version": "verified-test-model", "model_family": "SportsDataverse test EP"}
+            for row in frame.to_dicts()], infer_schema_length=None)
+        saved["enriched_plays"][year] = saved["recorded_plays"][year].model_copy(
+            update={"dataset": "enriched_plays", "manifest_id": f"modeled-{year}"})
+    advanced = request.model_copy(update={"metrics": ["passing_epa_per_play"]})
+    modeled_result = CFBPlugin().analyze(advanced, datasets, manifests, supplemental, saved)
+    assert all(not str(play.play_id).endswith(("01", "04")) for play in modeled_result.play_evidence)
+    assert all(play.visualization.cfb_statistics["selected_play"]["model_provenance"]["provider_version"] == "verified-test-model"
+               for play in modeled_result.play_evidence)
 
 
 def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp_path, source, monkeypatch):

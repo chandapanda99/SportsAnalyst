@@ -88,6 +88,13 @@ def recorded_play(play, summary, directory=None):
                 "identity_source": "ESPN structured participant",
             }
         )
+    text = str(play.get("text") or "")
+    kind = str((play.get("type") or {}).get("text") or "").lower()
+    formation = re.search(r"\b(No Huddle[- ]Shotgun|Shotgun|Wildcat|Pistol|I-Formation)\b", text, re.I)
+    no_play = kind == "penalty" or bool(re.search(r"\bno play\b|play nullified", text, re.I))
+    roles = {entry["role"] for entry in participants}
+    is_pass = bool(roles & {"passer", "receiver"}) or any(token in kind for token in ("pass", "sack", "interception"))
+    is_rush = "rusher" in roles or "rush" in kind or kind == "run"
     return {
         "id": str(play.get("id") or ""),
         "text": play.get("text"),
@@ -105,5 +112,17 @@ def recorded_play(play, summary, directory=None):
         "play_type": (play.get("type") or {}).get("text"),
         "participants": participants,
         "scoring_play": play.get("scoringPlay"),
-        "alignment_source": "Illustrative actor positions; no recorded formation or tracking coordinates",
+        "pass": is_pass, "rush": is_rush,
+        "scrimmage": (is_pass or is_rush) and not no_play,
+        "no_play": no_play,
+        "complete": ("pass reception" in kind or "pass completion" in kind or "passing touchdown" in kind
+                     or bool(re.search(r"\bcomplete(?:d)? to\b", text, re.I)))
+                    and not bool(re.search(r"\bincomplete\b|intercept", text, re.I)),
+        "interception": "intercept" in kind or bool(re.search(r"\bintercepted\b", text, re.I)),
+        "turnover": play.get("isTurnover"),
+        "touchdown": bool(play.get("scoringPlay") and play.get("scoreValue") == 6),
+        "formation": formation.group(1) if formation else None,
+        "formation_source": "Recorded play narrative" if formation else None,
+        "source_url": play.get("$ref"),
+        "alignment_source": "Illustrative actor placement; formation labels do not supply tracking coordinates",
     }

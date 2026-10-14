@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import logging
 import math
 import time
@@ -29,7 +30,7 @@ class CFBCoverageUnavailable(ValueError):
 
 
 CFB_BASE_DATASETS = ["schedules", "team_stats", "player_stats", "rosters", "scoring_events"]
-CFB_DATASETS = [*CFB_BASE_DATASETS, "enriched_plays"]
+CFB_DATASETS = [*CFB_BASE_DATASETS, "recorded_plays", "enriched_plays"]
 TEAM_FIELDS = {
     "totalYards": "total_yards",
     "netPassingYards": "passing_yards",
@@ -412,8 +413,54 @@ class SportsDataverseCFBConnector:
             "plays": rows,
             "teams": list(directory[0].values()),
             "coverage": f"{len(rows)} recorded source plays; participant actors are not a full on-field lineup",
-            "message": "No player tracking, routes, coverage assignments or pre-snap formation are supplied by this feed.",
+            "message": "Actor locations are illustrative. Narrative formation labels appear only where recorded; "
+                       "full lineups, tracking and assignments are not verified.",
         }
+
+    def prepare_recorded(self, season, partition, schedule, callback=None, progress=None):
+        rows, completed = [], 0
+        games = schedule["game_id"].unique().to_list()
+        with self.source.lease(f"recorded:{partition}:{season}", seconds=1800):
+            for index, game in enumerate(games):
+                if progress:
+                    progress("downloading", "recorded_plays", season, index, len(games),
+                             index / max(1, len(games)), f"Recorded play evidence · game {index + 1}/{len(games)}", True)
+                try:
+                    detail = self.game_plays(game, season)
+                    rows.extend({**row, "play_id": row["id"], "game_id": game, "season": season,
+                                 "teams_json": json.dumps(detail["teams"])} for row in detail["plays"])
+                    completed += 1
+                except OptionalDependencyError:
+                    raise
+                except Exception:
+                    logger.exception("cfb_recorded_plays_unavailable game_id=%s season=%s", game, season)
+            return self.snapshot(season, partition, {"recorded_plays": rows}, len(games), completed, callback)[0]
+
+    def play_personnel(self, game, season, play):
+        game, play = self.validate_id(str(game)), str(play)
+        if not play.isascii() or not play.isdigit() or len(play) > 20:
+            raise ValueError("Selected play must have a valid numeric ESPN play ID")
+        key = f"personnel/v1/{season}/{game}/{play}.json"
+        cached = self.source._cached(key, 3600)
+        if cached is not None:
+            return cached
+        url = f"{CORE}/events/{game}/competitions/{game}/plays/{play}/personnel"
+        try:
+            self.summary(game, season)
+            entries = self.source.collection(url, season_ttl(season), maximum=100)
+            result = {"status": "recorded" if entries else "not_recorded", "source_url": url,
+                      "entries": entries, "scope": "Recorded personnel entries; completeness and alignment are not established"}
+            self.source.store(key, result)
+            return result
+        except OptionalDependencyError:
+            raise
+        except Exception as error:
+            missing = getattr(getattr(error, "response", None), "status_code", None) == 404
+            result = {"status": "not_recorded" if missing else "unavailable", "source_url": url,
+                      "entries": [], "scope": "No verified personnel data for this selected play; not evidence of an empty lineup"}
+            if missing:
+                self.source.store(key, result)
+            return result
 
     def prepare_enriched(self, season, partition, schedule, manifest_callback=None, progress=None):
         """Enrich selected completed games only; ordinary box-score startup stays cheap."""
@@ -527,7 +574,7 @@ class SportsDataverseCFBConnector:
                 partition_key=partition,
                 dataset=dataset,
                 season=season,
-                source_url=SITE,
+                source_url=CORE if dataset == "recorded_plays" else SITE,
                 package_version=importlib.metadata.version("sportsdataverse"),
                 license="See ESPN data terms.",
                 attribution="ESPN data acquired through SportsDataverse.",
@@ -708,11 +755,14 @@ class SportsDataverseCFBConnector:
                                           f"{_school} · school/season {_index + 1}/{_selections} · {detail or dataset}", True)
 
                 scoped_progress("downloading", "schedules", season, 0, 1, detail="Starting selected-school preparation")
-                base = [name for name in selected if name != "enriched_plays"]
-                if "enriched_plays" in selected and "schedules" not in base:
+                base = [name for name in selected if name not in {"enriched_plays", "recorded_plays"}]
+                if set(selected) & {"enriched_plays", "recorded_plays"} and "schedules" not in base:
                     base.append("schedules")
                 prepared = self.prepare(season, team_id=team, progress=scoped_progress, manifest_callback=manifest_callback, datasets=base)
                 manifests.extend(prepared)
+                if "recorded_plays" in selected:
+                    schedule = self.load(next(item for item in prepared if item.dataset == "schedules"))
+                    manifests.append(self.prepare_recorded(season, f"team:{team}", schedule, manifest_callback, scoped_progress))
                 if "enriched_plays" in selected:
                     schedule = self.load(next(item for item in prepared if item.dataset == "schedules"))
 

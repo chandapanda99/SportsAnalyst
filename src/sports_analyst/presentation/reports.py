@@ -26,6 +26,18 @@ def _domain_label(domain: str) -> str:
     return {"passing": "passing", "rushing": "rushing", "offense": "overall offensive"}.get(domain, domain)
 
 
+def _play_context(play) -> str:
+    parts = [value for value in (play.window, play.evidence_role, play.selection_metric, play.selection_reason) if value]
+    context = play.visualization.cfb_statistics if play.visualization and play.sport == "cfb" else {}
+    selected = context.get("selected_play") or {}
+    if selected.get("formation"):
+        parts.append(f"Formation: {selected['formation']} ({selected.get('formation_source', 'source recorded')}); not exact alignment")
+    personnel = selected.get("personnel_context") or {}
+    if personnel:
+        parts.append(f"Personnel: {personnel.get('status', 'unknown')}. {personnel.get('scope', '')}")
+    return " · ".join(parts)
+
+
 def render_markdown(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
@@ -57,6 +69,8 @@ def render_markdown(bundle: InvestigationBundle) -> str:
     for play in bundle.play_evidence:
         value = f"EPA {play.epa}" if play.epa is not None else f"Value {play.metric_value}" if play.metric_value is not None else "Play"
         lines.append(f"- `{play.game_id}/{play.play_id}` — {value}: {play.description} (`{play.evidence_id}`)")
+        if _play_context(play):
+            lines.append(f"  {_play_context(play)}")
     lines.extend(["", "## Methodological caveats", ""])
     lines.extend(f"- {caveat}" for caveat in bundle.methodological_caveats)
     lines.extend(["", "## Data provenance", ""])
@@ -130,7 +144,7 @@ def render_html(bundle: InvestigationBundle) -> str:
         f"<td>{html.escape(play.game_id)}</td>"
         f"<td>{play.play_id}</td>"
         f"<td>{play.epa if play.epa is not None else play.metric_value}</td>"
-        f"<td>{html.escape(play.description)}</td>"
+        f"<td>{html.escape(play.description)}<br><small>{html.escape(_play_context(play))}</small></td>"
         "</tr>"
         for play in bundle.play_evidence
     )

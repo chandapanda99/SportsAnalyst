@@ -136,6 +136,9 @@ export const api = {
     seasons?: number[]; subdivisions?: Array<{value: string; label: string}>; conferences: TeamOption[]; teams: TeamOption[]; cached: boolean;
   }>(`/api/sports/cfb/catalog?${new URLSearchParams({...season ? {season: String(season)} : {}, ...subdivision ? {subdivision} : {}, ...conferenceId ? {conference_id: conferenceId} : {}})}`),
   cfbPlayerSeasons: (id: string) => json<{seasons: number[]}>(`/api/sports/cfb/players/${encodeURIComponent(id)}/seasons`),
+  nflPlays: (investigation: string, evidence: string) => json<{
+    plays: Evidence[]; coverage: string; message?: string; retryable?: boolean;
+  }>(`/api/investigations/${encodeURIComponent(investigation)}/evidence/${encodeURIComponent(evidence)}/plays`, {method: 'POST'}),
   cfbPlays: (investigation: string, evidence: string) => json<{
     plays: CFBRecordedPlay[]; teams?: CFBTeamContext[];
     coverage: string; message?: string;
