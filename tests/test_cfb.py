@@ -1,6 +1,7 @@
 """Major conference, scoped preparation, transfer, and evidence workflows."""
 
 import threading
+import json
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -569,15 +570,69 @@ def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified
         supplemental["enriched_plays"][year] = pl.from_dicts([
             {**row, "scrimmage": row["scrimmage"] and not row["play_id"].endswith("01"),
              "epa": .2 if row["play_id"].endswith("02") else -.3,
+             "air_yards": (row["yards_gained"] - 2) if row.get("complete") and not row.get("no_play") else None,
+             "yards_after_catch": 2 if row.get("complete") and not row.get("no_play") else None,
+             "provider_context_json": json.dumps({"qb_hurry": True, "cp": .75,
+                                                   "penalty_negated_play": row["play_id"].endswith("03")}),
              "provider_version": "verified-test-model", "model_family": "SportsDataverse test EP"}
             for row in frame.to_dicts()], infer_schema_length=None)
         saved["enriched_plays"][year] = saved["recorded_plays"][year].model_copy(
             update={"dataset": "enriched_plays", "manifest_id": f"modeled-{year}"})
     advanced = request.model_copy(update={"metrics": ["passing_epa_per_play"]})
     modeled_result = CFBPlugin().analyze(advanced, datasets, manifests, supplemental, saved)
-    assert all(not str(play.play_id).endswith(("01", "04")) for play in modeled_result.play_evidence)
+    assert all(not str(play.play_id).endswith(("01", "03", "04")) for play in modeled_result.play_evidence)
     assert all(play.visualization.cfb_statistics["selected_play"]["model_provenance"]["provider_version"] == "verified-test-model"
                for play in modeled_result.play_evidence)
+    assert all(play.visualization.cfb_statistics["provider_context"]["qb_hurry"] is True for play in modeled_result.play_evidence)
+    assert all(play.visualization.air_yards is not None for play in modeled_result.play_evidence)
+
+
+def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometry(tmp_path, source, monkeypatch):
+    from types import SimpleNamespace
+
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, langsmith_tracing=False))
+    connector = application.connectors["cfb"]
+    raw = {**summary("20251", 2025), "drives": {"previous": []}}
+    monkeypatch.setattr(connector, "summary", lambda *args: raw)
+    source_plays = [{"id": "101", "type": {"text": "Pass Reception"},
+                     "text": "Pass complete to receiver caught at ABC35", "statYardage": 15,
+                     "start": {"yardsToEndzone": 60, "team": {"id": "1"}},
+                     "end": {"yardsToEndzone": 45, "team": {"id": "1"}}},
+                    {"id": "102", "type": {"text": "Pass Incompletion"}, "text": "Pass incomplete",
+                     "start": {"yardsToEndzone": 60, "team": {"id": "1"}}}]
+    monkeypatch.setattr(connector.source, "collection", lambda *args, **kwargs: source_plays)
+    calls = []
+
+    def clean(game, summary, *, context_only=False):
+        calls.append(context_only)
+        return {"plays": [{"id": "101", "air_yards": 10, "yards_after_catch": 99,
+                           "air_yardsToEndzone": 50, "pass_direction": "right", "pass_depth": "short",
+                           "qb_hurry": False, "cp": 0.0, "gameSpread": 0.0},
+                          {"id": "102", "air_yards": None, "yards_after_catch": None}]}
+
+    monkeypatch.setattr("sports_analyst.datasets.cfb_enrichment.process_summary", clean)
+    first = connector.game_plays("20251", 2025)
+    second = connector.game_plays("20251", 2025)
+    assert calls == [True]  # Cached lightweight cleaning, never the full model pipeline.
+    assert first == second
+    assert first["plays"][0]["air_yards"] == 10
+    assert first["plays"][0]["yards_after_catch"] == 5  # Trust recorded net yards, not the inconsistent 99.
+    assert first["plays"][0]["pass_direction"] == "right"
+    context = json.loads(first["plays"][0]["provider_context_json"])
+    assert context["qb_hurry"] is False and context["cp"] == 0.0
+    assert "gameSpread" not in context
+    assert first["plays"][1].get("air_yards") is None
+    assert first["plays"][1].get("yards_after_catch") is None
+    saved = {"play_id": "101", "participants": [], "epa": .25, "provider_version": "saved-model",
+             "source_play_count": 2}
+    item = SimpleNamespace(sport="cfb", game_id="20251", season=2025,
+                           visualization=SimpleNamespace(cfb_statistics={"modeled_plays": [saved], "teams": first["teams"]}))
+    monkeypatch.setattr(application, "evidence", lambda *args: item)
+    response = TestClient(create_app(application)).post("/api/investigations/legacy/evidence/play/plays")
+    assert response.status_code == 200
+    row = response.json()["plays"][0]
+    assert (row["air_yards"], row["yards_after_catch"], row["epa"]) == (10, 5, .25)
+    assert "air_yards" not in saved  # Saved analysis remains immutable.
 
 
 def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp_path, source, monkeypatch):
@@ -594,7 +649,9 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
             return [
                 {
                     "id": f"{game}-{index}",
-                    "text": "Recorded pass",
+                    "text": "Recorded pass complete to receiver",
+                    "type": {"text": "Pass Reception"},
+                    "statYardage": 15,
                     "period": {"number": 1},
                     "participants": [{"type": "passer", "athlete": {"$ref": f"{CORE}/athletes/10"}}] if index == 0 else [],
                 }
@@ -616,6 +673,10 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
                     "rush": False,
                     "EPA": epa,
                     "wpa_naive": 0.01,
+                    "air_yards": 10 if game.startswith("2025") else None,
+                    "yards_after_catch": 99 if game.startswith("2025") else None,
+                    "pass_direction": "right",
+                    "pass_depth": "short",
                     # This name/ID is deliberately not authoritative.
                     "passer_player_name": "Transfer QB",
                     "passer_player_id": "10",
@@ -650,6 +711,13 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
     assert result.aggregate_evidence[0].sample_size == 4
     assert result.aggregate_evidence[1].comparison_value == 0.04
     assert "modeled_plays" in result.play_evidence[0].visualization.cfb_statistics
+    assert modeled[2025]["air_yards"].to_list() == [10.0] * 4
+    assert modeled[2025]["yards_after_catch"].to_list() == [5.0] * 4
+    assert modeled[2025]["pass_direction"].to_list() == ["right"] * 4
+    assert modeled[2025]["render_context_version"].to_list() == [2] * 4
+    saved_rows = [row for play in result.play_evidence if play.season == 2025
+                  for row in play.visualization.cfb_statistics["modeled_plays"]]
+    assert saved_rows and all(row["air_yards"] == 10 for row in saved_rows)
     assert result.play_evidence[0].visualization.cfb_statistics["covered_team_epa"][0]["epa_per_play"] == 1.5
     player = request.subject.model_copy(update={"type": "player", "id": "10"})
     assert CFBPlugin.value("player_passing_epa", schedules[2024], modeled[2024], player) == (1.0, 2)
@@ -658,6 +726,25 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
     assert CFBPlugin.value("player_passing_cpoe", schedules[2024], cpoe, player) == (4.0, 2)
     application._prepare_cfb(request, "advanced-repeat")
     assert all(count == 1 for count in modeled_calls.values())
+    # Rendering context is also analytical evidence, with play-level coverage,
+    # unique structured attribution and missing values excluded from the mean.
+    contextual = {year: data.with_columns(
+        pl.when(pl.col("passer_id").is_not_null()).then(pl.lit(10.0 if year == 2024 else 12.0)).otherwise(None).alias("air_yards"),
+        pl.when(pl.col("passer_id").is_not_null()).then(pl.lit(5.0 if year == 2024 else 3.0)).otherwise(None).alias("yards_after_catch"),
+    ) for year, data in modeled.items()}
+    enriched_result = CFBPlugin().analyze(request, schedules, manifests, {"enriched_plays": contextual})
+    context_evidence = {item.metric: item for item in enriched_result.aggregate_evidence}
+    assert (context_evidence["passing_air_yards"].baseline_value, context_evidence["passing_air_yards"].comparison_value) == (10, 12)
+    assert (context_evidence["passing_yac"].baseline_value, context_evidence["passing_yac"].comparison_value) == (5, 3)
+    assert context_evidence["passing_air_yards"].sample_size == 2
+    assert context_evidence["passing_air_yards"].context["supporting_context"] is True
+    assert context_evidence["passing_air_yards"].context["play_context_coverage"]["passing_air_yards"]["baseline"] == {"available": 2, "eligible": 4}
+    assert CFBPlugin.value("player_passing_air_yards", schedules[2024], contextual[2024], player) == (10, 2)
+    from sports_analyst.analysis.agents import _citation_ledger
+    _, agent_aggregates, agent_plays = _citation_ledger(enriched_result.aggregate_evidence, enriched_result.play_evidence)
+    assert any(item["metric"] == "passing_air_yards" for item in agent_aggregates)
+    assert any(row.get("air_yards") == 12 for item in agent_plays
+               for row in item["visualization"]["cfb_statistics"].get("modeled_plays", []))
     mismatched = modeled[2025].with_columns(pl.lit("different-provider").alias("provider_version"))
     with pytest.raises(ValueError, match="No comparable"):
         CFBPlugin().analyze(request, schedules, manifests, {"enriched_plays": {2024: modeled[2024], 2025: mismatched}})

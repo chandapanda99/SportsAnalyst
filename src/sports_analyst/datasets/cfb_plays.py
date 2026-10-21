@@ -101,6 +101,8 @@ def recorded_play(play, summary, directory=None):
         "quarter": (play.get("period") or {}).get("number"),
         "clock": (play.get("clock") or {}).get("displayValue"),
         "down": start.get("down"),
+        "end_down": end.get("down"),
+        "end_distance": finite(end.get("distance")),
         "distance": finite(start.get("distance")),
         "yards_to_goal": finite(start.get("yardsToEndzone")),
         "end_yards_to_goal": finite(end.get("yardsToEndzone")),

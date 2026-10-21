@@ -493,10 +493,20 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             if getattr(item, "sport", None) != "cfb":
                 raise HTTPException(422, "Recorded NFL or college-football play evidence is required")
             context = item.visualization.cfb_statistics if item.visualization else None
+            from sports_analyst.datasets.cfb_rendering import RENDER_FIELDS, RENDER_VERSION, with_render_context
+
             modeled = (context or {}).get("modeled_plays") or []
             if modeled and all("participants" in row for row in modeled):
                 first = modeled[0]
-                return {"plays": [{**row, "id": row["play_id"]} for row in modeled],
+                rows = [{**row, "id": row["play_id"]} for row in modeled]
+                if any((row.get("render_context_version") or 0) < RENDER_VERSION for row in rows):
+                    try:
+                        refreshed = service.connectors["cfb"].game_plays(item.game_id, item.season)
+                        by_id = {row["id"]: row for row in refreshed["plays"]}
+                        rows = [with_render_context(row, by_id.get(row["id"], {})) for row in rows]
+                    except Exception:
+                        logger.warning("cfb_saved_render_context_unavailable game_id=%s", item.game_id)
+                return {"plays": rows,
                         "teams": (context or {}).get("teams") or [],
                         "coverage": f"{len(modeled)}/{first['source_play_count']} source plays processed; modeled EPA and spread-free WPA",
                         "message": f"SportsDataverse {first['provider_version']}; athlete IDs from structured ESPN participants only"}
@@ -510,14 +520,17 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                         "coverage": "Saved selected-play evidence; the remaining game could not load",
                         "message": "Saved evidence is preserved. Full-game browsing requires a source retry."}
             if selected:
-                detail["plays"] = [selected if row["id"] == selected["id"] else row for row in detail["plays"]]
+                detail["plays"] = [with_render_context(selected, row) if row["id"] == selected["id"] else row for row in detail["plays"]]
                 if not any(row["id"] == selected["id"] for row in detail["plays"]):
                     detail["plays"].append(selected)
             if modeled:
                 by_id = {row["play_id"]: row for row in modeled}
                 for row in detail["plays"]:
                     saved = by_id.get(row["id"], {})
-                    row.update({field: saved.get(field) for field in ("epa", "wpa", "cpoe", "xpass", "pass_oe")})
+                    refreshed = with_render_context(saved, row)
+                    row.update({field: refreshed[field] for field in RENDER_FIELDS if refreshed.get(field) is not None})
+                    row.update({field: saved[field] for field in ("epa", "wpa", "cpoe", "cp", "xpass", "pass_oe")
+                                if saved.get(field) is not None})
                 detail["coverage"] += f"; {len(modeled)} plays have saved modeled values"
             return detail
         except KeyError as error:

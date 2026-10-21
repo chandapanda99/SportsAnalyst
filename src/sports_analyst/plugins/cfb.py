@@ -11,6 +11,7 @@ from time import perf_counter
 import polars as pl
 
 from sports_analyst.datasets.cfb import CFB_DATASETS
+from sports_analyst.datasets.cfb_rendering import is_nullified
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -27,6 +28,7 @@ from sports_analyst.models import (
     stable_id,
 )
 from sports_analyst.plugins.cfb_evidence import select_plays
+from sports_analyst.plugins.cfb_context import CONTEXT_LABELS, CONTEXT_METRICS, context_frame, context_values
 from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 # label, subject, domain, numerator, denominator (None means per game), unit
@@ -100,6 +102,10 @@ for key, label, subject, domain, unit in [
     ("player_receiving_wpa", "Attributed target WPA (spread-free)", "player", "receiving", "probability"),
 ]:
     METRICS[key] = (label, subject, domain, ADVANCED[key][0], None, unit)
+
+
+for key, (label, subject, domain) in CONTEXT_LABELS.items():
+    METRICS[key] = (label, subject, domain, CONTEXT_METRICS[key][0], None, "yards")
 
 
 def sha(value):
@@ -211,6 +217,15 @@ class CFBPlugin:
         if metric not in METRICS:
             raise ValueError("Unsupported college-football metric")
         label, subject, domain, numerator, denominator, unit = METRICS[metric]
+        if metric in CONTEXT_METRICS:
+            field, _, kind, role = CONTEXT_METRICS[metric]
+            return MetricDefinition(value=metric, label=label, category=domain,
+                description=f"Mean {field.replace('_', ' ')} on source-covered {kind} plays, derived from ESPN catch/target spot text.",
+                formula=f"mean({field}) over finite source-covered plays",
+                qualifying_plays="Non-null source-derived scrimmage values" + (f" with unique structured {role}" if role else " for the selected possession team"),
+                interpretation="Descriptive target depth or after-catch production; not tracking or causal player credit.",
+                higher_is_better=None, limitations=["Missing catch spots are excluded, never zero.",
+                    "Coverage is era/feed dependent; observed-play averages are not full-season averages unless coverage is complete."])
         if metric in ADVANCED:
             field, reducer, kind, role = ADVANCED[metric]
             return MetricDefinition(
@@ -270,6 +285,9 @@ class CFBPlugin:
     def value(metric, schedule, stats, subject):
         _, _, _, numerator, denominator, _ = METRICS[metric]
         games = set(schedule["game_id"].to_list())
+        if metric in CONTEXT_METRICS:
+            values, _ = context_values(metric, schedule, stats, subject)
+            return (sum(values) / len(values), len(values)) if values else (None, 0)
         if metric in ADVANCED:
             field, reducer, kind, role = ADVANCED[metric]
             identifier = role or "team_id"
@@ -277,6 +295,8 @@ class CFBPlugin:
             if not required <= set(stats.columns):
                 return None, 0
             values = stats.filter(pl.col("game_id").is_in(games) & pl.col("scrimmage") & (pl.col(identifier) == subject.id))
+            if not values.is_empty():
+                values = values.filter(pl.Series([not is_nullified(row) for row in values.to_dicts()]))
             if kind:
                 values = values.filter(pl.col(kind))
             values = (
@@ -316,7 +336,8 @@ class CFBPlugin:
 
     def analyze(self, request, datasets, manifests, supplemental=None, supplemental_manifests=None):
         started = perf_counter()
-        selected = request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["results"])
+        selected = list(request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["results"]))
+        requested_metrics = set(selected)
         subject = request.subject
         if subject is None or any(name not in METRICS or METRICS[name][1] != subject.type for name in selected):
             raise ValueError("Select compatible college-football team/player metrics")
@@ -329,8 +350,21 @@ class CFBPlugin:
         execution_id = stable_id("execution", parameters)
         aggregates, gaps, evidence = [], [], []
         schedules = {name: self.window(datasets[window.season], window, request) for name, window in windows}
+        context_frames = {window.season: context_frame(supplemental.get("recorded_plays", {}).get(window.season, pl.DataFrame()),
+            supplemental.get("enriched_plays", {}).get(window.season, pl.DataFrame())) for _, window in windows}
+        supplemental = {**supplemental, "play_context": context_frames}
+        supporting_context = []
+        for metric, (_, subject_type, domain) in CONTEXT_LABELS.items():
+            if metric not in selected and subject.type == subject_type and request.analysis_domain == domain and all(
+                context_values(metric, schedules[name], context_frames[window.season], subject)[0] for name, window in windows):
+                supporting_context.append(metric)
+        selected += supporting_context
+        context_coverage = {metric: {name: {"available": len(context_values(metric, schedules[name], context_frames[window.season], subject)[0]),
+            "eligible": context_values(metric, schedules[name], context_frames[window.season], subject)[1]}
+            for name, window in windows} for metric, (_, subject_type, domain) in CONTEXT_LABELS.items()
+            if subject_type == subject.type and domain == request.analysis_domain}
         for metric in selected:
-            metric_source = "enriched_plays" if metric in ADVANCED else source
+            metric_source = "play_context" if metric in CONTEXT_METRICS else "enriched_plays" if metric in ADVANCED else source
             frames = [supplemental.get(metric_source, {}).get(window.season, pl.DataFrame()) for _, window in windows]
             if metric in ADVANCED:
                 versions = [
@@ -363,7 +397,11 @@ class CFBPlugin:
                     ),
                     dataset_manifest_ids=ids,
                     tool_execution_id=execution_id,
-                    caveats=(
+                    caveats=([
+                        f"Baseline {before_n}/{context_values(metric, schedules['baseline'], frames[0], subject)[1]} and comparison "
+                        f"{after_n}/{context_values(metric, schedules['comparison'], frames[1], subject)[1]} eligible plays have source-derived values.",
+                        "Observed-play coverage only; missing catch spots are excluded, not zero. Lateral coordinates and alignments are not measured.",
+                    ] if metric in CONTEXT_METRICS else (
                         [
                             f"Baseline {before_n} and comparison {after_n} qualifying processed plays; "
                             "not complete-game or opponent-adjusted estimates.",
@@ -375,11 +413,13 @@ class CFBPlugin:
                             f"comparison {after_n}/{schedules['comparison'].height}.",
                             "Rates use summed numerators/denominators; totals depend on sample size.",
                         ]
-                    ),
+                    )),
                     context={
                         "baseline_sample": before_n,
                         "comparison_sample": after_n,
-                        "sample_definition": "Metric-specific processed plays" if metric in ADVANCED else "Metric-specific recorded games",
+                        "sample_definition": "Source-covered plays" if metric in CONTEXT_METRICS else "Metric-specific processed plays" if metric in ADVANCED else "Metric-specific recorded games",
+                        "supporting_context": metric in supporting_context,
+                        "play_context_coverage": context_coverage,
                         "provider_versions": sorted(versions[0]) if metric in ADVANCED else [],
                         "baseline_schools": self.schools(
                             schedules["baseline"], supplemental.get(source, {}).get(request.scope.baseline.season, pl.DataFrame()), subject
@@ -390,7 +430,7 @@ class CFBPlugin:
                     },
                 )
             )
-        if not aggregates:
+        if not any(item.metric in requested_metrics for item in aggregates):
             raise ValueError("No comparable college-football metrics have attributed coverage in both windows")
         for name, window in windows:
             stats = supplemental.get(source, {}).get(window.season, pl.DataFrame())
@@ -455,7 +495,7 @@ class CFBPlugin:
                     )
                 )
         selected_plays = select_plays(request, schedules, supplemental, supplemental_manifests,
-                                      aggregates, execution_id, METRICS, ADVANCED)
+                                      aggregates, execution_id, METRICS, {**ADVANCED, **CONTEXT_METRICS})
         if selected_plays:
             covered_windows = {item.window for item in selected_plays}
             evidence = selected_plays + [item for item in evidence if item.window not in covered_windows]
@@ -498,6 +538,9 @@ class CFBPlugin:
         if absent:
             caveats.append(f"No verified player-season observations for {absent}; these intermediate seasons were not treated as zero.")
         for item in used:
+            if item.dataset == "recorded_plays":
+                caveats.append(f"Recorded play context {item.season}: {item.coverage.get('completed_matches', 0)}/"
+                    f"{item.coverage.get('expected_matches', 0)} source games acquired. Air/YAC coverage counts refer to acquired plays, not missing games.")
             if item.dataset == "enriched_plays":
                 caveats.append(
                     f"{item.partition_key} {item.season}: {item.coverage.get('completed_matches', 0)}/"

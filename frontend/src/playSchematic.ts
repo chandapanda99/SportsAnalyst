@@ -69,10 +69,10 @@ export const OFFENSIVE_LINE_HALF_WIDTH = 7.2;
 const clamp = (value: number, minimum = FIELD_MIN, maximum = FIELD_MAX) =>
   Math.max(minimum, Math.min(maximum, value));
 
-function hashY(value?: string) {
+function hashY(value?: string, hashFromSideline = NFL_HASH_FROM_SIDELINE) {
   const normalized = value?.trim().toLowerCase() ?? '';
-  if (normalized.startsWith('l')) return NFL_HASH_FROM_SIDELINE;
-  if (normalized.startsWith('r')) return FOOTBALL_FIELD_WIDTH - NFL_HASH_FROM_SIDELINE;
+  if (normalized.startsWith('l')) return hashFromSideline;
+  if (normalized.startsWith('r')) return FOOTBALL_FIELD_WIDTH - hashFromSideline;
   return FIELD_MIDDLE;
 }
 
@@ -658,7 +658,7 @@ function buildPaths(visualization: PlayVisualization, startX: number, originY: n
       }
     } else if (visualization.complete_pass) {
       markers.push({kind: 'catch', label: visualization.receiver ? `Catch · ${visualization.receiver}` : 'Catch', x: exchangeX, y: destinationY});
-      if (Math.abs(finalX - exchangeX) > .6) {
+      if (!visualization.suppress_inferred_yac && Math.abs(finalX - exchangeX) > .6) {
         paths.push({id: 'after-catch', d: curve(exchangeX, destinationY, finalX, destinationY + (destinationY < FIELD_MIDDLE ? -2 : 2)), kind: 'after-catch', label: `${visualization.yards_after_catch ?? Math.round(finalX - exchangeX)} YAC`, endX: finalX, endY: destinationY + (destinationY < FIELD_MIDDLE ? -2 : 2)});
       }
     }
@@ -680,9 +680,9 @@ function buildPaths(visualization: PlayVisualization, startX: number, originY: n
   return {paths, markers};
 }
 
-export function buildPlaySchematic(visualization: PlayVisualization = {}): PlaySchematic {
+export function buildPlaySchematic(visualization: PlayVisualization = {}, hashFromSideline = NFL_HASH_FROM_SIDELINE): PlaySchematic {
   const startX = clamp(10 + (100 - (visualization.yardline_100 ?? 50)));
-  const centerY = hashY(visualization.starting_hash);
+  const centerY = hashY(visualization.starting_hash, hashFromSideline);
   const offenseRecorded = playerRecords(visualization.offense_names, visualization.offense_positions);
   const defenseRecorded = playerRecords(visualization.defense_names, visualization.defense_positions);
   const offense = completeLineup(offenseRecorded, genericOffense(visualization), 'offense');

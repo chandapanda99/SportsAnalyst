@@ -30,6 +30,10 @@ def _play_context(play) -> str:
     parts = [value for value in (play.window, play.evidence_role, play.selection_metric, play.selection_reason) if value]
     context = play.visualization.cfb_statistics if play.visualization and play.sport == "cfb" else {}
     selected = context.get("selected_play") or {}
+    for key, label in (("air_yards", "Air yards"), ("yards_after_catch", "YAC"),
+                       ("pass_direction", "Pass direction"), ("rush_direction", "Rush direction"), ("pass_depth", "Pass depth")):
+        if selected.get(key) is not None:
+            parts.append(f"{label}: {selected[key]} ({selected.get(key + '_source', 'provider-derived context')})")
     if selected.get("formation"):
         parts.append(f"Formation: {selected['formation']} ({selected.get('formation_source', 'source recorded')}); not exact alignment")
     personnel = selected.get("personnel_context") or {}

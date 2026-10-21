@@ -10,6 +10,7 @@ import math
 import re
 
 from sports_analyst.datasets.cfb_plays import recorded_play, teams_and_athletes
+from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
 
@@ -39,7 +40,7 @@ def athlete_roles(play):
     return {f"{role}_id": next(iter(ids)) for role, ids in roles.items() if len(ids) == 1}
 
 
-def process_summary(game, raw):
+def process_summary(game, raw, *, context_only=False):
     """Run the provider's public pipeline against an already acquired summary.
 
     Disable network identity resolution and decision surfaces: the latter need
@@ -59,8 +60,8 @@ def process_summary(game, raw):
         for key in ("boxscore", "format", "gameInfo", "drives", "predictor", "header", "standings"):
             summary.setdefault(key, {})
         processor.json = summary
-        output = processor.run_processing_pipeline(fourth_down_probs=False, two_pt_probs=False)
-        if not processor.ran_pipeline:
+        output = processor.run_cleaning_pipeline() if context_only else processor.run_processing_pipeline(fourth_down_probs=False, two_pt_probs=False)
+        if not (processor.ran_cleaning_pipeline if context_only else processor.ran_pipeline):
             raise ValueError("SportsDataverse could not validate/process this game's play sequence")
     return output
 
@@ -79,6 +80,7 @@ class CFBEnrichment:
                 cached["provenance"]["source_plays"] == cached["provenance"]["processed_plays"]
                 or self.source._cached(key, min(ttl, 300)) is not None
             ):
+                cached["rows"] = hydrate_rows(cached["rows"], cached.get("pipeline") or {}, version)
                 return cached
             # Bound pagination and use the application's timeout/retry transport.
             plays = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
@@ -100,9 +102,11 @@ class CFBEnrichment:
                 if not team.isdigit():
                     continue
                 recorded = by_id[identity]
+                recorded_context = recorded_play(recorded, raw, directory)
                 normalized.append(
                     {
-                        **recorded_play(recorded, raw, directory),
+                        **recorded_context,
+                        **render_context(play, version, recorded_context),
                         "teams_json": json.dumps(list(directory[0].values()), sort_keys=True),
                         "game_id": str(game),
                         "season": season,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
 import json
 import logging
 import math
@@ -409,12 +410,33 @@ class SportsDataverseCFBConnector:
             raise ValueError("No recorded detailed plays are available; this is not proof of an empty game")
         if len({row["id"] for row in rows if row["id"]}) != len(rows):
             raise ValueError("Recorded play IDs are missing or duplicated")
+        # The lightweight provider pipeline derives catch spots and direction, without
+        # loading EP/WP models, resolving names remotely, or downloading a national season.
+        context_message = ""
+        if raw.get("drives"):
+            from sports_analyst.datasets.cfb_enrichment import process_summary
+            from sports_analyst.datasets.cfb_rendering import hydrate_rows
+
+            version = importlib.metadata.version("sportsdataverse")
+            digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
+            key = f"render-context/v2/{season}/{game_id}/{version}-{digest}.json"
+            try:
+                with self.source.lease(f"render-context:{season}:{game_id}", seconds=180):
+                    processed = self.source._cached(key, ttl)
+                    if processed is None:
+                        processed = process_summary(game_id, raw, context_only=True)
+                        self.source.store(key, processed)
+                rows = hydrate_rows(rows, processed, version)
+                context_message = " Available air yards/YAC and directions are provider-derived from play text, not tracking."
+            except Exception:
+                logger.exception("cfb_render_context_unavailable game_id=%s season=%s", game_id, season)
+                context_message = " Additional provider-derived play context could not load; recorded plays remain available."
         return {
             "plays": rows,
             "teams": list(directory[0].values()),
             "coverage": f"{len(rows)} recorded source plays; participant actors are not a full on-field lineup",
             "message": "Actor locations are illustrative. Narrative formation labels appear only where recorded; "
-                       "full lineups, tracking and assignments are not verified.",
+                       "full lineups, tracking and assignments are not verified." + context_message,
         }
 
     def prepare_recorded(self, season, partition, schedule, callback=None, progress=None):

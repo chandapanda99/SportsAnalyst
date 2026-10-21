@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.datasets.cfb_rendering import with_render_context, is_nullified
 from sports_analyst.models import PlayEvidence, PlayVisualization, stable_id
 
 
@@ -26,9 +27,13 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
                 continue
             row = {**recorded}
             model = modeled_rows.get((row["game_id"], str(row["play_id"])), {})
-            row.update({field: model.get(field) for field in ("epa", "wpa", "cpoe", "xpass", "pass_oe")})
-            if metric in advanced:
-                row.update({field: model.get(field) for field in ("scrimmage", "pass", "rush")})
+            row = with_render_context(row, model)
+            if is_nullified(row):
+                continue
+            row.update({field: model[field] for field in ("epa", "wpa", "cpoe", "cp", "xpass", "pass_oe")
+                        if model.get(field) is not None})
+            if metric in advanced and model:
+                row.update({field: model[field] for field in ("scrimmage", "pass", "rush") if model.get(field) is not None})
             if model:
                 model_manifest = manifests.get("enriched_plays", {}).get(year)
                 row["model_provenance"] = {
@@ -85,7 +90,12 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
                 yards_to_go=row.get("distance"), yardline_100=row.get("yards_to_goal"), game_date=game.get("date"),
                 home_team_name=game.get("home_team_name"), away_team_name=game.get("away_team_name"),
                 source_packages=["recorded_plays"] + (["enriched_plays"] if row.get("epa") is not None else []),
+                air_yards=row.get("air_yards"), yards_after_catch=row.get("yards_after_catch"),
+                pass_location=row.get("pass_direction"), run_location=row.get("rush_direction"),
+                pass_length=row.get("pass_depth"), formation=row.get("formation"), yards_gained=row.get("yards_gained"),
                 cfb_statistics={"selected_play": row, "rows": stat_rows,
+                                "provider_context": json.loads(row.get("provider_context_json") or "{}"),
+                                "context_provenance": "Provider-parsed text and modeled game state; no tracking, inferred coordinates or assignments used as evidence",
                                 "teams": json.loads(row.get("teams_json") or "[]"),
                                 "selection_signal": "Metric-filtered recorded play outcome; conversions use recorded yardage and distance, "
                                                     "not a substituted box-score rate",

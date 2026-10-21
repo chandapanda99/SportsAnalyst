@@ -47,7 +47,7 @@
   <header><div><small>COLLEGE FOOTBALL · RECORDED GAME CONTEXT</small><h3>{play.description}</h3>
     <p>{context?.game_date?.slice(0, 10)} · {play.window} · Game {play.game_id}</p></div>
     <button type="button" aria-label="Close game evidence" on:click={onclose}>×</button></header>
-  <p>These are recorded box-score statistics and scoring events, not tracking data or an inferred formation.</p>
+  <p>Box scores and scoring events are recorded game context. Selected-play schematics use explicitly illustrative formations, not tracking data.</p>
   {#if play.play_id !== 0}
     <p><strong>Selected play · {play.selection_metric ?? 'Recorded context'}</strong> · {play.evidence_role ?? 'example'}</p>
     <p>{play.selection_reason}</p>

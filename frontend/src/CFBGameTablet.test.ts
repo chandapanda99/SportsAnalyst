@@ -1,6 +1,8 @@
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/svelte';
 import {afterEach, expect, it, vi} from 'vitest';
 import CFBGameTablet from './CFBGameTablet.svelte';
+import CFBPlayTablet from './CFBPlayTablet.svelte';
+import type {CFBRecordedPlay} from './types';
 import {api} from './api';
 import type {Evidence} from './types';
 
@@ -11,11 +13,11 @@ const evidence = (id: string): Evidence => ({evidence_id: id, sport: 'cfb', seas
 const detail = (id = 'p1') => ({coverage: '2/3 source plays processed', message: 'Modeled values',
   teams: [{id: '1', name: 'Home', abbreviation: 'HOME', side: 'home', color: '#751D4A'},
           {id: '2', name: 'Away', side: 'away', color: '#5e0009'}],
-  plays: [{id, text: 'Verified passer complete to receiver', down: 2, distance: 7, quarter: 1, clock: '12:00',
+  plays: [{id, play_type: 'Pass Reception', formation: 'Shotgun', text: 'Verified passer complete to receiver', down: 2, distance: 7, quarter: 1, clock: '12:00',
            team_id: '1', end_team_id: '1', yards_to_goal: 60, end_yards_to_goal: 45, epa: .3, wpa: .02,
            participants: [{athlete_id: '10', name: 'Verified QB', role: 'passer', team_id: '1'},
                           {athlete_id: '11', name: 'Verified WR', role: 'receiver', team_id: '1'}]},
-          {id: 'p2', text: 'Recorded rush without identity', down: 1, distance: 10, quarter: 2, clock: '09:00',
+          {id: 'p2', play_type: 'Rush', text: 'Recorded rush without identity', down: 1, distance: 10, quarter: 2, clock: '09:00',
            team_id: '2', end_team_id: '2', yards_to_goal: 20, end_yards_to_goal: 17, participants: []}]});
 
 it('opens recorded plays with involved actors, a college field, and scoped modeled context', async () => {
@@ -24,14 +26,22 @@ it('opens recorded plays with involved actors, a college field, and scoped model
   expect(await screen.findByRole('status')).toBeTruthy();
   await screen.findByRole('option', {name: /Verified passer/});
   expect(screen.getByRole('region', {name: /schematic for play p1/})).toBeTruthy();
-  expect(screen.getByText(/not a full lineup|No full lineup/)).toBeTruthy();
+  expect(screen.getByText(/a full lineup is a template/)).toBeTruthy();
   expect(screen.getByRole('heading', {name: /Recorded involved players \(2\)/})).toBeTruthy();
   const field = document.querySelector('.football-tablet .field');
   expect(field?.querySelectorAll('.yard-line')).toHaveLength(19);
   expect(field?.querySelectorAll('.inbound-hash')).toHaveLength(160);
   expect(Number(field?.querySelector('.inbound-hash')?.getAttribute('y1'))).toBeCloseTo(20 - 1 / 3);
   expect([...field!.querySelectorAll('.endzone-name')].map(node => node.textContent)).toEqual(['Home', 'Home']);
-  expect(field?.querySelector('.box-area')).toBeNull();
+  expect(field?.querySelector('.box-area')).toBeTruthy();
+  expect(field?.querySelectorAll('.field-player')).toHaveLength(22);
+  expect(field?.querySelector('.field-player')?.namespaceURI).toBe('http://www.w3.org/2000/svg');
+  expect(field?.querySelectorAll('.rush-ring')).toHaveLength(4);
+  expect(field?.querySelector('.play-path.pass')?.getAttribute('d')).toContain(' Q ');
+  expect(field?.querySelector('.play-path.after-catch')).toBeNull();
+  const qbX = Number(field?.querySelector('[aria-label^="Verified QB"]')?.getAttribute('transform')?.match(/translate\(([-\d.]+)/)?.[1]);
+  const wrX = Number(field?.querySelector('[aria-label^="Verified WR"]')?.getAttribute('transform')?.match(/translate\(([-\d.]+)/)?.[1]);
+  expect(qbX).toBeLessThan(wrX);
   const marker = screen.getByRole('button', {name: /Verified QB.*illustrative placement/});
   await fireEvent.focus(marker);
   expect(document.querySelector('svg > g:last-child.tooltip')).toBeTruthy();
@@ -39,6 +49,59 @@ it('opens recorded plays with involved actors, a college field, and scoped model
   await fireEvent.click(screen.getByRole('button', {name: 'Next play'}));
   expect(screen.getByText(/No participant IDs recorded/)).toBeTruthy();
   expect(screen.queryByRole('button', {name: /Verified QB.*illustrative placement/})).toBeNull();
+  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
+  expect(document.querySelector('.play-path.carry')).toBeTruthy();
+});
+
+it('does not invent scrimmage action for penalties, special teams, missing position or unknown turnover paths', async () => {
+  const base: CFBRecordedPlay = {...detail().plays[0], yards_gained: 15};
+  const view = render(CFBPlayTablet, {event: {...base, id: 'penalty', play_type: 'Penalty', text: 'NO PLAY'}, teams: detail().teams});
+  for (const event of [
+    {...base, id: 'penalty', play_type: 'Penalty', text: 'NO PLAY'},
+    {...base, id: 'kickoff', play_type: 'Kickoff'},
+    {...base, id: 'negated', provider_context_json: JSON.stringify({penalty_negated_play: true})},
+    {...base, id: 'missing', yards_to_goal: null}
+  ]) {
+    await view.rerender({event, teams: detail().teams});
+    expect(document.querySelectorAll('.field-player')).toHaveLength(0);
+    expect(document.querySelector('.play-path')).toBeNull();
+    expect(document.querySelector('.box-area')).toBeNull();
+  }
+  await view.rerender({event: {...base, id: 'turnover', play_type: 'Pass Interception', interception: true}, teams: detail().teams});
+  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
+  expect(document.querySelector('.play-path')).toBeNull();
+  expect(screen.getByText(/No trajectory is shown/)).toBeTruthy();
+  await view.rerender({event: {...base, id: 'sourced-return', play_type: 'Pass Interception', interception: true,
+    turnover: true, air_yards: 10, provider_context_json: JSON.stringify({yds_int_return: 5})}, teams: detail().teams});
+  expect(document.querySelector('.play-path.return')).toBeTruthy();
+  expect(document.querySelector('.event-marker.turnover')).toBeTruthy();
+});
+
+it('uses provider air yards, YAC and direction while preserving missing and zero values', async () => {
+  const base: CFBRecordedPlay = {...detail().plays[0], yards_gained: 15, air_yards: 10, yards_after_catch: 5, pass_direction: 'right'};
+  const view = render(CFBPlayTablet, {event: base, teams: detail().teams});
+  expect(screen.getByText('Air yards: 10 · provider-derived')).toBeTruthy();
+  expect(screen.getByText('YAC: 5 · provider-derived')).toBeTruthy();
+  const flight = document.querySelector('.play-path.pass')?.getAttribute('d');
+  expect(document.querySelector('.play-path.after-catch')).toBeTruthy();
+  const marker = screen.getByRole('button', {name: /Catch · Verified WR/});
+  await fireEvent.focus(marker);
+  expect(document.querySelector('.event-tooltip')).toBeTruthy();
+  await view.rerender({event: {...base, provider_context_json: JSON.stringify({qb_hurry: false, cp: 0, cp_model: 'game_state'})}, teams: detail().teams});
+  const sourceContext = screen.getByText('Available Provider Context (3 fields)').closest('details')!;
+  await fireEvent.click(sourceContext.querySelector('summary')!);
+  expect(sourceContext.textContent).toContain('false');
+  expect(sourceContext.querySelectorAll('dd')[1].textContent).toBe('0');
+  expect(sourceContext.textContent).toContain('game_state');
+  await view.rerender({event: {...base, id: 'zero', air_yards: 0, yards_after_catch: 0, yards_gained: 0}, teams: detail().teams});
+  expect(screen.getByText('Air yards: 0 · provider-derived')).toBeTruthy();
+  expect(screen.getByText('YAC: 0 · provider-derived')).toBeTruthy();
+  await view.rerender({event: {...base, id: 'missing-yac', yards_after_catch: null}, teams: detail().teams});
+  expect(document.querySelector('.play-path.after-catch')).toBeNull();
+  await view.rerender({event: {...base, id: 'missing-air', air_yards: null, yards_after_catch: null}, teams: detail().teams});
+  expect(screen.queryByText(/Air yards: /)).toBeNull();
+  expect(document.querySelector('.play-path.after-catch')).toBeNull();
+  expect(document.querySelector('.play-path.pass')?.getAttribute('d')).not.toBe(flight);
 });
 
 it('ignores stale game responses and offers a retry instead of an empty participant list', async () => {

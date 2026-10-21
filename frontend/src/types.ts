@@ -6,6 +6,15 @@ export type CFBTeamContext = {
   id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
 };
 export type CFBRecordedPlay = {
+  provider_context_json?: string | null; end_down?: number | null; end_distance?: number | null;
+  air_yards?: number | null; yards_after_catch?: number | null; air_yards_to_endzone?: number | null;
+  pass_direction?: string | null; rush_direction?: string | null; pass_depth?: string | null;
+  air_yards_source?: string | null; yards_after_catch_source?: string | null;
+  pass_direction_source?: string | null; rush_direction_source?: string | null;
+  pass_depth_source?: string | null;
+  render_context_version?: number; render_provider_version?: string;
+  pass?: boolean; rush?: boolean; no_play?: boolean; complete?: boolean;
+  interception?: boolean; turnover?: boolean; touchdown?: boolean;
   formation?: string | null; formation_source?: string | null;
   personnel_context?: {status: string; source_url?: string; scope?: string; entries?: Array<Record<string, unknown>>};
   id: string; text?: string | null; quarter?: number | null; clock?: string | null; down?: number | null; distance?: number | null;
@@ -92,6 +101,7 @@ export type PlayVisualization = {
   possession_timeouts?: number; defensive_timeouts?: number; score_differential?: number; goal_to_go?: boolean; play_type?: string;
   formation?: string; personnel?: string; defensive_personnel?: string; shotgun?: boolean; no_huddle?: boolean; pass_length?: string;
   pass_location?: string; run_location?: string; run_gap?: string; air_yards?: number; yards_after_catch?: number;
+  suppress_inferred_yac?: boolean;
   yards_gained?: number; passer?: string; receiver?: string; rusher?: string; touchdown?: boolean; turnover?: boolean;
   complete_pass?: boolean; interception?: boolean; fumble?: boolean; fumble_lost?: boolean; return_yards?: number;
   return_team?: string; turnover_player?: string; recovery_player?: string; recovery_team?: string; recovery_yards?: number;

@@ -538,7 +538,14 @@ class EvidenceBoundAgent:
             sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football", "cfb": "college football"}.get(sport, sport)
             voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
             if sport == "cfb":
-                voice_guide = "Write as an experienced college-football analyst. Distinguish recorded game production, opportunity, opponent mix and transfers; do not imply NFL-specific metric definitions."
+                voice_guide = (
+                    "Write as an experienced college-football analyst. Distinguish recorded game production, opportunity, opponent mix and transfers; do not imply NFL-specific metric definitions. "
+                    "Use available source-derived air-yard/YAC supporting evidence and play-context coverage when relevant. "
+                    "Covered-play averages are not full-season measurements unless coverage is complete. Read provider_context and its provenance for recorded play examples. "
+                    "Provider-parsed direction and hurry flags are not tracking coordinates or verified box/rusher counts. "
+                    "Tablet lineup templates and inferred assignments are presentation only, never evidence of an actual formation or defensive scheme. "
+                    "Completion probabilities and EP/WP are modeled; different cp_model surfaces must not be interpreted as a single calibrated accuracy scale."
+                )
             common = (
                     "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
                     f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
