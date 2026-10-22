@@ -266,6 +266,12 @@
         stroke-dasharray: 1 1
     }
 
+    .football-tablet .field-player.projected circle:not(.rush-ring) {
+        opacity: .9;
+        stroke-dasharray: .5 .5;
+        stroke-width: .7
+    }
+
     .football-tablet .field-player .rush-ring {
         fill: none;
         stroke: #f5c451;

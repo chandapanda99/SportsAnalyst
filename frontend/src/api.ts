@@ -1,4 +1,4 @@
-import type { AnalysisOptions, Capabilities, CFBRecordedPlay, CFBTeamContext, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption, TeamOption } from './types';
+import type { AnalysisOptions, Capabilities, CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption, TeamOption } from './types';
 
 let progressTransport: 'stream' | 'poll' = 'stream';
 const pendingKey = 'sports-analyst:pending-job:v1';
@@ -140,7 +140,7 @@ export const api = {
     plays: Evidence[]; coverage: string; message?: string; retryable?: boolean;
   }>(`/api/investigations/${encodeURIComponent(investigation)}/evidence/${encodeURIComponent(evidence)}/plays`, {method: 'POST'}),
   cfbPlays: (investigation: string, evidence: string) => json<{
-    plays: CFBRecordedPlay[]; teams?: CFBTeamContext[];
+    plays: CFBRecordedPlay[]; teams?: CFBTeamContext[]; game_roster?: CFBGameRosterPlayer[];
     coverage: string; message?: string;
   }>(`/api/investigations/${encodeURIComponent(investigation)}/evidence/${encodeURIComponent(evidence)}/plays`, {method: 'POST'}),
   datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),

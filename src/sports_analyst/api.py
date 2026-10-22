@@ -494,20 +494,28 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                 raise HTTPException(422, "Recorded NFL or college-football play evidence is required")
             context = item.visualization.cfb_statistics if item.visualization else None
             from sports_analyst.datasets.cfb_rendering import RENDER_FIELDS, RENDER_VERSION, with_render_context
+            from sports_analyst.datasets.cfb_identity import needs_identity_refresh
 
             modeled = (context or {}).get("modeled_plays") or []
             if modeled and all("participants" in row for row in modeled):
                 first = modeled[0]
                 rows = [{**row, "id": row["play_id"]} for row in modeled]
-                if any((row.get("render_context_version") or 0) < RENDER_VERSION for row in rows):
+                refreshed = {}
+                if needs_identity_refresh(rows) or any((row.get("render_context_version") or 0) < RENDER_VERSION for row in rows):
                     try:
                         refreshed = service.connectors["cfb"].game_plays(item.game_id, item.season)
                         by_id = {row["id"]: row for row in refreshed["plays"]}
                         rows = [with_render_context(row, by_id.get(row["id"], {})) for row in rows]
                     except Exception:
                         logger.warning("cfb_saved_render_context_unavailable game_id=%s", item.game_id)
+                if not refreshed:
+                    try:
+                        refreshed = {"game_roster": service.connectors["cfb"].game_roster(item.game_id, item.season)}
+                    except Exception:
+                        logger.warning("cfb_game_roster_unavailable game_id=%s", item.game_id)
                 return {"plays": rows,
-                        "teams": (context or {}).get("teams") or [],
+                        "game_roster": refreshed.get("game_roster", []),
+                        "teams": (context or {}).get("teams") or refreshed.get("teams", []),
                         "coverage": f"{len(modeled)}/{first['source_play_count']} source plays processed; modeled EPA and spread-free WPA",
                         "message": f"SportsDataverse {first['provider_version']}; athlete IDs from structured ESPN participants only"}
             selected = (context or {}).get("selected_play")

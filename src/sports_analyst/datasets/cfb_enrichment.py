@@ -9,7 +9,7 @@ import json
 import math
 import re
 
-from sports_analyst.datasets.cfb_plays import recorded_play, teams_and_athletes
+from sports_analyst.datasets.cfb_plays import recorded_play
 from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
@@ -71,6 +71,8 @@ class CFBEnrichment:
         self.source = source
 
     def game(self, game, season, raw, ttl):
+        from sports_analyst.datasets.cfb_identity import game_directory, needs_identity_refresh, with_identity_context
+
         version = importlib.metadata.version("sportsdataverse")
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
         key = f"enriched/{season}/{game}/{version}-{ADAPTER_VERSION}-{digest}.json"
@@ -81,6 +83,12 @@ class CFBEnrichment:
                 or self.source._cached(key, min(ttl, 300)) is not None
             ):
                 cached["rows"] = hydrate_rows(cached["rows"], cached.get("pipeline") or {}, version)
+                if needs_identity_refresh(cached["rows"]):
+                    plays = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
+                    directory, _ = game_directory(self.source, game, season, raw, plays, ttl)
+                    identities = {str(play["id"]): recorded_play(play, raw, directory) for play in plays}
+                    cached["rows"] = [with_identity_context(row, identities.get(str(row["play_id"]), {})) for row in cached["rows"]]
+                    self.source.store(key, cached)
                 return cached
             # Bound pagination and use the application's timeout/retry transport.
             plays = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
@@ -91,7 +99,7 @@ class CFBEnrichment:
                 raise ValueError("Source play IDs are missing or duplicated")
             output = process_summary(game, raw)
             normalized = []
-            directory = teams_and_athletes(raw)
+            directory, _ = game_directory(self.source, game, season, raw, plays, ttl)
             seen = set()
             for play in output.get("plays") or []:
                 identity = str(play.get("id") or "")

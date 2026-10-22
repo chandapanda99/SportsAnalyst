@@ -37,7 +37,8 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
     }
 
     function tooltipLabel(player: SchematicPlayer) {
-        const identity = player.recorded ? `${player.name} · ${player.position}` : `${player.position} · Identity not recorded`;
+        const identity = player.projected ? `${player.name} · ${player.position} · Projected starter, not confirmed on this play`
+            : player.recorded ? `${player.name} · ${player.position}` : `${player.position} · Identity not recorded`;
         const assignment = player.rushRole === 'blitzer' ? 'inferred blitzer'
             : player.rushRole === 'rusher' ? 'inferred rusher'
                 : player.inBox ? 'inferred in box' : '';
@@ -100,7 +101,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
             {/if}
             {#if showPlayers}
             {#each schematic.players as player}
-                <g class={`field-player ${player.side} ${player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} transform={`translate(${player.x} ${player.y})`} role="button" tabindex="0" aria-label={tooltipLabel(player)} on:focus={() => focusedPlayerId = player.id} on:blur={() => focusedPlayerId = null} on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); focusedPlayerId = player.id;}}} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
+                <g class={`field-player ${player.side} ${player.projected ? 'projected inferred' : player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} transform={`translate(${player.x} ${player.y})`} role="button" tabindex="0" aria-label={tooltipLabel(player)} on:focus={() => focusedPlayerId = player.id} on:blur={() => focusedPlayerId = null} on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); focusedPlayerId = player.id;}}} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
                     {#if player.rushRole}<circle class={`rush-ring ${player.rushRole}`} r="1.86"/>{/if}
                     <circle r="1.42" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
                     <text class="position-label" y=".12" style={`fill:${markerTextColor(player.side)}`}>{player.position.slice(0, 3)}</text>

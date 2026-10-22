@@ -118,6 +118,47 @@ it('ignores stale game responses and offers a retry instead of an empty particip
   await screen.findByRole('region', {name: /new-play/});
 });
 
+it('labels additional recorded roles and keeps optional starter projections separate from snap identities', async () => {
+  const base: CFBRecordedPlay = {...detail().plays[0], participants: [
+    {athlete_id: '10', name: 'Verified QB', role: 'passer', team_id: '1', position: 'QB'},
+    {athlete_id: '11', name: 'Recorded Tight End', role: 'receiver', team_id: '1', position: 'TE', position_source: 'ESPN participant position'},
+    {athlete_id: '22', name: 'Recorded Edge', role: 'assisted_by', position: 'EDGE'},
+    {athlete_id: '22', name: 'Recorded Edge', role: 'sacked_by', position: 'EDGE'},
+    {athlete_id: '23', name: 'Recorded Pass Defender', role: 'pass_defender'},
+    {athlete_id: '24', name: 'Recorded Forced Fumble', role: 'forced_by', team_id: '2', position: 'S'}]};
+  const roster = [
+    {athlete_id: '66', team_id: '1', name: 'Projected Guard', position: 'G', starter: true},
+    {athlete_id: '30', team_id: '2', name: 'Projected Linebacker', position: 'LB', starter: true},
+    {athlete_id: '99', team_id: '1', name: 'Bench Quarterback', position: 'QB', starter: true},
+    {athlete_id: '55', team_id: '1', name: 'Did Not Play', position: 'T', starter: true, did_not_play: true},
+    {athlete_id: '56', team_id: '3', name: 'Other School', position: 'T', starter: true}];
+  const view = render(CFBPlayTablet, {event: base, teams: detail().teams, roster});
+  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
+  expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
+  expect(document.querySelectorAll('.field-player.projected')).toHaveLength(0);
+  expect(screen.getByRole('button', {name: /Recorded Tight End · TE/})).toBeTruthy();
+  expect(screen.getByRole('button', {name: /Recorded Edge · EDGE/})).toBeTruthy();
+  expect(screen.getByRole('button', {name: /Recorded Pass Defender · DB/})).toBeTruthy();
+  expect(screen.getByRole('button', {name: /Recorded Forced Fumble · S/})).toBeTruthy();
+  expect(screen.getAllByRole('button', {name: /Identity not recorded/}).length).toBeGreaterThan(0);
+  await fireEvent.click(screen.getByRole('checkbox', {name: 'Show Projected Starters'}));
+  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
+  expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
+  expect(document.querySelectorAll('.field-player.projected')).toHaveLength(2);
+  const projected = screen.getByRole('button', {name: /Projected Guard.*Projected starter, not confirmed on this play/});
+  await fireEvent.focus(projected);
+  expect(document.querySelector('.tooltip')?.textContent).toContain('Projected starter, not confirmed on this play');
+  expect(screen.queryByRole('button', {name: /Bench Quarterback|Did Not Play|Other School/})).toBeNull();
+  expect(screen.getByRole('heading', {name: /Recorded involved players \(5\)/}).nextElementSibling?.textContent).not.toContain('Projected Guard');
+  // The projection is presentation-only and never modifies the event evidence.
+  expect(base.participants).toHaveLength(6);
+  expect(base.participants?.some(actor => actor.athlete_id === '66')).toBe(false);
+  await view.rerender({event: {...base, id: 'no-roster'}, teams: detail().teams, roster: []});
+  expect(screen.queryByRole('checkbox', {name: 'Show Projected Starters'})).toBeNull();
+  expect(document.querySelectorAll('.field-player.projected')).toHaveLength(0);
+  expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
+});
+
 it('opens the cited play directly and shows its selection reason and recorded formation context', async () => {
   const selectedId = '401756849101855201'; // ESPN IDs exceed JavaScript's safe integer range.
   const plays = detail();

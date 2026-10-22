@@ -315,14 +315,14 @@ class LocalStore:
             round((time.perf_counter() - started_at) * 1000),
         )
 
-    def save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True) -> None:
+    def save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True, upload_data: bool = True) -> None:
         with self.publication_guard():
-            self._save_manifest(manifest, publish_catalog=publish_catalog)
+            self._save_manifest(manifest, publish_catalog=publish_catalog, upload_data=upload_data)
 
-    def _save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True) -> None:
+    def _save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True, upload_data: bool = True) -> None:
         source = Path(manifest.local_path)
         object_path = self._managed_relative_path(source)
-        if self.persistence.durable:
+        if self.persistence.durable and upload_data:
             # Managed transfers can overlap across package workers; only the
             # small local catalog transaction needs process-level serialization.
             self.persistence.upload_file(object_path, source)

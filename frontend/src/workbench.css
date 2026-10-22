@@ -248,6 +248,56 @@
     padding: clamp(1rem, 2vw, 1.5rem);
 }
 
+.intro-grid > .cfb-subject-card {
+    margin: 0;
+    border-radius: .8rem;
+    padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.cfb-subject-card .scope-heading {
+    flex-wrap: wrap;
+}
+
+.cfb-subject-card .scope-controls {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+
+.cfb-data-scope, .cfb-conference-download {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem 1.25rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: .65rem;
+    background: var(--color-surface);
+}
+
+.cfb-data-scope > div, .cfb-conference-download > p {
+    flex: 1 1 22rem;
+    min-width: 0;
+}
+
+.cfb-data-scope p, .cfb-conference-download p {
+    margin: 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.cfb-data-scope p, .cfb-conference-download span {
+    display: block;
+    margin-top: .3rem;
+    color: var(--color-text-secondary);
+    font-size: .85rem;
+}
+
+.cfb-data-scope button, .cfb-conference-download button {
+    min-height: 2.75rem;
+    max-width: 100%;
+    white-space: normal;
+}
+
 .configuration .question-field {
     border: 1px solid var(--line);
     background: var(--color-surface);

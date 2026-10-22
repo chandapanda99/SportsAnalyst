@@ -74,7 +74,7 @@
       <button type="button" disabled={selectedIndex < 0 || selectedIndex >= visiblePlays.length - 1} on:click={() => selectedId = visiblePlays[selectedIndex + 1].id}>Next play</button>
     </div>
     {#if !visiblePlays.length}<p>No recorded plays match this filter.</p>{/if}
-    {#if selected && visiblePlays.some(event => event.id === selected.id)}<CFBPlayTablet event={selected} teams={detail.teams ?? []}/>{/if}
+    {#if selected && visiblePlays.some(event => event.id === selected.id)}<CFBPlayTablet event={selected} teams={detail.teams ?? []} roster={detail.game_roster ?? []}/>{/if}
   {/if}
   {#if leaderboard.length}
     <h4>Offensive EPA/play · prepared game sample</h4>

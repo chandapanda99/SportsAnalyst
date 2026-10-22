@@ -9,6 +9,7 @@ export type SchematicPlayer = {
   x: number;
   y: number;
   recorded: boolean;
+  projected?: boolean;
   inferredPlacement: boolean;
   inBox: boolean;
   rushRole?: 'rusher' | 'blitzer';
@@ -19,6 +20,7 @@ type PlayerRecord = {
   name: string;
   position: string;
   recorded: boolean;
+  projected?: boolean;
 };
 
 export type SchematicPath = {
@@ -106,8 +108,9 @@ function normalizedPosition(position: string) {
   return value || '—';
 }
 
-function playerRecords(names: string[] = [], positions: string[] = []) {
-  return names.map((name, index) => ({name, position: normalizedPosition(positions[index] ?? '—'), recorded: true}));
+function playerRecords(names: string[] = [], positions: string[] = [], status: Array<'recorded' | 'projected'> = []) {
+  return names.map((name, index) => ({name, position: normalizedPosition(positions[index] ?? '—'),
+    recorded: status[index] !== 'projected', projected: status[index] === 'projected'}));
 }
 
 type PositionCounts = Record<string, number>;
@@ -392,7 +395,7 @@ function placeOffense(
     slots.push({record, x: startX - 5.5, y: distribute(index, records.length, 8, 45.3)}));
   return slots.map(({record, x, y, displayPosition, inferredPlacement}, index) => ({
     id: `offense-${index}`, name: record.name, label: shortName(record.name, displayPosition ?? record.position), position: displayPosition ?? record.position,
-    side: 'offense', x: clamp(x, 2, 117), y, recorded: record.recorded,
+    side: 'offense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected,
     inferredPlacement: true,
     inBox: false,
     placementBasis: inferredPlacement
@@ -626,7 +629,7 @@ function placeDefense(
     slots.push({record, x: startX + 7, y: distribute(index, records.length, 7, FOOTBALL_FIELD_WIDTH - 7), inBox: false, basis: 'Unknown role placed outside the box'}));
   return slots.map(({record, x, y, inBox, rushRole, basis}, index) => ({
     id: `defense-${index}`, name: record.name, label: shortName(record.name, record.position), position: record.position,
-    side: 'defense', x: clamp(x, 2, 117), y, recorded: record.recorded, inferredPlacement: true,
+    side: 'defense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected, inferredPlacement: true,
     inBox, rushRole, placementBasis: basis,
   }));
 }
@@ -683,8 +686,8 @@ function buildPaths(visualization: PlayVisualization, startX: number, originY: n
 export function buildPlaySchematic(visualization: PlayVisualization = {}, hashFromSideline = NFL_HASH_FROM_SIDELINE): PlaySchematic {
   const startX = clamp(10 + (100 - (visualization.yardline_100 ?? 50)));
   const centerY = hashY(visualization.starting_hash, hashFromSideline);
-  const offenseRecorded = playerRecords(visualization.offense_names, visualization.offense_positions);
-  const defenseRecorded = playerRecords(visualization.defense_names, visualization.defense_positions);
+  const offenseRecorded = playerRecords(visualization.offense_names, visualization.offense_positions, visualization.offense_identity_status);
+  const defenseRecorded = playerRecords(visualization.defense_names, visualization.defense_positions, visualization.defense_identity_status);
   const offense = completeLineup(offenseRecorded, genericOffense(visualization), 'offense');
   const defense = completeLineup(defenseRecorded, genericDefense(visualization), 'defense');
   const {paths, markers} = buildPaths(visualization, startX, centerY);

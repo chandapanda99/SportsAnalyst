@@ -509,7 +509,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Jayson Tatum/ }));
     expect(player.value).toBe('Jayson Tatum · BOS');
     expect(screen.getByRole('button', {name: /Jayson Tatum's scoring.*rim pressure.*perimeter volume/i})).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', {name: 'Show 6 more examples'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Show 8 more examples'}));
     expect(screen.getByRole('button', {name: /opponent.*venue.*rest.*Jayson Tatum's scoring comparison/i})).toBeTruthy();
     expect(screen.getByRole('button', {name: 'Show fewer examples'})).toBeTruthy();
     expect(player.getAttribute('aria-invalid')).toBe('false');

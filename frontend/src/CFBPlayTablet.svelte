@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type {CFBParticipant, CFBRecordedPlay, CFBTeamContext} from './types';
+  import type {CFBGameRosterPlayer, CFBParticipant, CFBRecordedPlay, CFBTeamContext} from './types';
   import {colorContrastRatio} from './teamPalettes';
   import FootballSchematic from './FootballSchematic.svelte';
   import {adaptCollegePlay, collegeProviderContext} from './cfbSchematic';
@@ -8,11 +8,14 @@
 
   export let event: CFBRecordedPlay;
   export let teams: CFBTeamContext[] = [];
+  export let roster: CFBGameRosterPlayer[] = [];
+  let showProjected = false;
   $: home = teams.find(team => team.side === 'home');
   $: offense = teams.find(team => team.id === event.team_id);
   $: defense = offense ? teams.find(team => team.id !== offense.id) : undefined;
   $: actors = involved(event.participants ?? []);
-  $: adapted = adaptCollegePlay(event, teams);
+  $: adapted = adaptCollegePlay(event, teams, roster, showProjected);
+  $: projectionAvailable = adaptCollegePlay(event, teams, roster, true).projectedCount > 0;
   $: providerFields = Object.entries(collegeProviderContext(event));
   $: schematic = buildPlaySchematic(adapted.visualization, 20);
   $: schematicPlay = {evidence_id: 'cfb-' + event.id, visualization: adapted.visualization};
@@ -44,9 +47,17 @@
       {event.personnel_context.scope}</p>
   {/if}
   {#if adapted.reconstruct}
-    <div class="reconstruction-meta"><div><strong>Recorded identities · illustrative formation</strong>
+    <div class="reconstruction-meta"><div><strong>{showProjected && adapted.projectedCount ? 'Recorded participants + projected starters' : 'Recorded identities · illustrative formation'}</strong>
       <span>{schematic.context.formation} · {schematic.context.boxCount} in box (estimated) · {schematic.context.passRusherCount} rushers (estimated)</span>
     </div><div class="source-badges"><span>ESPN PBP</span><span>INFERRED ALIGNMENT</span></div></div>
+    {#if projectionAvailable}
+      <div class="lineup-controls">
+        <label><input type="checkbox" bind:checked={showProjected}/> Show Projected Starters</label>
+        <p>Optional game-starter projection. Substitutions and exact alignment are not confirmed for this snap; recorded participants always take priority.</p>
+      </div>
+    {/if}
+    <p class="scope identity-key">{schematic.players.filter(player => player.recorded).length} recorded participants · {adapted.projectedCount} projected starters · {schematic.players.filter(player => !player.recorded && !player.projected).length} identities not recorded.
+      {#if adapted.projectedCount}Dotted outlines identify projected starters. {/if}Hover or focus a player for identity and inference details.</p>
   {/if}
   {#if adapted.inference.airYardsAvailable || adapted.inference.yardsAfterCatchAvailable || event.pass_direction || event.rush_direction || event.pass_depth}
     <div class="situation">
@@ -71,7 +82,8 @@
     <span>Spread-free WPA: {event.wpa == null ? 'Not prepared/available' : `${(event.wpa * 100).toFixed(2)} pp`}</span></div>
   <h4>Recorded involved players ({actors.length})</h4>
   {#if actors.length}<ul>{#each actors as actor}<li>{actor.name ?? `ESPN athlete ${actor.athlete_id}`} · {actor.roles.join(', ')}
-    {#if actor.position} · {actor.position}{/if} · {teams.find(team => team.id === actor.team_id)?.name ?? 'School not verified'} · ESPN ID {actor.athlete_id}</li>{/each}</ul>
+    {#if actor.position}<span title={actor.position_source ?? 'Recorded roster position'}> · {actor.position}</span>{/if} · {teams.find(team => team.id === actor.team_id)?.name ?? 'School not verified'} · ESPN ID {actor.athlete_id}
+    {#if actor.name_source}<span class="identity-source"> · {actor.name_source}</span>{/if}</li>{/each}</ul>
   {:else}<p>No participant IDs recorded for this play. This does not mean no players were on the field.</p>{/if}
   {#if providerFields.length}
     <details class="play-details provider-context">
@@ -92,4 +104,10 @@
   .provider-context {margin: 12px 20px; border: 1px solid var(--line); border-radius: 6px; padding: 12px;}
   .provider-context summary {cursor: pointer; font-weight: 600;}
   .provider-context dd, pre {overflow-wrap: anywhere; white-space: pre-wrap;}
+  .lineup-controls {margin: 12px 20px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 6px;}
+  .lineup-controls label {display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer;}
+  .lineup-controls input {width: 16px; height: 16px; accent-color: var(--mint);}
+  .lineup-controls p {margin: 8px 0 0; font-size: 12px; line-height: 1.5;}
+  .identity-key {padding: 0 20px; line-height: 1.5;}
+  .identity-source {font-size: 12px; color: var(--color-text-secondary);}
 </style>

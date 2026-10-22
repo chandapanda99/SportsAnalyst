@@ -78,7 +78,10 @@ def hydrate_rows(rows, pipeline, provider_version):
 
 
 def with_render_context(saved, fresh):
-    """Refresh geometry only; never overwrite saved analysis/model values."""
+    """Refresh geometry and recorded labels; never overwrite saved analysis/model values."""
+    from sports_analyst.datasets.cfb_identity import with_identity_context
+
+    saved = with_identity_context(saved, fresh)
     result = {**saved, **{field: fresh[field] for field in RENDER_FIELDS
                          if saved.get(field) is None and fresh.get(field) is not None}}
     if fresh.get("provider_context_json"):

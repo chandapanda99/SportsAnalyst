@@ -1,4 +1,50 @@
-import type {CFBRecordedPlay, CFBTeamContext, PlayVisualization} from './types';
+import type {CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, PlayVisualization} from './types';
+import {buildPlaySchematic} from './playSchematic';
+
+const normalizeRole = (role: string) => role.trim().toLowerCase().replace(/[ -]+/g, '_');
+const rolePositions: Record<string, string> = {passer: 'QB', receiver: 'WR', rusher: 'RB',
+  tackler: 'LB', assisted_by: 'LB', tackle_assist: 'LB', sacker: 'DE', sacked_by: 'DE', sack_assist: 'DE',
+  interceptor: 'DB', interception: 'DB', pass_defender: 'DB', forced_by: 'DB'};
+const defensiveRoles = new Set(['tackler', 'assisted_by', 'tackle_assist', 'sacker', 'sacked_by', 'sack_assist',
+  'interceptor', 'interception', 'pass_defender', 'forced_by']);
+function positionGroup(position: string) {
+  const value = position.toUpperCase();
+  if (['LT', 'LG', 'C', 'RG', 'RT', 'OT', 'OG', 'OL', 'G', 'T'].includes(value)) return 'OL';
+  if (['RB', 'HB', 'FB'].includes(value)) return 'RB';
+  if (['DT', 'NT', 'DE', 'DL', 'EDGE'].includes(value)) return 'DL';
+  if (['LB', 'ILB', 'OLB', 'MLB'].includes(value)) return 'LB';
+  if (['CB', 'DB', 'NB', 'S', 'FS', 'SS'].includes(value)) return 'DB';
+  return value;
+}
+
+function projectStarters(visualization: PlayVisualization, event: CFBRecordedPlay, teams: CFBTeamContext[], roster: CFBGameRosterPlayer[]) {
+  const template = buildPlaySchematic(visualization, 20);
+  const recordedIds = new Set((event.participants ?? []).map(actor => actor.athlete_id));
+  const used = new Set(recordedIds);
+  let projectedCount = 0;
+  for (const side of ['offense', 'defense'] as const) {
+    const team = side === 'offense' ? event.team_id : teams.find(team => team.id !== event.team_id)?.id;
+    if (!team) continue;
+    const names = visualization[`${side}_names`]!;
+    const positions = visualization[`${side}_positions`]!;
+    const status: Array<'recorded' | 'projected'> = names.map(() => 'recorded');
+    const slots = template.players.filter(player => player.side === side && !player.recorded);
+    const candidates = roster.filter(player => player.team_id === team && player.starter && !player.did_not_play
+      && player.name && player.position && !used.has(player.athlete_id));
+    for (const slot of slots) {
+      const group = positionGroup(slot.position);
+      const matches = candidates.filter(player => !used.has(player.athlete_id) && positionGroup(player.position!) === group);
+      const remainingSlots = slots.filter(player => positionGroup(player.position) === group).length;
+      // Ambiguous starter lists must not crowd out a confirmed substitute.
+      if (!matches.length || candidates.filter(player => positionGroup(player.position!) === group).length > remainingSlots) continue;
+      const candidate = matches.find(player => player.position === slot.position) ?? matches[0];
+      names.push(candidate.name!); positions.push(candidate.position!); status.push('projected');
+      used.add(candidate.athlete_id); projectedCount += 1;
+    }
+    visualization[`${side}_identity_status`] = status;
+  }
+  return projectedCount;
+}
 
 export function collegeProviderContext(event: CFBRecordedPlay): Record<string, string | number | boolean> {
   try {
@@ -13,7 +59,7 @@ export function collegeProviderContext(event: CFBRecordedPlay): Record<string, s
 }
 
 /** Adapt recorded college inputs without promoting template choices to measured facts. */
-export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]) {
+export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[], roster: CFBGameRosterPlayer[] = [], showProjected = false) {
   const text = event.text ?? '';
   const kind = (event.play_type ?? '').toLowerCase();
   const provider = collegeProviderContext(event);
@@ -32,11 +78,15 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
   const defenseNames: string[] = [], defensePositions: string[] = [];
   const seen = new Set<string>();
   const actors: Record<string, string> = {};
-  for (const actor of event.participants ?? []) {
-    const role = actor.role.toLowerCase();
+  // Combine roles before assigning a slot: a scorer/penalty entry must not mask
+  // the same athlete's more informative passer, sack or tackle role.
+  const participants = [...(event.participants ?? [])].sort((a, b) =>
+    Number(Boolean(rolePositions[normalizeRole(b.role)])) - Number(Boolean(rolePositions[normalizeRole(a.role)])));
+  for (const actor of participants) {
+    const role = normalizeRole(actor.role);
     const name = actor.name || `ESPN athlete ${actor.athlete_id}`;
     const offensiveRole = ['passer', 'receiver', 'rusher'].includes(role);
-    const defensiveRole = ['tackler', 'sacker', 'interceptor'].includes(role);
+    const defensiveRole = defensiveRoles.has(role);
     actors[role] ??= name;
     if (seen.has(actor.athlete_id)) continue;
     const side = actor.team_id && offense && defense
@@ -45,7 +95,7 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
     if (!side) continue;
     seen.add(actor.athlete_id);
     // Role-derived slots are schematic positions, not verified roster positions.
-    const position = actor.position?.toUpperCase() || ({passer: 'QB', receiver: 'WR', rusher: 'RB', tackler: 'LB', sacker: 'DE', interceptor: 'DB'}[role] ?? (side === 'offense' ? 'WR' : 'DB'));
+    const position = actor.position?.toUpperCase() || rolePositions[role] || 'UNK';
     (side === 'offense' ? offenseNames : defenseNames).push(name);
     (side === 'offense' ? offensePositions : defensePositions).push(position);
   }
@@ -82,7 +132,8 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
   if (verifiedInterceptionPath) visualization.return_yards = returnYards;
   const movement = reconstruct && (gain != null || airYardsAvailable) && !visualization.fumble_lost
     && (verifiedInterceptionPath || (!visualization.interception && !event.turnover));
-  return {visualization, reconstruct, movement,
+  const projectedCount = reconstruct && showProjected ? projectStarters(visualization, event, teams, roster) : 0;
+  return {visualization, reconstruct, movement, projectedCount,
     inference: {lineup: reconstruct, alignment: reconstruct, box: reconstruct, rushAssignments: reconstruct,
       trajectory: movement, airYardsAvailable, yardsAfterCatchAvailable},
     note: noPlay ? 'Nullified or penalty-only play: no live-play trajectory or lineup is reconstructed.'

@@ -167,8 +167,9 @@ def _nba_frames(season: int, points: int) -> dict[str, pl.DataFrame]:
     }
 
 
-def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Path, monkeypatch) -> None:
-    connector = SportsDataverseNBAConnector(Settings(data_dir=tmp_path))
+@pytest.mark.parametrize("concurrency", [1, 4])
+def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Path, monkeypatch, concurrency) -> None:
+    connector = SportsDataverseNBAConnector(Settings(_env_file=None, data_dir=tmp_path, dataset_sync_concurrency=concurrency))
     calls: list[tuple[str, list[int], bool]] = []
     progress: list[tuple[str, str, int, int, int]] = []
     published = []
@@ -195,10 +196,11 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
     assert {item.dataset for item in manifests} == set(NBA_DEFAULT_DATASETS)
     assert all(item.sport == "nba" and item.season == 2025 and item.sha256 for item in manifests)
     assert all(call[1:] == ([2025], False) for call in calls)
-    assert progress[0] == ("downloading", "play_by_play", 2025, 0, 4)
-    assert progress[-1] == ("downloaded", "player_boxscores", 2025, 4, 4)
+    assert progress[0][0] == "downloading" and progress[0][2] == 2025
+    assert progress[-1][0] == "downloaded" and progress[-1][2:] == (2025, 4, 4)
     assert {event[0] for event in progress} == {"downloading", "processing", "downloaded"}
-    assert [item.manifest_id for item in published] == [item.manifest_id for item in manifests]
+    assert len(published) == len(manifests)
+    assert {item.manifest_id for item in published} == {item.manifest_id for item in manifests}
     pbp = connector.load(next(item for item in manifests if item.dataset == "play_by_play"))
     assert {"season", "play_id", "description", "period", "clock", "team_abbreviation"} <= set(pbp.columns)
     with pytest.raises(ValueError, match="cannot load nfl"):

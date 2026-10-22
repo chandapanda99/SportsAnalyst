@@ -4,8 +4,7 @@
   import type {TeamOption} from './types';
   export let initialSeason: number;
   export let disabled = false;
-  export let ondownload: (() => void) | undefined = undefined;
-  export let onchange: (selection: {season: number; seasons: number[]; teams: TeamOption[]; team: string; subdivision: string; conference: string; loading: boolean; error: string}) => void;
+  export let onchange: (selection: {season: number; seasons: number[]; teams: TeamOption[]; team: string; subdivision: string; conference: string; conferenceLabel: string; loading: boolean; error: string}) => void;
   let seasons: number[] = [];
   let season = initialSeason;
   let subdivision = 'fbs';
@@ -18,7 +17,8 @@
   let error = '';
   let cached = false;
   let version = 0;
-  function notify() { onchange({season, seasons, teams, team, subdivision, conference, loading, error}); }
+  function notify() { onchange({season, seasons, teams, team, subdivision, conference,
+    conferenceLabel: conferences.find(option => option.value === conference)?.label ?? '', loading, error}); }
   async function load(reset: boolean) {
     const current = ++version;
     if (reset) { teams = []; team = ''; }
@@ -64,7 +64,6 @@
     <option value="">Choose a school</option>
     {#each teams as option}<option value={option.value}>{option.label}</option>{/each}
   </select></label>
-  {#if ondownload && teams.length}<button type="button" disabled={disabled || loading} on:click={() => ondownload?.()}>Download this conference for selected seasons</button>{/if}
   {#if loading}<p role="status">Loading the selected college-football directory…</p>
   {:else if error}<p role="alert">{error} <button type="button" on:click={() => void load(false)}>Retry</button></p>
   {:else}<p>{cached ? 'Using cached directory. ' : ''}Conference membership reflects {season}; analysis includes nonconference games. Only your selected subject’s missing game data will be prepared.</p>{/if}

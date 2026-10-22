@@ -57,12 +57,16 @@ def teams_and_athletes(summary):
                         "name": athlete.get("displayName"),
                         "position": (athlete.get("position") or {}).get("abbreviation"),
                         "team_id": team_id if team_id in teams else None,
+                        "name_source": "ESPN box score",
+                        "position_source": "ESPN box score position" if (athlete.get("position") or {}).get("abbreviation") else None,
                     }
     return teams, athletes
 
 
 def recorded_play(play, summary, directory=None):
-    teams, athletes = directory or teams_and_athletes(summary)
+    directory = directory or teams_and_athletes(summary)
+    teams, athletes = directory[:2]
+    positions = directory[2] if len(directory) > 2 else {}
     start, end = play.get("start") or {}, play.get("end") or {}
     possession = source_id(start.get("team"), "teams")
     end_team = source_id(end.get("team"), "teams")
@@ -77,14 +81,18 @@ def recorded_play(play, summary, directory=None):
         known = athletes.get(identity, {})
         match = re.search(r"/competitors/(\d+)/roster/", (entry.get("statistics") or {}).get("$ref", ""))
         attributed_team = match.group(1) if match and match.group(1) in teams else known.get("team_id")
+        position_id = source_id(entry.get("position"), "positions")
+        position = positions.get(position_id) or (entry.get("position") or {}).get("abbreviation")
         participants.append(
             {
                 "athlete_id": identity,
                 "role": role,
                 "name": known.get("name") or (entry.get("athlete") or {}).get("displayName"),
-                "position": known.get("position"),
+                "position": position or known.get("position"),
                 "team_id": attributed_team,
-                "position_id": source_id(entry.get("position"), "positions"),
+                "position_id": position_id,
+                "position_source": "ESPN participant position" if position else known.get("position_source"),
+                "name_source": known.get("name_source") or ("ESPN box score" if known.get("name") else "ESPN structured participant"),
                 "identity_source": "ESPN structured participant",
             }
         )
@@ -113,6 +121,7 @@ def recorded_play(play, summary, directory=None):
         "yards_gained": finite(play.get("statYardage")),
         "play_type": (play.get("type") or {}).get("text"),
         "participants": participants,
+        **({"identity_context_version": 1} if len(directory) > 2 else {}),
         "scoring_play": play.get("scoringPlay"),
         "pass": is_pass, "rush": is_rush,
         "scrimmage": (is_pass or is_rush) and not no_play,

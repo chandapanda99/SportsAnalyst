@@ -8,7 +8,9 @@ from threading import Lock
 from time import perf_counter
 
 from sports_analyst.config import Settings
+from sports_analyst.datasets.acquisition import timed_stage
 from sports_analyst.datasets.cfb import SportsDataverseCFBConnector
+from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.errors import SyncFailure
 from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
 from sports_analyst.datasets.nfl import NFLVerseConnector
@@ -55,6 +57,9 @@ class DatasetSyncApplication:
         )
         self.events = self.jobs
         self.connectors["cfb"].source.persistence = self.store.persistence
+        self.connectors["soccer"].source_cache = CFBSource(
+            self.settings.data_dir / "raw" / "soccer", self.store.persistence,
+            concurrency=settings.dataset_sync_concurrency, namespace="soccer")
 
     def sync(
             self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None,
@@ -88,8 +93,33 @@ def run_dataset_sync(
                 application.events.emit(key, phase, f"College Football · {season} · {detail or dataset}",
                                         0.1 + 0.7 * (fraction or 0), **context)
 
-            manifests = connector.sync(seasons, datasets, team_ids=team_ids, progress_callback=report,
-                                       manifest_callback=application.store.save_manifest)
+            installed = {item.manifest_id: item for item in application.store.manifests(sport="cfb")}
+            saved = []
+
+            def register_cfb(manifest):
+                previous = installed.get(manifest.manifest_id)
+                if previous and previous.model_dump(exclude={"local_path"}) == manifest.model_dump(exclude={"local_path"}):
+                    return  # Reused historical snapshots do not need another upload.
+                context.update(dataset=manifest.dataset, season=manifest.season,
+                               season_label=str(manifest.season), step="saving to the data library")
+                with timed_stage("save_dataset", sport="cfb", season=manifest.season,
+                                 dataset=manifest.dataset, partition=manifest.partition_key):
+                    # A refreshed snapshot can have identical bytes but newer
+                    # coverage/freshness metadata. Save that metadata regardless.
+                    application.store.save_manifest(manifest, publish_catalog=False, upload_data=previous is None)
+                installed[manifest.manifest_id] = manifest
+                saved.append(manifest)
+
+            try:
+                with timed_stage("sync", sport="cfb", job_id=key):
+                    manifests = connector.sync(seasons, datasets, team_ids=team_ids, progress_callback=report,
+                                               manifest_callback=register_cfb)
+            finally:
+                # Per-item files and metadata are checkpointed immediately. Publish
+                # their catalog once, including successes from interrupted runs.
+                if saved:
+                    with timed_stage("publish_catalog", sport="cfb", job_id=key):
+                        application.store.publish_dataset_catalog(saved)
             gaps = [item for item in manifests if item.availability != "available"]
             message = "Selected college-football data ready"
             if gaps:
@@ -206,8 +236,10 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     sync_kwargs = {"competition": competition, "progress_detail_callback": report_sync,
                    "refresh_seasons": {current_season} if competition in SOCCER_COMPETITIONS else set()} if sport == "soccer" else {}
     context["step"] = "downloading selected datasets"
-    with optional_dependencies(f"{sport.upper()} dataset sync"):
-        manifests = connector.sync(seasons, selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest, skip=existing, **sync_kwargs)
+    with optional_dependencies(f"{sport.upper()} dataset sync"), timed_stage("acquire_datasets", sport=sport, competition=competition):
+        manifests = connector.sync(
+            seasons, selected_datasets, progress_callback=report_sync,
+            manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)

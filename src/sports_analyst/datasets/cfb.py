@@ -8,13 +8,13 @@ import json
 import logging
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import polars as pl
 
 from sports_analyst.config import Settings
+from sports_analyst.datasets.acquisition import bounded_results, timed_stage
 from sports_analyst.datasets.cfb_source import CORE, SITE, WEB, CFBSource, query_url
 from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError
@@ -271,20 +271,17 @@ class SportsDataverseCFBConnector:
                     "team_id": team_id, "season": season, "source_url": ref}
 
         rows, failed = [], len(entries) - len(refs)
-        with ThreadPoolExecutor(max_workers=self.settings.dataset_sync_concurrency) as pool:
-            items = list(refs.items())
-            for offset in range(0, len(items), self.settings.dataset_sync_concurrency):
-                futures = [pool.submit(resolve, item) for item in items[offset:offset + self.settings.dataset_sync_concurrency]]
-                for future in as_completed(futures):
-                    try:
-                        rows.append(future.result())
-                    except OptionalDependencyError:
-                        raise
-                    except Exception:
-                        failed += 1
-                    if progress:
-                        progress("downloading", "rosters", season, 0, 1, (len(rows) + failed) / max(1, len(entries)),
-                                 f"Resolving roster athletes · {len(rows)} recorded · {failed} unavailable", True)
+        with timed_stage("roster_identities", sport="cfb", team=team_id, season=season):
+            for _, future in bounded_results(resolve, refs.items(), self.settings.dataset_sync_concurrency):
+                try:
+                    rows.append(future.result())
+                except OptionalDependencyError:
+                    raise
+                except Exception:
+                    failed += 1
+                if progress:
+                    progress("downloading", "rosters", season, 0, 1, (len(rows) + failed) / max(1, len(entries)),
+                             f"Resolving roster athletes · {len(rows)} recorded · {failed} unavailable", True)
         return rows, failed
 
     def player_seasons(self, athlete_id):
@@ -397,14 +394,54 @@ class SportsDataverseCFBConnector:
             raise ValueError("Game summary identity or season could not be verified")
         return raw
 
-    def game_plays(self, game_id, season):
-        from sports_analyst.datasets.cfb_plays import recorded_play, teams_and_athletes
+    def game_roster(self, game_id, season):
+        from sports_analyst.datasets.cfb_identity import game_directory
 
         game_id = self.validate_id(game_id)
+        _, roster = game_directory(self.source, game_id, season, self.summary(game_id, season), [], season_ttl(season))
+        return roster
+
+    def game_plays(self, game_id, season):
+        """Share successful normalized games across teams; retry coverage gaps."""
+        from sports_analyst.datasets.cfb_identity import IDENTITY_VERSION
+
+        game_id = self.validate_id(game_id)
+        try:
+            provider = importlib.metadata.version("sportsdataverse")
+        except importlib.metadata.PackageNotFoundError:
+            provider = "unknown"
         raw = self.summary(game_id, season)
-        directory = teams_and_athletes(raw)
+        digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
+        key = f"normalized-plays/v1/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
+        ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
+        cached = self.source._cached(key, ttl)
+        if cached is not None:
+            return cached
+        with self.source.lease(f"normalized-plays:{season}:{game_id}", seconds=1800):
+            cached = self.source._cached(key, ttl)
+            if cached is not None:
+                return cached
+            with timed_stage("normalize_game", sport="cfb", game=game_id, season=season):
+                result = self._game_plays(game_id, season, raw)
+            # Optional request failures must not become persistent empty identities
+            # or prevent a later attempt from obtaining provider-derived context.
+            complete = all(actor.get("name") and actor.get("position") and actor.get("team_id")
+                           for row in result["plays"] for actor in row.get("participants", []))
+            roster_teams = {entry["team_id"] for entry in result["game_roster"]}
+            teams = {str(entry["id"]) for entry in result["teams"]}
+            if (provider != "unknown" and complete and teams and teams <= roster_teams
+                    and "could not load" not in result["message"]):
+                self.source.store(key, result)
+            return result
+
+    def _game_plays(self, game_id, season, raw):
+        from sports_analyst.datasets.cfb_plays import recorded_play
+        from sports_analyst.datasets.cfb_identity import game_directory
+
+        game_id = self.validate_id(game_id)
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         source = self.source.collection(f"{CORE}/events/{game_id}/competitions/{game_id}/plays", ttl, maximum=800)
+        directory, game_roster = game_directory(self.source, game_id, season, raw, source, ttl)
         rows = [recorded_play(play, raw, directory) for play in source]
         if not rows:
             raise ValueError("No recorded detailed plays are available; this is not proof of an empty game")
@@ -434,6 +471,7 @@ class SportsDataverseCFBConnector:
         return {
             "plays": rows,
             "teams": list(directory[0].values()),
+            "game_roster": game_roster,
             "coverage": f"{len(rows)} recorded source plays; participant actors are not a full on-field lineup",
             "message": "Actor locations are illustrative. Narrative formation labels appear only where recorded; "
                        "full lineups, tracking and assignments are not verified." + context_message,
@@ -441,14 +479,21 @@ class SportsDataverseCFBConnector:
 
     def prepare_recorded(self, season, partition, schedule, callback=None, progress=None):
         rows, completed = [], 0
-        games = schedule["game_id"].unique().to_list()
+        # Future fixtures are not failed downloads and cannot supply play evidence.
+        games = schedule.filter(pl.col("completed") == True)["game_id"].unique().sort().to_list()  # noqa: E712
+        scheduled = schedule["game_id"].n_unique()
+        skipped = scheduled - len(games)
         with self.source.lease(f"recorded:{partition}:{season}", seconds=1800):
-            for index, game in enumerate(games):
+            for index, (game, future) in enumerate(bounded_results(
+                    lambda game: self.game_plays(game, season), games, self.settings.dataset_sync_concurrency)):
                 if progress:
                     progress("downloading", "recorded_plays", season, index, len(games),
-                             index / max(1, len(games)), f"Recorded play evidence · game {index + 1}/{len(games)}", True)
+                             index / max(1, len(games)),
+                             f"Recorded play evidence · completed game {index + 1}/{len(games)} · {skipped} not completed skipped", True)
                 try:
-                    detail = self.game_plays(game, season)
+                    detail = future.result()
+                    if not detail["plays"]:
+                        raise ValueError("No recorded plays supplied for this completed game")
                     rows.extend({**row, "play_id": row["id"], "game_id": game, "season": season,
                                  "teams_json": json.dumps(detail["teams"])} for row in detail["plays"])
                     completed += 1
@@ -456,7 +501,17 @@ class SportsDataverseCFBConnector:
                     raise
                 except Exception:
                     logger.exception("cfb_recorded_plays_unavailable game_id=%s season=%s", game, season)
-            return self.snapshot(season, partition, {"recorded_plays": rows}, len(games), completed, callback)[0]
+            if progress:
+                detail = (f"Recorded play evidence · {completed}/{len(games)} completed games available · "
+                          f"{len(games) - completed} missing · {skipped} not completed skipped" if games else
+                          f"No completed games · {skipped} scheduled fixtures skipped; play data are not expected yet")
+                progress("downloading", "recorded_plays", season, len(games), len(games), 1,
+                         detail, True)
+            return self.snapshot(
+                season, partition, {"recorded_plays": rows}, len(games), completed, callback,
+                extra_coverage={"scheduled_matches": scheduled, "skipped_uncompleted_matches": skipped,
+                                "missing_completed_matches": len(games) - completed},
+            )[0]
 
     def play_personnel(self, game, season, play):
         game, play = self.validate_id(str(game)), str(play)
@@ -486,11 +541,18 @@ class SportsDataverseCFBConnector:
 
     def prepare_enriched(self, season, partition, schedule, manifest_callback=None, progress=None):
         """Enrich selected completed games only; ordinary box-score startup stays cheap."""
+        games = schedule.filter(pl.col("completed") == True)["game_id"].unique().to_list()  # noqa: E712
+        if not games:
+            return self.snapshot(
+                season, partition, {"enriched_plays": []}, 0, 0, manifest_callback,
+                extra_coverage={"scheduled_matches": schedule["game_id"].n_unique(),
+                                "skipped_uncompleted_matches": schedule["game_id"].n_unique(),
+                                "missing_completed_matches": 0, "complete_play_games": 0},
+            )[0]
+        if len(games) > 30:
+            raise ValueError("Select a bounded completed-game sample for play enrichment")
         from sports_analyst.datasets.cfb_enrichment import CFBEnrichment
 
-        games = schedule.filter(pl.col("completed") == True)["game_id"].unique().to_list()  # noqa: E712
-        if not games or len(games) > 30:
-            raise ValueError("Select a bounded completed-game sample for play enrichment")
         rows, successful, complete = [], 0, 0
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         with self.source.lease(f"enrich-partition:{partition}:{season}", seconds=1800):
@@ -499,7 +561,8 @@ class SportsDataverseCFBConnector:
                 if progress:
                     progress(game, index, len(games))
                 try:
-                    result = enrichment.game(game, season, self.summary(game, season), ttl)
+                    with timed_stage("model_game", sport="cfb", season=season, game=game):
+                        result = enrichment.game(game, season, self.summary(game, season), ttl)
                     rows.extend(result["rows"])
                     successful += 1
                     complete += result["provenance"]["source_plays"] == result["provenance"]["processed_plays"]
@@ -571,15 +634,26 @@ class SportsDataverseCFBConnector:
             )
         return teams, players, scoring
 
-    def snapshot(self, season, partition, rows, total, completed, callback, availability=None):
+    def snapshot(self, season, partition, rows, total, completed, callback, availability=None, extra_coverage=None):
         manifests = []
         for dataset, values in rows.items():
             status, message = (availability or {}).get(dataset, ("available", None))
-            if status == "available" and not values:
+            if dataset in {"recorded_plays", "enriched_plays"} and total == 0:
+                status, message = "available", "No completed games in this selection; play data are not expected yet."
+            elif dataset == "recorded_plays" and completed < total:
+                status, message = "partial", f"Recorded plays are missing for {total - completed} of {total} completed games; retry to resume."
+            elif status == "available" and not values:
                 status, message = "source_unavailable", "The fetched game summaries contain no recorded rows for this package."
             elif status == "available" and dataset != "rosters" and completed < total:
                 status, message = "partial", "Some game summaries could not be retrieved; retry to resume."
             data = frame(values)
+            # Completion order must not change checksums for identical source
+            # data, otherwise parallel refreshes cause unnecessary reuploads.
+            order = [field for field in ("game_id", "team_id", "athlete_id", "play_id", "quarter", "clock", "text")
+                     if field in data.columns]
+            if order:
+                data = data.sort(order)
+            data = data.select(sorted(data.columns))
             if status == "available" and dataset in {"team_stats", "player_stats"}:
                 recorded = data["game_id"].n_unique()
                 if recorded < completed:
@@ -587,10 +661,12 @@ class SportsDataverseCFBConnector:
                     message = f"Recorded statistics cover {recorded} of {completed} fetched games; remaining sections were not supplied."
             path = self.data_dir / "partitions" / partition.replace(":", "/") / str(season) / f"{dataset}.parquet"
             path.parent.mkdir(parents=True, exist_ok=True)
-            data.write_parquet(path)
+            with timed_stage("write_snapshot", sport="cfb", season=season, partition=partition, dataset=dataset):
+                data.write_parquet(path)
+                checksum = sha256_file(path)
             manifest = DatasetManifest(
                 manifest_id=stable_id(
-                    "dataset", {"sport": "cfb", "season": season, "partition": partition, "dataset": dataset, "checksum": sha256_file(path)}
+                    "dataset", {"sport": "cfb", "season": season, "partition": partition, "dataset": dataset, "checksum": checksum}
                 ),
                 sport="cfb",
                 partition_key=partition,
@@ -600,7 +676,7 @@ class SportsDataverseCFBConnector:
                 package_version=importlib.metadata.version("sportsdataverse"),
                 license="See ESPN data terms.",
                 attribution="ESPN data acquired through SportsDataverse.",
-                sha256=sha256_file(path),
+                sha256=checksum,
                 row_count=data.height,
                 columns=data.columns,
                 local_path=str(path.resolve()),
@@ -611,6 +687,7 @@ class SportsDataverseCFBConnector:
                     "completed_matches": int(bool(values)) if dataset == "rosters" else completed,
                     "recorded_matches": data["game_id"].n_unique() if "game_id" in data.columns else 0,
                     "availability_checked_at": int(time.time()),
+                    **(extra_coverage or {}),
                 },
             )
             if callback:
@@ -662,65 +739,60 @@ class SportsDataverseCFBConnector:
             progress("downloading", "schedules", season, 0, 1, detail="Season schedule")
         schedules = {} if athlete_id else self.schedule(identity, season)
         games = self.player_games(identity, season) if athlete_id else {game: row for game, row in schedules.items() if row["completed"]}
-        if not games:
+        if not games and (athlete_id or not schedules):
             raise ValueError("No completed games are recorded for this subject/season")
         if len(games) > 30:
             raise ValueError("Selected-subject games exceed the supported season bound")
         rows = {"schedules": [], "team_stats": [], "player_stats": [], "scoring_events": [], "rosters": []}
         selected = set(datasets or CFB_BASE_DATASETS)
         availability = {}
+        if not games:
+            availability.update({dataset: ("source_unavailable", "No completed games in this selection; game statistics are not expected yet.")
+                                 for dataset in selected if dataset not in {"schedules", "rosters"}})
         completed = 0
-        # Bound outstanding summaries to one batch; futures do not retain a national dataset.
+        # Refill immediately as each summary finishes, without retaining a season
+        # of pending futures or letting a slow request stall the next batch.
         ids = list(games)
         concurrency = self.settings.dataset_sync_concurrency
-        for offset in range(0, len(ids), concurrency):
-            with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                futures = {pool.submit(self.summary, game, season): game for game in ids[offset : offset + concurrency]}
-                for future in as_completed(futures):
-                    game = futures[future]
-                    try:
-                        raw = future.result()
-                    except OptionalDependencyError:
-                        raise
-                    except Exception:
-                        logger.exception("cfb_summary_unavailable game_id=%s season=%s", game, season)
+        with timed_stage("game_summaries", sport="cfb", season=season, partition=partition):
+            for game, future in bounded_results(lambda game: self.summary(game, season), ids, concurrency):
+                try:
+                    raw = future.result()
+                except OptionalDependencyError:
+                    raise
+                except Exception:
+                    logger.exception("cfb_summary_unavailable game_id=%s season=%s", game, season)
+                    continue
+                header = raw["header"]
+                header_event = {
+                    **header,
+                    "id": game,
+                    "date": (header.get("competitions") or [{}])[0].get("date"),
+                    "seasonType": {"type": (header.get("season") or {}).get("type", 2)},
+                }
+                teams, players, scoring = self.statistics(raw, game, season)
+                if athlete_id:
+                    entries = [row for row in players if row["athlete_id"] == identity]
+                    if not entries:
+                        continue  # A log entry is not proof of an attributed offensive appearance.
+                    subject_team = entries[0]["team_id"]
+                    player_schedule = self.schedule_rows({"events": [header_event]}, subject_team, season)
+                    if not player_schedule:
                         continue
-                    header = raw["header"]
-                    header_event = {
-                        **header,
-                        "id": game,
-                        "date": (header.get("competitions") or [{}])[0].get("date"),
-                        "seasonType": {"type": (header.get("season") or {}).get("type", 2)},
-                    }
-                    teams, players, scoring = self.statistics(raw, game, season)
-                    if athlete_id:
-                        entries = [row for row in players if row["athlete_id"] == identity]
-                        if not entries:
-                            continue  # A log entry is not proof of an attributed offensive appearance.
-                        subject_team = entries[0]["team_id"]
-                        player_schedule = self.schedule_rows({"events": [header_event]}, subject_team, season)
-                        if not player_schedule:
-                            continue
-                        schedules[game] = player_schedule[0]
-                        players = entries
-                    else:
-                        teams = [row for row in teams if row["team_id"] == identity]
-                        players = [row for row in players if row["team_id"] == identity]
-                    rows["team_stats"].extend(teams)
-                    rows["player_stats"].extend(players)
-                    rows["scoring_events"].extend(scoring)
-                    completed += 1
-                    if progress:
-                        progress(
-                            "downloading",
-                            "team_stats",
-                            season,
-                            0,
-                            1,
-                            completed / len(ids),
-                            f"Game summaries · {completed} of {len(ids)}",
-                            True,
-                        )
+                    schedules[game] = player_schedule[0]
+                    players = entries
+                else:
+                    teams = [row for row in teams if row["team_id"] == identity]
+                    players = [row for row in players if row["team_id"] == identity]
+                rows["team_stats"].extend(teams)
+                rows["player_stats"].extend(players)
+                rows["scoring_events"].extend(scoring)
+                completed += 1
+                if progress:
+                    progress(
+                        "downloading", "team_stats", season, 0, 1,
+                        completed / len(ids), f"Game summaries · {completed} of {len(ids)}", True,
+                    )
             # Successful raw summaries are already cached for an interrupted attempt.
         rows["schedules"] = list(schedules.values())
         if not athlete_id and "rosters" in selected:
@@ -735,7 +807,7 @@ class SportsDataverseCFBConnector:
             except Exception:
                 availability["rosters"] = ("download_failed", "Roster download failed; retry to retrieve this package.")
                 logger.exception("cfb_roster_unavailable team_id=%s season=%s", identity, season)
-        if not completed:
+        if games and not completed:
             raise ValueError("No usable game summaries with attributed statistics were retrieved")
         return self.snapshot(
             season, partition, {key: value for key, value in rows.items() if key in selected},

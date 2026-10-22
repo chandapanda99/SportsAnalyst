@@ -518,6 +518,197 @@ def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, mo
     assert count[url] == 1
 
 
+@pytest.mark.parametrize("namespace,prefix", [("cfb", ""), ("soccer", "eng.1/")])
+def test_durable_source_reuses_local_cache_and_observes_league_resets(tmp_path, namespace, prefix):
+    class CountingPersistence(DurableMemory):
+        def __init__(self):
+            super().__init__()
+            self.reads = Counter()
+
+        def read_bytes(self, key):
+            self.reads[key] += 1
+            return super().read_bytes(key)
+
+    persistence = CountingPersistence()
+    sources = [CFBSource(tmp_path / name, persistence, namespace=namespace) for name in ("one", "two")]
+    key = prefix + "games/2025/101.json"
+    remote = f"raw/{namespace}/{key}"
+    sources[0].store(key, {"plays": [1]})
+    for _ in range(3):
+        assert sources[0]._cached(key, 60) == {"plays": [1]}
+    assert persistence.reads[remote] == 0
+    for _ in range(3):
+        assert sources[1]._cached(key, 60) == {"plays": [1]}
+    assert persistence.reads[remote] == 1  # Durable hit promoted to disk.
+    assert sources[1]._cached(key, -1) is None  # Local reuse never extends source freshness.
+    scope = "eng.1" if namespace == "soccer" else "all"
+    persistence.write_bytes(f"metadata/dataset-resets/{namespace}/{scope}.txt", b"new-generation")
+    for source in sources:
+        source._generations.clear()  # Next bounded generation recheck, without sleeping.
+        assert source._cached(key, 60) is None  # Even surviving old remote objects are invalid.
+    sources[0].store(key, {"plays": [2]})
+    assert sources[1]._cached(key, 60) == {"plays": [2]}
+
+
+def test_scoped_preparation_refills_workers_and_resumes_failed_games(tmp_path, source, monkeypatch):
+    connector = SportsDataverseCFBConnector(Settings(_env_file=None, data_dir=tmp_path, dataset_sync_concurrency=2))
+    schedules = {str(game): connector.schedule_rows({"events": [event(str(game), 2025)]}, "1", 2025)[0]
+                 for game in (20251, 20252, 20253)}
+    monkeypatch.setattr(connector, "schedule", lambda *args: schedules)
+    original = connector.summary
+    third_started = threading.Event()
+    failures = {"20253"}
+
+    def fetch(game, season):
+        if game == "20251":
+            assert third_started.wait(3), "A slow first request blocked the next batch"
+        if game == "20253":
+            third_started.set()
+            if failures:
+                failures.clear()
+                raise TimeoutError("Retryable source failure")
+        return original(game, season)
+
+    monkeypatch.setattr(connector, "summary", fetch)
+    first = connector.prepare(2025, team_id="1", datasets=["schedules", "team_stats"])
+    assert all(item.coverage["completed_matches"] == 2 for item in first)
+    second = connector.prepare(2025, team_id="1", datasets=["schedules", "team_stats"])
+    assert all(item.coverage["completed_matches"] == 3 for item in second)
+    assert source[0]["/apis/site/v2/sports/football/college-football/summary"] == 3
+    reference = next(item for item in second if item.dataset == "team_stats")
+    reordered = connector.snapshot(2025, "team:1", {"team_stats": connector.load(reference).reverse().to_dicts()}, 3, 3, None)[0]
+    assert reordered.sha256 == reference.sha256  # Network completion order does not cause spurious uploads.
+    pending = {**schedules["20251"], "game_id": "20254", "completed": False}
+    requested = []
+
+    def recorded(game, season):
+        requested.append(game)
+        return {"plays": [{"id": game + "001", "text": "Recorded play"}], "teams": []}
+
+    monkeypatch.setattr(connector, "game_plays", recorded)
+    saved = connector.prepare_recorded(2025, "team:1", pl.from_dicts([*schedules.values(), pending]))
+    assert set(requested) == set(schedules)  # Upcoming fixtures are not attempted or counted as gaps.
+    assert saved.coverage["expected_matches"] == saved.coverage["completed_matches"] == 3
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_recorded_sync_skips_unplayed_fixtures_and_tracks_only_completed_gaps(tmp_path, source, monkeypatch, caplog, durable):
+    import logging
+
+    app = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, dataset_sync_concurrency=2),
+                             persistence=DurableMemory() if durable else None, analysis_runtime=False)
+    connector = app.connectors["cfb"]
+    logger = logging.getLogger("sports_analyst.datasets.cfb")
+    monkeypatch.setattr(logger, "handlers", [*logger.handlers, caplog.handler])
+
+    def schedule(team, season):
+        rows = {str(season) + str(index): connector.schedule_rows(
+            {"events": [event(str(season) + str(index), season)]}, team, season)[0] for index in (1, 2, 3, 4)}
+        for index, row in enumerate(rows.values(), 1):
+            # Include a live/scheduled fixture and an unknown completion flag.
+            row["completed"] = (index <= 2 if season == 2025 else False) if index != 4 else None
+        return rows
+
+    monkeypatch.setattr(connector, "schedule", schedule)
+    requested = Counter()
+    fail = {"20252"}
+
+    def recorded(game, season):
+        requested[game] += 1
+        assert game in {"20251", "20252"}, "Unplayed game was requested"
+        if game in fail:
+            raise TimeoutError("Missing completed-game source coverage")
+        return {"plays": [{"id": game + "001", "text": "Recorded play"}], "teams": []}
+
+    monkeypatch.setattr(connector, "game_plays", recorded)
+    first = app.sync([2025], "mixed-games", ["recorded_plays"], "cfb", team_ids=["1"])
+    plays = next(item for item in first if item.dataset == "recorded_plays")
+    assert plays.availability == "partial"
+    assert {key: plays.coverage[key] for key in (
+        "scheduled_matches", "expected_matches", "completed_matches", "missing_completed_matches", "skipped_uncompleted_matches"
+    )} == {"scheduled_matches": 4, "expected_matches": 2, "completed_matches": 1,
+           "missing_completed_matches": 1, "skipped_uncompleted_matches": 2}
+    failures = [record for record in caplog.records if record.msg.startswith("cfb_recorded_plays_unavailable")]
+    assert len(failures) == 1 and failures[0].args == ("20252", 2025)
+    fail.add("20251")
+    missing = app.sync([2025], "all-completed-missing", ["recorded_plays"], "cfb", team_ids=["1"])
+    missing = next(item for item in missing if item.dataset == "recorded_plays")
+    assert missing.availability == "partial" and missing.row_count == 0
+    assert missing.coverage["missing_completed_matches"] == 2
+    assert missing.coverage["skipped_uncompleted_matches"] == 2
+    fail.clear()
+    resumed = app.sync([2025], "resumed-games", ["recorded_plays"], "cfb", team_ids=["1"])
+    plays = next(item for item in resumed if item.dataset == "recorded_plays")
+    assert plays.availability == "available" and plays.coverage["missing_completed_matches"] == 0
+    assert set(requested) == {"20251", "20252"}
+    caplog.clear()
+    before = dict(requested)
+    future = app.sync([2026], "future-games", ["recorded_plays", "enriched_plays"], "cfb", team_ids=["1"])
+    plays = next(item for item in future if item.dataset == "recorded_plays")
+    assert dict(requested) == before  # Future-only sync completes without source attempts.
+    assert plays.availability == "available" and "not expected yet" in plays.availability_message
+    assert plays.row_count == 0
+    assert plays.coverage["scheduled_matches"] == plays.coverage["skipped_uncompleted_matches"] == 4
+    assert plays.coverage["expected_matches"] == plays.coverage["missing_completed_matches"] == 0
+    modeled = next(item for item in future if item.dataset == "enriched_plays")
+    assert modeled.availability == "available" and modeled.row_count == 0
+    assert modeled.coverage["missing_completed_matches"] == 0
+    assert not any(record.exc_info for record in caplog.records)
+    if durable:
+        replica = LocalStore(Settings(_env_file=None, data_dir=tmp_path / "replica"), app.store.persistence)
+        assert replica.manifest_for_season(2026, "recorded_plays", "cfb", partition_key="team:1").coverage == plays.coverage
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_sync_checkpoints_partial_success_and_batches_catalog_publication(tmp_path, source, monkeypatch, durable):
+    from sports_analyst.datasets.errors import SyncFailure
+
+    app = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path),
+                             persistence=DurableMemory() if durable else None, analysis_runtime=False)
+    connector = app.connectors["cfb"]
+    published = []
+    original = app.store.publish_dataset_catalog
+
+    def publish(manifests):
+        published.append(list(manifests))
+        return original(manifests)
+
+    monkeypatch.setattr(app.store, "publish_dataset_catalog", publish)
+
+    def interrupted(seasons, datasets, *, manifest_callback, **kwargs):
+        connector.prepare(2025, team_id="1", datasets=datasets, manifest_callback=manifest_callback)
+        raise TimeoutError("Interrupted after checkpoint")
+
+    monkeypatch.setattr(connector, "sync", interrupted)
+    with pytest.raises(SyncFailure):
+        app.sync([2025], "checkpoint", ["schedules", "team_stats"], "cfb", team_ids=["1"])
+    assert len(published) == 1 and len(published[0]) == 2
+    assert len(app.store.manifests(sport="cfb")) == 2
+    if durable:
+        restored = LocalStore(Settings(_env_file=None, data_dir=tmp_path / "replica"), app.store.persistence)
+        assert len(restored.manifests(sport="cfb")) == 2
+    monkeypatch.setattr(connector, "sync", lambda seasons, datasets, **kwargs: connector.prepare(
+        seasons[0], team_id="1", datasets=datasets, manifest_callback=kwargs["manifest_callback"]))
+    app.sync([2025], "resume", ["schedules", "team_stats"], "cfb", team_ids=["1"])
+    assert len(published) == 1  # Reused snapshots are neither uploaded nor republished.
+    from datetime import UTC, datetime, timedelta
+
+    previous = app.store.manifests(sport="cfb")[0]
+    refreshed = previous.model_copy(update={"acquired_at": datetime.now(UTC) + timedelta(seconds=1)})
+
+    def refresh(seasons, datasets, **kwargs):
+        kwargs["manifest_callback"](refreshed)
+        return [refreshed]
+
+    if durable:
+        monkeypatch.setattr(app.store.persistence, "upload_file", lambda *args: pytest.fail("Unchanged data was uploaded again"))
+    monkeypatch.setattr(connector, "sync", refresh)
+    app.sync([2025], "refresh", [previous.dataset], "cfb", team_ids=["1"])
+    assert len(published) == 2
+    stored = app.store.manifest_for_season(2025, previous.dataset, "cfb", partition_key="team:1")
+    assert stored.acquired_at == refreshed.acquired_at  # Freshness advances even when the checksum is unchanged.
+
+
 def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified_plays(tmp_path, source, monkeypatch):
     application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, langsmith_tracing=False))
     original = CFBSource._request
@@ -587,13 +778,96 @@ def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified
     assert all(play.visualization.air_yards is not None for play in modeled_result.play_evidence)
 
 
+def test_game_identity_resolution_preserves_roles_roster_positions_and_saved_evidence(tmp_path, source, monkeypatch):
+    from sports_analyst.datasets.cfb_identity import with_identity_context
+
+    original = CFBSource._request
+    identity_calls = Counter()
+
+    def request(url):
+        path = urlparse(url).path
+        identity_calls[path] += 1
+        if path.endswith("/plays"):
+            return {"items": [{"id": "100", "type": {"text": "Pass Reception"}, "statYardage": 15,
+                               "start": {"team": {"id": "1"}, "yardsToEndzone": 60},
+                               "participants": [
+                                   {"athlete": {"id": identity}, "type": role, "position": {"$ref": f"{CORE}/positions/{position}"}}
+                                   for identity, role, position in [("10", "passer", "8"), ("12", "receiver", "7"),
+                                                                    ("22", "assisted_by", "264"), ("99", "sacked_by", "35"),
+                                                                    ("22", "tackler", "264")]]}]}
+        if "/competitors/" in path and path.endswith("/roster"):
+            team = path.split("/competitors/")[1].split("/")[0]
+            players = [("12", "Roster TE", "7", False), ("66", "Roster Guard", "45", False),
+                       ("77", "Did Not Play", "45", True)] if team == "1" else [("22", "Recorded Defender", "264", False)]
+            entries = [{"athlete": {"$ref": f"{CORE}/seasons/2025/athletes/{identity}"}, "displayName": name,
+                        "position": {"$ref": f"{CORE}/positions/{position}"}, "starter": True, "didNotPlay": dnp}
+                       for identity, name, position, dnp in players]
+            entries.append({"athlete": {"$ref": f"{CORE}/seasons/2026/athletes/88"}, "starter": True})
+            return {"team": {"$ref": f"{CORE}/seasons/2025/teams/{team}"}, "entries": entries}
+        if "/positions/" in path:
+            identity = path.rsplit("/", 1)[1]
+            return {"id": identity, "abbreviation": {"8": "QB", "7": "TE", "45": "G", "264": "EDGE", "35": "S"}[identity]}
+        if path.endswith("/seasons/2025/athletes/99"):
+            return {"id": "99", "displayName": "Resolved Safety", "team": {"id": "2"}}
+        return original(url)
+
+    monkeypatch.setattr(CFBSource, "_request", staticmethod(request))
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, langsmith_tracing=False))
+    connector = application.connectors["cfb"]
+    detail = connector.game_plays("20251", 2025)
+    row = detail["plays"][0]
+    assert [(actor["name"], actor["position"]) for actor in row["participants"]] == [
+        ("Transfer QB", "QB"), ("Receiver", "TE"), ("Recorded Defender", "EDGE"),
+        ("Resolved Safety", "S"), ("Recorded Defender", "EDGE")]
+    assert all(actor["position_source"] == "ESPN participant position" for actor in row["participants"])
+    assert next(actor for actor in row["participants"] if actor["athlete_id"] == "99")["team_id"] == "2"
+    assert next(actor for actor in detail["game_roster"] if actor["athlete_id"] == "66")["position"] == "G"
+    assert all(actor["athlete_id"] != "88" for actor in detail["game_roster"])
+    assert not any(actor["athlete_id"] in {"66", "77"} for actor in row["participants"])
+    assert connector.game_plays("20251", 2025) == detail
+    assert max(identity_calls.values()) == 1  # Positions, roster and missing names are shared/cached.
+    assert not any("seasons/2026" in path or path.endswith("/athletes/66") for path in identity_calls)
+    saved = {"play_id": "100", "participants": [{"athlete_id": "12", "role": "receiver"}], "epa": .25}
+    merged = with_identity_context(saved, row)
+    assert merged["epa"] == .25 and len(merged["participants"]) == 5
+    assert saved["participants"] == [{"athlete_id": "12", "role": "receiver"}]
+    # Opening an older saved analysis upgrades labels without replacing model values.
+    from types import SimpleNamespace
+
+    saved.update(source_play_count=1, provider_version="saved-model", render_context_version=2)
+    item = SimpleNamespace(sport="cfb", game_id="20251", season=2025,
+                           visualization=SimpleNamespace(cfb_statistics={"modeled_plays": [saved], "teams": detail["teams"]}))
+    monkeypatch.setattr(application, "evidence", lambda *args: item)
+    response = TestClient(create_app(application)).post("/api/investigations/legacy/evidence/play/plays")
+    assert response.status_code == 200
+    assert response.json()["plays"][0]["epa"] == .25
+    assert len(response.json()["plays"][0]["participants"]) == 5
+    assert response.json()["game_roster"] == detail["game_roster"]
+    # Optional lookups can fail without turning a real play into an empty game.
+    def unavailable(url):
+        if "/positions/" in url or "/roster" in url or "/athletes/" in url:
+            raise TimeoutError("Optional identity source unavailable")
+        return request(url)
+
+    monkeypatch.setattr(CFBSource, "_request", staticmethod(unavailable))
+    fallback = SportsDataverseCFBConnector(Settings(_env_file=None, data_dir=tmp_path / "fallback")).game_plays("20251", 2025)
+    assert len(fallback["plays"][0]["participants"]) == 5
+    assert fallback["plays"][0]["participants"][0]["name"] == "Transfer QB"
+    assert fallback["plays"][0]["participants"][2]["name"] is None
+    assert fallback["game_roster"] == []
+
+
 def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometry(tmp_path, source, monkeypatch):
     from types import SimpleNamespace
+    from sports_analyst.datasets.cfb_plays import teams_and_athletes
 
     application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, langsmith_tracing=False))
     connector = application.connectors["cfb"]
     raw = {**summary("20251", 2025), "drives": {"previous": []}}
     monkeypatch.setattr(connector, "summary", lambda *args: raw)
+    directory = (*teams_and_athletes(raw), {})
+    monkeypatch.setattr("sports_analyst.datasets.cfb_identity.game_directory", lambda *args: (
+        directory, [{"athlete_id": "10", "team_id": "1"}, {"athlete_id": "20", "team_id": "2"}]))
     source_plays = [{"id": "101", "type": {"text": "Pass Reception"},
                      "text": "Pass complete to receiver caught at ABC35", "statYardage": 15,
                      "start": {"yardsToEndzone": 60, "team": {"id": "1"}},
@@ -611,9 +885,18 @@ def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometr
                           {"id": "102", "air_yards": None, "yards_after_catch": None}]}
 
     monkeypatch.setattr("sports_analyst.datasets.cfb_enrichment.process_summary", clean)
+    normalizations = []
+    normalize = connector._game_plays
+
+    def normalize_counted(*args):
+        normalizations.append(args[0])
+        return normalize(*args)
+
+    monkeypatch.setattr(connector, "_game_plays", normalize_counted)
     first = connector.game_plays("20251", 2025)
     second = connector.game_plays("20251", 2025)
     assert calls == [True]  # Cached lightweight cleaning, never the full model pipeline.
+    assert normalizations == ["20251"]  # Reuse the entire normalized game, not only cleaning.
     assert first == second
     assert first["plays"][0]["air_yards"] == 10
     assert first["plays"][0]["yards_after_catch"] == 5  # Trust recorded net yards, not the inconsistent 99.
@@ -633,6 +916,9 @@ def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometr
     row = response.json()["plays"][0]
     assert (row["air_yards"], row["yards_after_catch"], row["epa"]) == (10, 5, .25)
     assert "air_yards" not in saved  # Saved analysis remains immutable.
+    raw["header"]["source_revision"] = 2
+    connector.game_plays("20251", 2025)
+    assert normalizations == ["20251", "20251"]  # A changed summary invalidates derived output.
 
 
 def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp_path, source, monkeypatch):

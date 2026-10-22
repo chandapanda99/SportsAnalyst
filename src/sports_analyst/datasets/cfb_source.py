@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from threading import BoundedSemaphore, Lock
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import uuid4
 
+from sports_analyst.datasets.acquisition import bounded_results, timed_stage
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
 from sports_analyst.storage.persistence import LocalPersistenceBackend
+
+logger = logging.getLogger(__name__)
 
 CORE = "https://sports.core.api.espn.com/v2/sports/football/leagues/college-football"
 SITE = "https://site.api.espn.com/apis/site/v2/sports/football/college-football"
@@ -50,6 +54,10 @@ class CFBSource:
         self.cache_hits = 0
         self.requests = 0
         self.concurrency = max(1, min(16, concurrency))
+        # Nested game/identity workers share one provider request budget.
+        self._request_slots = BoundedSemaphore(self.concurrency)
+        self._generation_lock = Lock()
+        self._generations = {}
 
     @staticmethod
     def _request(url: str) -> dict:
@@ -69,16 +77,63 @@ class CFBSource:
 
     def _cached(self, key: str, ttl: float) -> dict | None:
         path = self.root / key
-        payload = (self.persistence.read_bytes(f"raw/{self.namespace}/{key}") if self.persistence.durable
-                   else path.read_bytes() if path.exists() else None)
-        if payload is not None:
+        generation = self._reset_generation(key)
+
+        def decode(payload):
             try:
                 document = json.loads(payload)
-                if time.time() - document["acquired_at"] <= ttl:
+                if not isinstance(document, dict):
+                    return None
+                if (document.get("reset_generation") == generation
+                        and time.time() - document["acquired_at"] <= ttl):
                     return document["data"]
             except (ValueError, KeyError, TypeError):
                 pass
+            return None
+
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            payload = None
+        if payload is not None:
+            result = decode(payload)
+            if result is not None:
+                logger.debug("dataset_cache namespace=%s tier=local hit=true", self.namespace)
+                return result
+        if self.persistence.durable:
+            with timed_stage("durable_cache_read", namespace=self.namespace):
+                payload = self.persistence.read_bytes(f"raw/{self.namespace}/{key}")
+            if payload is not None:
+                result = decode(payload)
+                if result is not None:
+                    self._write_local(path, payload)
+                    logger.debug("dataset_cache namespace=%s tier=durable hit=true", self.namespace)
+                    return result
         return None
+
+    def _reset_generation(self, key):
+        if not self.persistence.durable or self.namespace not in {"cfb", "soccer"}:
+            return None
+        scope = key.split("/", 1)[0] if self.namespace == "soccer" else "all"
+        # Explicit sync entry points also invalidate disk caches immediately.
+        # Direct discovery/tablet reads observe cross-replica resets within 5s.
+        with self._generation_lock:
+            checked, generation = self._generations.get(scope, (float("-inf"), None))
+            if time.monotonic() - checked >= 5:
+                payload = self.persistence.read_bytes(f"metadata/dataset-resets/{self.namespace}/{scope}.txt")
+                generation = payload.decode() if payload else None
+                self._generations[scope] = (time.monotonic(), generation)
+            return generation
+
+    @staticmethod
+    def _write_local(path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(payload)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @contextmanager
     def lease(self, name: str, seconds: int = 60):
@@ -136,20 +191,20 @@ class CFBSource:
             if result is not None:
                 self.cache_hits += 1
                 return result
-            result = self._request(url)
-            self.requests += 1
+            with self._request_slots, timed_stage("source_request", namespace=self.namespace):
+                self.requests += 1
+                result = self._request(url)
             self.store(key, result)
             return result
 
     def store(self, key: str, data: dict):
-        document = json.dumps({"acquired_at": time.time(), "data": data}, separators=(",", ":")).encode()
+        document = json.dumps({"acquired_at": time.time(), "data": data,
+                               "reset_generation": self._reset_generation(key)}, separators=(",", ":")).encode()
         path = self.root / key
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-        temporary.write_bytes(document)
-        temporary.replace(path)
         if self.persistence.durable:
-            self.persistence.write_bytes(f"raw/{self.namespace}/{key}", document, "application/json")
+            with timed_stage("durable_cache_write", namespace=self.namespace):
+                self.persistence.write_bytes(f"raw/{self.namespace}/{key}", document, "application/json")
+        self._write_local(path, document)
 
     def collection(self, url: str, ttl: float = 86400, maximum: int = 500) -> list[dict]:
         """Follow up to ten bounded collection pages; reject truncation."""
@@ -165,12 +220,11 @@ class CFBSource:
 
     def references(self, url: str, ttl: float = 86400, maximum: int = 500) -> list[dict]:
         entries = self.collection(url, ttl, maximum)
-        rows = []
 
         def resolve(item):
             return self.get(item["$ref"], ttl) if "$ref" in item else item
 
-        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
-            for offset in range(0, len(entries), self.concurrency):
-                rows.extend(pool.map(resolve, entries[offset : offset + self.concurrency]))
-        return rows
+        resolved = {}
+        for indexed, future in bounded_results(lambda pair: resolve(pair[1]), enumerate(entries), self.concurrency):
+            resolved[indexed[0]] = future.result()
+        return [resolved[index] for index in range(len(entries))]
