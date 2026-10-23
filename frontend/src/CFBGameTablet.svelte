@@ -79,12 +79,18 @@
   {#if leaderboard.length}
     <h4>Offensive EPA/play · prepared game sample</h4>
     <p>Only covered scrimmage plays in this comparison window. Not a national or conference ranking; sample sizes and opposition differ.</p>
+    <p class="table-hint">Swipe horizontally to see all columns.</p>
+    <!-- This overflow region needs keyboard focus for horizontal scrolling. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="table-scroll" role="region" aria-label="Offensive EPA comparison table" tabindex="0">
     <table><thead><tr><th>School</th><th>Modeled EPA/play</th><th>Qualifying plays</th><th>Covered games</th></tr></thead>
       <tbody>{#each leaderboard as entry}<tr><td>{entry.team_name ?? detail?.teams?.find(team => team.id === entry.team_id)?.name ?? context?.cfb_statistics?.schools?.[entry.team_id] ?? `ESPN team ${entry.team_id}`}</td>
-        <td>{entry.epa_per_play.toFixed(3)}</td><td>{entry.plays}</td><td>{entry.games}</td></tr>{/each}</tbody></table>
+        <td>{entry.epa_per_play.toFixed(3)}</td><td>{entry.plays}</td><td>{entry.games}</td></tr>{/each}</tbody></table></div>
   {:else}<p>EPA comparison context appears when advanced play metrics have been prepared. Opening recorded play detail does not run the modeling pipeline.</p>{/if}
 </section>
 <style>
+  .table-scroll {overflow-x:auto; max-width:100%;} .table-hint {font-size:12px;} .table-scroll table {min-width:440px;}
+  @media(max-width:650px) {header {flex-wrap:wrap;} .cfb-game {padding:12px; min-width:0;} .play-controls label {min-width:0; width:100%;} select,input {width:100%; min-width:0; box-sizing:border-box;}}
   .cfb-game {padding: 20px; border: 1px solid #315063; background: #071724; margin-top: 12px;}
   header {display: flex; justify-content: space-between; gap: 20px;} h3 {margin: 8px 0;} p, small, dt {color: #94afbf;}
   dl {display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;} dl div {padding: 10px; background: #102336;}

@@ -5,6 +5,35 @@ import PlayTablet from './PlayTablet.svelte';
 afterEach(cleanup);
 
 describe('football evidence tablet venue styling', () => {
+  it('supports persistent touch/keyboard details and an expanded, zoomable field', async () => {
+    const {container, getByRole} = render(PlayTablet, {props: {
+      play: {evidence_id: 'mobile-field', game_id: '2025_01_KC_BUF', play_id: 1, team: 'KC',
+        visualization: {possession_team: 'KC', defensive_team: 'BUF', yardline_100: 40, play_type: 'run'}},
+      onclose: () => undefined,
+    }});
+    const marker = container.querySelector('.field-player')!;
+    await fireEvent.click(marker);
+    expect(getByRole('status').textContent).toContain(marker.getAttribute('aria-label'));
+    await fireEvent.mouseLeave(marker);
+    await fireEvent.blur(marker);
+    expect(getByRole('status').textContent).toContain(marker.getAttribute('aria-label'));
+    await fireEvent.click(getByRole('button', {name: 'Expand field'}));
+    expect(getByRole('dialog', {name: 'field'})).toBeTruthy();
+    expect(document.body.style.overflow).toBe('hidden');
+    await fireEvent.click(getByRole('button', {name: 'Zoom in'}));
+    expect(getByRole('status', {name: 'Zoom level'}).textContent).toBe('150%');
+    await fireEvent.click(getByRole('button', {name: 'Focus play'}));
+    expect(getByRole('status', {name: 'Zoom level'}).textContent).toBe('200%');
+    await fireEvent.click(getByRole('button', {name: 'Full view'}));
+    expect(getByRole('status', {name: 'Zoom level'}).textContent).toBe('100%');
+    await fireEvent.keyDown(window, {key: 'Escape'});
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(getByRole('button', {name: 'Expand field'}));
+    expect(document.body.style.overflow).toBe('');
+    await fireEvent.keyDown(marker, {key: 'Enter'});
+    await fireEvent.click(getByRole('button', {name: 'Clear marker selection'}));
+    expect(container.querySelector('.marker-details')).toBeNull();
+  });
   it('uses the home venue for field branding and each team for its player markers', () => {
     const {container} = render(PlayTablet, {
       props: {

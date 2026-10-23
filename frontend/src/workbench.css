@@ -880,3 +880,30 @@ button:disabled {
     width: min(25rem, calc(100vw - 2rem));
     pointer-events: none;
 }
+
+/* Touch layouts should reflow instead of shrinking desktop controls. */
+@media (max-width: 650px), (pointer: coarse) {
+    button, summary, select, input:not([type="checkbox"]):not([type="radio"]), textarea {
+        min-height: 44px;
+    }
+    button {min-width: 44px;}
+    input, select, textarea {font-size: 16px;}
+    label:has(input[type="checkbox"]), label:has(input[type="radio"]) {
+        min-height: 44px;
+        align-content: center;
+    }
+    .football-tablet header, .football-tablet .tablet-actions {flex-wrap: wrap;}
+    .football-tablet .field-player.selected > circle:not(.rush-ring),
+    .football-tablet .event-marker.selected circle {stroke: #fff; stroke-width: .65;}
+}
+
+@media (max-width: 650px) {
+    main, .configuration, .report-section, .chart-grid article {min-width: 0;}
+    h1, h2, h3, h4, p, dd, .section-title, .chat-content {overflow-wrap: anywhere;}
+    .scope-grid {grid-template-columns: minmax(0, 1fr);}
+    .data-setup-actions {align-items: stretch; width: 100%;}
+    .football-tablet .play-details dl {grid-template-columns: minmax(0, 1fr);}
+    .football-tablet .field-legend {flex-wrap: wrap;}
+    .football-tablet .reconstruction-meta, .football-tablet .tablet-actions {min-width: 0;}
+    .chart-grid .chart {max-width: 100%;}
+}

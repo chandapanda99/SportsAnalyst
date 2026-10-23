@@ -1,9 +1,15 @@
 <script lang="ts">
     import type {Evidence} from './types';
+    import SchematicViewport from './SchematicViewport.svelte';
     import {colorContrastRatio, teamChartDisplayPalette, teamChartPalette, teamLogoUrl} from './teamPalettes';
 
     export let play: Evidence;
     export let onclose: () => void;
+    let selectedLabel = '';
+    $: if (play.evidence_id) selectedLabel = '';
+    function playerLabel(player: ReturnType<typeof lineupMarkers>[number]) {
+        return `${player.team} · ${player.name ?? `player ${player.id}`}${player.position ? ` · ${player.position}` : ''} · reconstructed lineup position, not a recorded tracking location`;
+    }
 
     $: visualization = play.visualization;
     $: shot = courtPoint(visualization?.shot_x, visualization?.shot_y, visualization?.shot_coordinate_system);
@@ -27,7 +33,9 @@
         visualization?.offense_player_ids, visualization?.defense_player_ids,
         visualization?.offense_names, visualization?.defense_names,
         visualization?.offense_positions, visualization?.defense_positions,
+        eventTeam, defenseTeam, teamPalette, defensePalette,
     );
+    $: markerOptions = courtPlayers.map(player => ({id: `${player.side}-${player.id}`, label: playerLabel(player)}));
     $: gameDate = formatGameDate(visualization?.game_date);
     $: margin = scoreMargin(visualization?.home_score, visualization?.away_score, home, away);
     $: gameTimeLeft = formatClock(visualization?.game_seconds_remaining);
@@ -56,6 +64,8 @@
         offenseIds: string[] = [], defenseIds: string[] = [],
         offenseNames: string[] = [], defenseNames: string[] = [],
         offensePositions: string[] = [], defensePositions: string[] = [],
+        offenseTeamName: string, defenseTeamName: string,
+        offenseColors: readonly [string, string], defenseColors: readonly [string, string],
     ) {
         const offenseSlots = [[25, 11], [9, 20], [41, 20], [17, 32], [33, 32]];
         const defenseSlots = [[25, 8], [11.5, 17], [38.5, 17], [19, 28], [31, 28]];
@@ -67,8 +77,8 @@
             return {
                 id, side, name,
                 position: positions[index] || undefined,
-                team: side === 'offense' ? eventTeam : defenseTeam,
-                palette: side === 'offense' ? teamPalette : defensePalette,
+                team: side === 'offense' ? offenseTeamName : defenseTeamName,
+                palette: side === 'offense' ? offenseColors : defenseColors,
                 x: slots[index][0], y: slots[index][1],
                 label: name ? initials(name) : `${side === 'offense' ? 'O' : 'D'}${index + 1}`,
             };
@@ -138,6 +148,7 @@
     </div>
     <div class="body">
         <div class="court-wrap">
+            <SchematicViewport label="court" focusX={shot ? shot.x * 2 : 50} focusY={shot ? shot.y / 47 * 100 : 50} selection={selectedLabel} markers={markerOptions} selectedMarker={markerOptions.find(marker => marker.label === selectedLabel)?.id ?? ''} onselect={(id) => selectedLabel = markerOptions.find(marker => marker.id === id)?.label ?? ''} onclear={() => selectedLabel = ''}>
             <svg class="court" viewBox="0 0 50 47" role="img" aria-label={shot ? 'Half court with the recorded shot coordinate marked' : 'Half court; no shot coordinate was recorded'}>
                 <rect class="court-floor" x=".5" y=".5" width="49" height="46" rx=".8"/>
                 <line x1="0" x2="50" y1="46.5" y2="46.5"/>
@@ -153,8 +164,8 @@
                     {#if homeLogo}<image href={homeLogo} x="20.5" y="34.5" width="9" height="9" preserveAspectRatio="xMidYMid meet"/>{/if}
                 </g>
                 {#each courtPlayers as player}
-                    <g class={`court-player ${player.side}`} transform={`translate(${player.x} ${player.y})`}>
-                        <title>{player.team} · {player.name ?? `player ${player.id}`}{player.position ? ` · ${player.position}` : ''} · reconstructed lineup position</title>
+                    <g class={`court-player ${player.side}`} class:selected={selectedLabel === playerLabel(player)} transform={`translate(${player.x} ${player.y})`} role="button" tabindex="0" aria-label={playerLabel(player)} aria-pressed={selectedLabel === playerLabel(player)} on:click={() => selectedLabel = playerLabel(player)} on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); selectedLabel = playerLabel(player);}}}>
+                        <title>{playerLabel(player)}</title>
                         <circle r="1.35" style={`fill:${player.palette[0]};stroke:${player.palette[1]}`}/>
                         <text y=".12" style={`fill:${markerTextColor(player.palette)}`}>{player.label}</text>
                     </g>
@@ -170,6 +181,7 @@
                     </g>
                 {/if}
             </svg>
+            </SchematicViewport>
             <small>{shot ? 'Marker uses the source play-by-play coordinate; no player trajectory is inferred.' : 'No shot coordinate was recorded for this event.'}</small>
         </div>
         <div class="event-card">
@@ -200,6 +212,7 @@
 </section>
 
 <style>
+    .court-player {cursor:pointer}.court-player.selected circle,.court-player:focus-visible circle {stroke:#fff;stroke-width:.8}
     .tablet{border-top:3px solid var(--home-primary);background:radial-gradient(circle at 100% 0,color-mix(in srgb,var(--home-primary) 16%,transparent),transparent 24rem),linear-gradient(145deg,var(--color-surface-panel),var(--color-surface-low))}
     header,.scorebar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line)}
     header span,.event-card>span{font:10px var(--font-mono);letter-spacing:.12em;color:var(--nba-primary)}

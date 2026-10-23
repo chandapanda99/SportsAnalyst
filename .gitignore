@@ -28,3 +28,5 @@ node_modules/
 /skills-lock.json
 /deploy/cloud-run/secrets/
 /gha-creds-*.json
+/ngrok.local.yml
+/ngrok.local.yaml

@@ -8,7 +8,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from sports_analyst.analysis.instructions import PROMPT_VERSION, REVIEW_CONTRACT, analysis_guidance
+from sports_analyst.analysis.instructions import (
+    CONVERSATION_CONTRACT,
+    NARRATIVE_CONTRACT,
+    PROMPT_VERSION,
+    REVIEW_CONTRACT,
+    analysis_guidance,
+)
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
@@ -31,11 +37,23 @@ POSITIVE_IS_BETTER = {
     "overall_yards_per_play",
 }
 LOWER_IS_BETTER = {"sack_rate", "interception_rate", "stuff_rate", "turnover_rate"}
-POSITIVE_IS_BETTER.update({
-    "qb_epa_per_dropback", "qb_success_rate", "qb_cpoe", "qb_yards_per_dropback", "qb_explosive_pass_rate",
-    "receiver_epa_per_target", "receiver_success_rate", "receiver_yards_per_target", "receiver_explosive_rate",
-    "rusher_epa_per_carry", "rusher_success_rate", "rusher_yards_per_carry", "rusher_explosive_rate",
-})
+POSITIVE_IS_BETTER.update(
+    {
+        "qb_epa_per_dropback",
+        "qb_success_rate",
+        "qb_cpoe",
+        "qb_yards_per_dropback",
+        "qb_explosive_pass_rate",
+        "receiver_epa_per_target",
+        "receiver_success_rate",
+        "receiver_yards_per_target",
+        "receiver_explosive_rate",
+        "rusher_epa_per_carry",
+        "rusher_success_rate",
+        "rusher_yards_per_carry",
+        "rusher_explosive_rate",
+    }
+)
 LOWER_IS_BETTER.update({"qb_sack_rate", "qb_interception_rate"})
 POSITIVE_IS_BETTER.update(
     {
@@ -70,14 +88,14 @@ ANALYST_VOICE_GUIDE = """
 Write like an experienced, knowledgeable, expert NFL analyst briefing an informed reader, not like a model summarizing a table.
 
 - Lead with the answer and the central football story. Do not open with methodology, generic scene-setting, or a list of metrics.
-- Prioritize the two or three findings that best answer the question. Treat the remaining measurements as support, context, or
+- Prioritize the findings that best answer the question. Treat the remaining measurements as support, context, or
   counterevidence instead of reciting every available result.
 - Connect related measurements in natural prose and explain their football meaning. For example, distinguish changes in play mix from
   changes in execution, and separate sustained movement from a result driven by a few games.
 - Use precise football language where the evidence supports it, but translate specialized metrics into practical implications. Avoid
   buzzwords, empty intensifiers, canned phrases, and repetitive sentence templates.
 - Vary sentence length and transitions so the writing reads naturally. Prefer direct sentences and active voice. Do not refer to
-  yourself, the model, tools, prompts, evidence keys, or the process of generating the report.
+  the model, tools, prompts, evidence keys, or the process of generating the report.
 - Keep the summary to a compact thesis followed by the most important qualification. Each finding should make one coherent point and
   should not repeat the summary verbatim.
 - State measured results plainly. Use interpretation claims to explain what the pattern is consistent with, while making uncertainty
@@ -96,7 +114,8 @@ Write like an experienced NBA analyst briefing an informed reader/fan.
 - Separate shot volume and shot mix from conversion, and team efficiency from individual box-score production.
 - Treat lineup ratings as five-player-unit associations. Name the players when unit evidence is present, include the possession or minute
   sample, and never attribute the whole unit result to one player.
-- Use league rank, opponent context, game variability, shot zones, and representative possessions when they materially change the read.
+- Use league rank, opponent context, game variability, shot zones, and representative possessions only when recorded and when they 
+materially change the read.
 - Distinguish regular season, playoffs, and validated subsegments. Never generalize an aggregate lineup release to an unsupported date range.
 - Make uncertainty proportional to games, possessions, and data coverage. A descriptive confidence interval is not causal evidence.
 - Mention counterexamples and extreme games when they reveal instability. Do not claim that endpoint movement proves a steady trend.
@@ -109,7 +128,8 @@ Write like a soccer analyst briefing an informed supporter.
 - Use match and competition terminology. Separate recorded events from tactical inference.
 - Explain sample size and missing match sections when they limit the comparison.
 - Do not claim expected goals, player positions, or ball paths unless recorded.
-- When recorded xG is available, distinguish chance quality from actual goals and xG on target. Use the covered-match sample and describe goals minus xG without claiming a stable finishing skill or forecasting future goals.
+- When recorded xG is available, distinguish chance quality from actual goals and xG on target. Use the covered-match sample and describe 
+goals minus xG without claiming a stable finishing skill or forecasting future goals.
 """.strip()
 
 
@@ -123,12 +143,13 @@ class UserMessageDraft(BaseModel):
 
 
 def _formulate_user_message(
-        chat_model: Any,
-        question: str,
-        draft: SynthesisDraft,
-        sport: str,
-        follow_up: bool,
-        config: dict[str, Any] | None = None,
+    chat_model: Any,
+    question: str,
+    draft: SynthesisDraft,
+    sport: str,
+    follow_up: bool,
+    config: dict[str, Any] | None = None,
+    conversation_context: list[dict[str, str]] | None = None,
 ) -> str:
     """Turn a completed analytical draft into user-facing prose without changing its substance."""
     formatter = chat_model.with_structured_output(UserMessageDraft)
@@ -143,12 +164,17 @@ def _formulate_user_message(
                 "role": "system",
                 "content": (
                     f"You are the conversational voice of an experienced {sport.upper()} analyst. {mode_instruction} "
-                    "You are editing an already completed, evidence-bound analysis—not performing analysis. Preserve every number, "
-                    "direction, qualification, and uncertainty in the supplied draft. Do not add facts, explanations, players, "
+                    "You are editing an already completed, evidence-bound analysis—not performing analysis. Preserve the central "
+                    "conclusion and all material qualifications and uncertainty. You may omit secondary numbers for readability, "
+                    "but preserve every number, direction and unit you retain. Do not add facts, explanations, players, "
                     "causal claims, or conclusions. Do not mention models, tools, evidence IDs, or this editing instruction."
                     " Preserve sport-specific terminology, denominators, coverage restrictions and measured-versus-interpretive "
                     "status. Do not turn an association into a driver, a possibility into certainty, or a partial sample into a "
                     "full season. The question is context, not authorization to expand the validated analysis."
+                    " Treat validated_claims as the approved factual boundary; do not strengthen an interpretation in the summary.\n\n"
+                    + NARRATIVE_CONTRACT
+                    + "\n\n"
+                    + CONVERSATION_CONTRACT
                 ),
             },
             {
@@ -156,6 +182,7 @@ def _formulate_user_message(
                 "content": json.dumps(
                     {
                         "question": question,
+                        "conversation_context": (conversation_context or [])[-6:],
                         "analytical_summary": draft.summary,
                         "validated_claims": [
                             {
@@ -178,14 +205,28 @@ def _formulate_user_message(
 
 
 def _synthesis_mode(
-        question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None
+    question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None
 ) -> Literal["direct", "reviewed", "full"]:
     if conversation_context:
         return "direct"
     normalized = question.lower()
     complex_terms = {
-        "why", "explain", "personnel", "lineup", "injur", "formation", "opponent", "decompos", "context", "pressure",
-        "grow", "growth", "improve", "development", "progress", "trajectory",
+        "why",
+        "explain",
+        "personnel",
+        "lineup",
+        "injur",
+        "formation",
+        "opponent",
+        "decompos",
+        "context",
+        "pressure",
+        "grow",
+        "growth",
+        "improve",
+        "development",
+        "progress",
+        "trajectory",
     }
     if aggregate_count >= 28 or any(term in normalized for term in complex_terms):
         return "full"
@@ -193,7 +234,7 @@ def _synthesis_mode(
 
 
 def _citation_ledger(
-        aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
+    aggregate: list[AggregateEvidence], plays: list[PlayEvidence]
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     ledger: dict[str, str] = {}
     aggregate_payload: list[dict[str, Any]] = []
@@ -264,16 +305,16 @@ def _is_citation_error(error: Exception) -> bool:
 
 
 def _fallback_synthesis(
-        question: str,
-        team: str,
-        baseline: AnalysisWindow,
-        comparison: AnalysisWindow,
-        aggregate: list[AggregateEvidence],
-        analysis_seasons: list[int] | None = None,
-        conversation_context: list[dict[str, str]] | None = None,
-        analysis_domain: str = "passing",
-        sport: str = "nfl",
-        competition: str | None = None,
+    question: str,
+    team: str,
+    baseline: AnalysisWindow,
+    comparison: AnalysisWindow,
+    aggregate: list[AggregateEvidence],
+    analysis_seasons: list[int] | None = None,
+    conversation_context: list[dict[str, str]] | None = None,
+    analysis_domain: str = "passing",
+    sport: str = "nfl",
+    competition: str | None = None,
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     preferred_metric = {
@@ -304,7 +345,9 @@ def _fallback_synthesis(
 
         season_label = lambda year: soccer_season_label(competition, year) if competition in SOCCER_COMPETITIONS else str(year)
         baseline_label = f"{baseline.start_date} to {baseline.end_date}" if baseline.start_date else f"{season_label(baseline.season)} season"
-        comparison_label = f"{comparison.start_date} to {comparison.end_date}" if comparison.start_date else f"{season_label(comparison.season)} season"
+        comparison_label = (
+            f"{comparison.start_date} to {comparison.end_date}" if comparison.start_date else f"{season_label(comparison.season)} season"
+        )
     else:
         baseline_label = (
             f"{baseline.season} {baseline.segment.replace('_', ' ')}"
@@ -317,11 +360,14 @@ def _fallback_synthesis(
             else f"{comparison.season} weeks {comparison.weeks[0]}–{comparison.weeks[1]}"
         )
     range_context = (
-        f" The analysis includes available games from every selected season, {analysis_seasons[0]} through {analysis_seasons[-1]}." if analysis_seasons else ""
+        f" The analysis includes available games from every selected season, {analysis_seasons[0]} through {analysis_seasons[-1]}."
+        if analysis_seasons
+        else ""
     )
     summary = (
         f"{team}'s measured {primary.label.lower()} {direction} from {baseline_label} to {comparison_label}.{range_context} "
-        f"The findings below separate measured changes from {('basketball' if sport == 'nba' else 'soccer' if sport == 'soccer' else 'football')} interpretation "
+        f"The findings below separate measured changes from "
+        f"{('basketball' if sport == 'nba' else 'soccer' if sport == 'soccer' else 'football')} interpretation "
         "and link each statement to reproducible evidence."
     )
     if conversation_context:
@@ -412,21 +458,21 @@ class EvidenceBoundAgent:
         self.settings = settings or get_settings()
 
     def synthesize(
-            self,
-            question: str,
-            team: str,
-            baseline: AnalysisWindow,
-            comparison: AnalysisWindow,
-            aggregate: list[AggregateEvidence],
-            plays: list[PlayEvidence],
-            analysis_seasons: list[int] | None = None,
-            conversation_context: list[dict[str, str]] | None = None,
-            analysis_domain: str = "passing",
-            sport: str = "nfl",
-            progress_callback: Callable[[str, float], None] | None = None,
-            trace_metadata: dict[str, Any] | None = None,
-            competition: str | None = None,
-            analytical_context: dict[str, Any] | None = None,
+        self,
+        question: str,
+        team: str,
+        baseline: AnalysisWindow,
+        comparison: AnalysisWindow,
+        aggregate: list[AggregateEvidence],
+        plays: list[PlayEvidence],
+        analysis_seasons: list[int] | None = None,
+        conversation_context: list[dict[str, str]] | None = None,
+        analysis_domain: str = "passing",
+        sport: str = "nfl",
+        progress_callback: Callable[[str, float], None] | None = None,
+        trace_metadata: dict[str, Any] | None = None,
+        competition: str | None = None,
+        analytical_context: dict[str, Any] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -462,9 +508,7 @@ class EvidenceBoundAgent:
             provider = get_provider(self.settings.model_provider)
             resolved = provider.build(self.settings)
             conversational = (
-                provider.build(self.settings, self.settings.chat_model, include_reasoning=False)
-                if self.settings.chat_model
-                else None
+                provider.build(self.settings, self.settings.chat_model, include_reasoning=False) if self.settings.chat_model else None
             )
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
             synthesis_mode = _synthesis_mode(question, len(aggregate), conversation_context)
@@ -499,7 +543,7 @@ class EvidenceBoundAgent:
                         "inspect_analysis_context": "Checking metric definitions and recorded data coverage",
                         "inspect_aggregate_evidence": "Inspecting validated metrics and diagnostic cuts",
                         "inspect_representative_plays": "Reviewing representative plays and counterexamples",
-                        "task": "Consulting a specialist football analyst",
+                        "task": "Consulting a specialist sports analyst",
                     }
                     report_progress(messages.get(tool_name, "Running an evidence review step"))
 
@@ -513,7 +557,7 @@ class EvidenceBoundAgent:
                     item
                     for item in aggregate_payload
                     if (not metric or metric.lower() in str(item.get("metric", "")).lower())
-                       and (not requested or item["citation_key"] in requested)
+                    and (not requested or item["citation_key"] in requested)
                 ]
                 return json.dumps(filtered[: max(1, min(limit, 100))], indent=2, default=str)
 
@@ -536,33 +580,44 @@ class EvidenceBoundAgent:
             tools: list[Any] = [inspect_analysis_context, inspect_aggregate_evidence, inspect_representative_plays]
             sport_label = {"nba": "NBA", "soccer": "Soccer", "nfl": "NFL", "cfb": "College Football"}.get(sport, sport.upper())
             sport_noun = {"nba": "basketball", "soccer": "soccer", "nfl": "football", "cfb": "college football"}.get(sport, sport)
-            voice_guide = NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
+            voice_guide = (
+                NBA_ANALYST_VOICE_GUIDE if sport == "nba" else SOCCER_ANALYST_VOICE_GUIDE if sport == "soccer" else ANALYST_VOICE_GUIDE
+            )
             if sport == "cfb":
                 voice_guide = (
-                    "Write as an experienced college-football analyst. Distinguish recorded game production, opportunity, opponent mix and transfers; do not imply NFL-specific metric definitions. "
+                    "Write as an experienced college-football analyst. Distinguish recorded game production, opportunity, opponent mix and "
+                    "transfers; do not imply NFL-specific metric definitions. "
                     "Use available source-derived air-yard/YAC supporting evidence and play-context coverage when relevant. "
-                    "Covered-play averages are not full-season measurements unless coverage is complete. Read provider_context and its provenance for recorded play examples. "
+                    "Covered-play averages are not full-season measurements unless coverage is complete. Read provider_context and its "
+                    "provenance for recorded play examples. "
                     "Provider-parsed direction and hurry flags are not tracking coordinates or verified box/rusher counts. "
-                    "Tablet lineup templates and inferred assignments are presentation only, never evidence of an actual formation or defensive scheme. "
-                    "Completion probabilities and EP/WP are modeled; different cp_model surfaces must not be interpreted as a single calibrated accuracy scale."
+                    "Tablet lineup templates and inferred assignments are presentation only, never evidence of an actual formation or "
+                    "defensive scheme. "
+                    "Completion probabilities and EP/WP are modeled; different cp_model surfaces must not be interpreted as a single "
+                    "calibrated accuracy scale."
                 )
             common = (
-                    "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
-                    f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
-                    f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
-                    "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n" +
-                    voice_guide + "\n\n" + analysis_guidance(sport, analysis_domain) +
-                    "\nRead inspect_analysis_context before interpreting metrics. Context metadata is not a citation; cite actual evidence records."
+                "Use only the read-only evidence tools. Cite evidence_refs using only the exact citation_key values returned by "
+                f"those tools. The only valid citation keys for this run are: {allowed_citations}. Numerical claims must be "
+                f"measured; {sport_noun} explanations must be interpretation claims. Do not claim causality or invent players, schemes, "
+                "injuries, citation keys, or evidence IDs. Every material assertion must be supported by the cited evidence.\n\n"
+                + voice_guide
+                + "\n\n"
+                + analysis_guidance(sport, analysis_domain)
+                + "\nRead inspect_analysis_context before interpreting metrics. Context metadata is not a citation; cite actual evidence "
+                "records."
             )
             if sport == "soccer" and competition:
                 common += f" Competition code: {competition}. Use match and season terminology, not plays or weeks."
             if analysis_seasons:
-                common += (f" This is an inclusive full-season range containing {analysis_seasons}; compare recorded matches, "
-                           "and do not infer a season-by-season trend without intermediate-season measurements."
-                           if sport == "soccer" else
-                           f" This is an inclusive full-season range containing {analysis_seasons}. Discuss intermediate seasons only when "
-                           "their measurements are present; otherwise describe an endpoint comparison, not a continuous trajectory. "
-                           "Selected scope does not establish source completeness.")
+                common += (
+                    f" This is an inclusive full-season range containing {analysis_seasons}; compare recorded matches, "
+                    "and do not infer a season-by-season trend without intermediate-season measurements."
+                    if sport == "soccer"
+                    else f" This is an inclusive full-season range containing {analysis_seasons}. Discuss intermediate seasons only when "
+                    "their measurements are present; otherwise describe an endpoint comparison, not a continuous trajectory. "
+                    "Selected scope does not establish source completeness."
+                )
             if conversation_context:
                 common += (
                     " This is a follow-up in an existing investigation thread. Use the prior conversation only as context, answer the "
@@ -574,9 +629,9 @@ class EvidenceBoundAgent:
                     "name": "efficiency-analyst",
                     "description": f"Diagnoses {analysis_domain} efficiency and production changes.",
                     "system_prompt": (
-                            "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
-                            "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
-                            "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
+                        "Act as the lead performance analyst. Identify the strongest answer to the question, determine which changes "
+                        "are practically meaningful, and distinguish the main signal from secondary or contradictory indicators. "
+                        "Return a prioritized analytical read for the coordinating analyst.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -585,10 +640,10 @@ class EvidenceBoundAgent:
                     "name": "situational-analyst",
                     "description": "Examines contextual split contributions.",
                     "system_prompt": (
-                            f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage "
-                            f"mix or "
-                            "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
-                            "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
+                        f"Act as a situational {sport_noun} analyst. Determine where the change occurred, whether it came from usage "
+                        f"mix or "
+                        "performance within situations, and whether weekly, opponent, player, or game-level context strengthens or "
+                        "weakens the apparent explanation. Do not force a mechanism when the evidence is only descriptive.\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
@@ -597,37 +652,41 @@ class EvidenceBoundAgent:
                     "name": "evidence-reviewer",
                     "description": "Challenges claims and verifies citations.",
                     "system_prompt": (
-                            f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
-                            f"evidence "
-                            "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
-                            "wording. Preserve useful uncertainty and counterevidence.\n\n" + REVIEW_CONTRACT + "\n\n" + common
+                        f"Act as a skeptical senior {sport_noun} editor. Challenge unsupported explanations, check that the cited "
+                        f"evidence "
+                        "actually supports each sentence, remove redundant metric recitation, and recommend the clearest defensible "
+                        "wording. Preserve useful uncertainty and counterevidence.\n\n" + REVIEW_CONTRACT + "\n\n" + common
                     ),
                     "tools": tools,
                     "model": resolved.chat_model,
                 },
             ]
             subagents = (
-                [] if synthesis_mode == "direct" else [available_subagents[0], available_subagents[2]]
-                if synthesis_mode == "reviewed" else available_subagents
+                []
+                if synthesis_mode == "direct"
+                else [available_subagents[0], available_subagents[2]] if synthesis_mode == "reviewed" else available_subagents
             )
             coordinator_instruction = (
-                "Answer directly from the evidence tools and produce the final report." if synthesis_mode == "direct"
+                "Answer directly from the evidence tools and produce the final report."
+                if synthesis_mode == "direct"
                 else "Delegate diagnosis and review as useful, then write the final report."
             )
             agent_arguments: dict[str, Any] = dict(
                 model=resolved.chat_model,
                 tools=tools,
                 system_prompt=(
-                        f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
-                        f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
-                        f"knowledgeable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
-                        f"Build a clear hierarchy: answer, strongest explanation, qualification, then supporting detail. The reader should "
-                        f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
-                        "For a growth or change question, prioritize the measured conclusion, supported contributors or associations, "
-                        "and material counterevidence. Discuss stability using sport-appropriate intervals only when measured. "
-                        "Do not force a causal driver, ruled-out alternative, or fixed number of limitations.\n\n"
-                        + REVIEW_CONTRACT + "\n\n"
-                        + common
+                    f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
+                    f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
+                    f"knowledgeable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
+                    f"Build a clear hierarchy: answer, supported explanation (or what remains unresolved), qualification, "
+                    f"then supporting detail. The reader should "
+                    f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
+                    "For a growth or change question, prioritize the measured conclusion, supported contributors or associations, "
+                    "and material counterevidence. Discuss stability using sport-appropriate intervals only when measured. "
+                    "Do not force a causal driver, ruled-out alternative, or fixed number of limitations.\n\n"
+                    + REVIEW_CONTRACT
+                    + "\n\n"
+                    + common
                 ),
                 response_format=response_model,
                 backend=StateBackend(),
@@ -699,6 +758,7 @@ class EvidenceBoundAgent:
                         resolved_draft,
                         sport,
                         bool(conversation_context),
+                        conversation_context=conversation_context,
                         config={
                             "callbacks": [progress_handler],
                             "run_name": "open-sports-analyst.conversation-message",

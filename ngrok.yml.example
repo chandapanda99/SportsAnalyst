@@ -1,0 +1,19 @@
+# Copy to ngrok.local.yml and replace BOTH credential placeholders before use.
+# These are ngrok credentials, not your application's model/API credentials.
+version: 3
+agent:
+  authtoken: REPLACE_WITH_YOUR_NGROK_TOKEN
+endpoints:
+  - name: opensportsanalyst
+    pooling_enabled: true
+    upstream:
+      url: 8767
+    traffic_policy:
+      on_http_request:
+        - actions:
+            - type: basic-auth
+              config:
+                realm: Sports Analyst mobile testing
+                credentials:
+                  - "mobile:REPLACE_WITH_A_LONG_RANDOM_PASSWORD"
+                enforce: true

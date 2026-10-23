@@ -73,7 +73,8 @@ def test_citation_ledger_hides_canonical_ids_and_resolves_aliases() -> None:
 
 
 
-def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:
+@pytest.mark.parametrize("sport,follow_up", [("nfl", False), ("nba", True), ("soccer", True), ("cfb", True)])
+def test_chat_model_only_rewords_the_completed_analytical_summary(sport, follow_up) -> None:
     class Formatter:
         def __init__(self) -> None:
             self.messages = None
@@ -105,9 +106,10 @@ def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:
         model,
         "Why did efficiency improve?",
         draft,
-        "nfl",
-        False,
+        sport,
+        follow_up,
         config={"run_name": "conversation-message"},
+        conversation_context=[{"question": f"Prior question {index}", "summary": "Prior wording, not evidence."} for index in range(8)],
     )
 
     assert message.startswith("KC's efficiency improved")
@@ -116,16 +118,24 @@ def test_chat_model_only_rewords_the_completed_analytical_summary() -> None:
     assert "Analytical draft." in payload
     assert "EPA per dropback improved from 0.01 to 0.08." in payload
     assert "evidence-1" not in payload
+    context = json.loads(payload)["conversation_context"]
+    assert len(context) == 6 and context[0]["question"] == "Prior question 2"
     assert Settings(_env_file=None, chat_model="writer-model").chat_model == "writer-model"
     instructions = model.formatter.messages[0]["content"]
     assert "measured-versus-interpretive" in instructions
     assert "partial sample into a full season" in instructions
+    assert "not a source of verified facts" in instructions
+    assert "Do not end every" in instructions
+    assert "Never claim to" in instructions
+    assert "all material qualifications" in instructions
+    assert ("Answer the follow-up directly" if follow_up else "concise opening summary") in instructions
 
 
 @pytest.mark.parametrize("sport,domain,question,specific_rule", [
     ("nfl", "receiving", "Why did receiving improve despite fewer targets? Did separation improve?", "does not prove separation"),
     ("nba", "defense", "Does a better lineup rating prove this player improved defensive assignments?", "not isolated player impact"),
     ("soccer", "scoring", "Why did goals rise while xG fell? Does possession prove better pressing?", "same covered matches"),
+    ("cfb", "quarterback", "Did this transfer improve or just face different opponents?", "FBS/FCS schedule composition"),
 ])
 def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, question, specific_rule, monkeypatch):
     """Exercise the real synthesis/tool boundary, without paid model calls."""
@@ -191,5 +201,8 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         assert "unequal samples" in prompt
         assert "Representative events illustrate" in prompt
         assert "intermediate seasons" in prompt.lower()
+        assert "not an arbitrary finding count" in prompt
+        assert "whether a material contradiction was" in prompt
+        assert "do not invent a threshold" in " ".join(prompt.lower().split())
     assert "Verify every material sentence" in captured["system_prompt"]
     assert captured["config"]["metadata"]["prompt_version"] == PROMPT_VERSION

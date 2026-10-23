@@ -1,11 +1,11 @@
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import BasketballPlayTablet from './BasketballPlayTablet.svelte';
 
 afterEach(cleanup);
 
 describe('basketball evidence tablet', () => {
-  it('renders recorded shot, score, and lineup context without inventing it', () => {
+  it('renders recorded shot, score, and lineup context without inventing it', async () => {
     const { container } = render(BasketballPlayTablet, {
       props: {
         play: {
@@ -30,7 +30,7 @@ describe('basketball evidence tablet', () => {
     expect(container.querySelector('.shot.made .made-dot')).toBeTruthy();
     expect(container.querySelector('.shot path')).toBeNull();
     expect(screen.getByText('26 ft')).toBeTruthy();
-    expect(screen.getAllByText(/4065648/)).toHaveLength(2);
+    expect(container.querySelector('.lineups')?.textContent).toContain('4065648');
     expect((container.querySelector('.basketball') as HTMLElement).style.getPropertyValue('--home-primary')).toBe('#007A33');
     expect(container.querySelector('.court-brand image')?.getAttribute('href')).toContain('/nba/500/bos.png');
     expect(container.querySelectorAll('.court-player.offense')).toHaveLength(2);
@@ -38,6 +38,11 @@ describe('basketball evidence tablet', () => {
     expect(container.querySelector('.court-player.offense circle')?.getAttribute('style')).not.toBe(
       container.querySelector('.court-player.defense circle')?.getAttribute('style')
     );
+    await fireEvent.click(container.querySelector('.court-player')!);
+    expect(screen.getByRole('status').textContent).toContain('reconstructed lineup position, not a recorded tracking location');
+    await fireEvent.click(screen.getByRole('button', {name: 'Expand court'}));
+    expect(screen.getByRole('dialog', {name: 'court'})).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Close expanded view'}));
   });
 
   it('surfaces recorded names, credits, margin, possession, and game clock context when available', () => {

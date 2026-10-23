@@ -47,6 +47,34 @@ The Svelte workbench provides:
    narrow screens, evidence appears directly below its finding. Sources, caveats, and tool records are grouped under **How this analysis was calculated**.
 7. **Film Room** — reopen, continue, export, or delete saved investigation threads.
 
+## Mobile browser use
+
+The web workbench reflows for narrow screens. NFL/college-football fields and NBA courts offer an expanded view with zoom buttons, touch pan/pinch, a play-focus shortcut, and a full-view reset. Tap a marker or use the player/event picker for persistent details; recorded, projected, and inferred labels are preserved. Escape closes the expanded view and restores focus.
+
+On phones, mixed-metric comparisons show exact values and first-to-last numeric differences before the optional chart. Rate differences use percentage points, not relative percentage changes. Metric filters and expanded charts remain available. College-football comparison tables scroll inside their own labeled region.
+
+For mobile QA, check 320px and 390px portrait layouts, landscape, the on-screen keyboard, marker selection, expand/zoom/reset, and report navigation. Desktop browser emulation is useful but does not replace Android Chrome and iPhone Safari checks, especially for pinch gestures, safe areas, and keyboard behavior.
+
+### Testing over cellular with ngrok
+
+Use `ngrok.yml.example` as the template for a private `ngrok.local.yml` (the local file is excluded from Git and Docker build contexts). Replace the authtoken with your ngrok dashboard authtoken and replace the entire password placeholder with a long, unique password. The browser username is `mobile`. Do not put model-provider credentials in this file. If you need a particular endpoint URL, uncomment `url` and use the exact HTTPS dev domain assigned in your ngrok dashboard.
+
+From the repository root, build the frontend and start the API:
+
+```cmd
+npm --prefix frontend run build
+uv run sports-analyst serve
+```
+
+Confirm `http://127.0.0.1:8767` opens the built app, then in a separate terminal:
+
+```cmd
+ngrok config check --config .\ngrok.local.yml
+ngrok start sports-analyst --config .\ngrok.local.yml
+```
+
+Open the HTTPS forwarding address on your phone over cellular and authenticate as `mobile` with your chosen password. Both the frontend and `/api` use this single protected endpoint; Vite is not needed. Keep the API and tunnel running while testing; Ctrl+C stops the tunnel. Anyone with the browser credentials has access to the local app's data and operations, including model-backed requests, so do not share them. ngrok transports your requests through its service; use test data where possible. Do not commit the local configuration or copy it into deployment/installer artifacts.
+
 ## Quick start
 
 ### Requirements
@@ -656,8 +684,10 @@ flowchart TD
 - **Pydantic** — versioned public contracts and validation.
 
 Model responsibilities are separated when `CHAT_MODEL` is configured. `MODEL` runs the evidence-bound analytical agent, specialist review, and citation validation.
-`CHAT_MODEL` receives only that completed draft and performs a constrained wording pass for the initial summary and follow-up response; it has no analytical tools or raw
-dataset access. If `CHAT_MODEL` is empty or its wording pass fails, the validated `MODEL` summary is used unchanged.
+`CHAT_MODEL` receives that completed draft plus up to six recent conversation entries for continuity and performs a constrained wording pass for the initial summary and follow-up response; it has no analytical tools or raw
+dataset access. History is not treated as verified evidence. If `CHAT_MODEL` is empty or its wording pass fails, the validated `MODEL` summary is used unchanged.
+
+Shared, versioned prompts ask analysts to answer the actual question, connect the strongest signals to their sporting meaning, test alternatives and retain material counterevidence. The writing guide favors direct, engaged explanations over statistic recitation or canned analyst language. The conversational pass may omit secondary numbers but must preserve the conclusion, retained values and all material qualifications; it cannot add analysis or invent personal experience. Prompt-routing regressions are tested with model stubs; these checks do not replace evaluating real model outputs for factual accuracy and writing quality.
 
 Performance-sensitive paths use selective column loading, a bounded dataset cache, vectorized bootstrap calculations, compact history payloads, batch evidence retrieval,
 immutable follow-up reuse, and bounded event histories.

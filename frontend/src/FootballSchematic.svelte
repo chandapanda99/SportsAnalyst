@@ -4,6 +4,7 @@ import {buildPlaySchematic, FOOTBALL_FIELD_WIDTH, NFL_HASH_FROM_SIDELINE, OFFENS
 import {colorContrastRatio} from "./teamPalettes";
 import FootballField from "./FootballField.svelte";
 import FootballTooltip from "./FootballTooltip.svelte";
+import SchematicViewport from './SchematicViewport.svelte';
 export let play: Evidence;
 export let homeTeamName: string; export let homeTeam: string; export let homeLogo: string | null;
 export let homePalette: readonly string[]; export let offensePalette: readonly string[]; export let defensePalette: readonly string[]; export let endzoneTextColor: string;
@@ -12,11 +13,18 @@ export let fieldLabel="Football schematic"; export let illustrative=false;
 export let movementLabel = '';
 export let showPlayers=true; export let showMovement=true; export let showFieldPosition=true;
 let focusedPlayerId: string | null=null; let focusedMarkerIndex: number | null=null;
+let selectedLabel = '';
+let selectedKey = '';
+function selectMarker(key: string, label: string) {selectedKey = key; selectedLabel = label;}
 $: schematic=buildPlaySchematic(play.visualization, hashFromSideline);
 $: markerPrefix="schematic-"+play.evidence_id.replace(/[^a-zA-Z0-9]/g,"");
 $: focusedPlayer=showPlayers ? schematic.players.find(player=>player.id===focusedPlayerId) : null;
 $: focusedMarker=showMovement && focusedMarkerIndex!=null ? schematic.markers[focusedMarkerIndex] : null;
-$: if (play.evidence_id) { focusedPlayerId=null; focusedMarkerIndex=null; }
+$: markerOptions = [
+    ...(showPlayers ? schematic.players.map(player => ({id: player.id, label: tooltipLabel(player)})) : []),
+    ...(showMovement ? schematic.markers.map((marker, index) => ({id: `event-${index}`, label: eventLabel(marker.label)})) : []),
+];
+$: if (play.evidence_id) { focusedPlayerId=null; focusedMarkerIndex=null; selectedLabel=''; selectedKey=''; }
 function eventLabel(label: string) {return illustrative ? label+" · illustrative location" : label;}
     function pathColor(kind: string) {
         if (kind === 'return') return '#ff9d66';
@@ -65,6 +73,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
 
 </script>
     <div class="field-wrap">
+        <SchematicViewport label="field" focusX={schematic.startX / 120 * 100} focusY={schematic.hashY / FOOTBALL_FIELD_WIDTH * 100} selection={selectedLabel} markers={markerOptions} selectedMarker={selectedKey} onselect={(id) => selectMarker(id, markerOptions.find(marker => marker.id === id)?.label ?? '')} onclear={() => {selectedLabel = ''; selectedKey = '';}}>
         <FootballField venueName={homeTeamName} venueAbbreviation={homeTeam} venueLogo={homeLogo} primary={homePalette[0]} secondary={homePalette[1]} textColor={endzoneTextColor} hashFromSideline={hashFromSideline} label={fieldLabel}>
             <defs slot="defs">
                 <filter id={`${markerPrefix}-glow`} x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
@@ -101,7 +110,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
             {/if}
             {#if showPlayers}
             {#each schematic.players as player}
-                <g class={`field-player ${player.side} ${player.projected ? 'projected inferred' : player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} transform={`translate(${player.x} ${player.y})`} role="button" tabindex="0" aria-label={tooltipLabel(player)} on:focus={() => focusedPlayerId = player.id} on:blur={() => focusedPlayerId = null} on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); focusedPlayerId = player.id;}}} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
+                <g class={`field-player ${player.side} ${player.projected ? 'projected inferred' : player.recorded ? 'recorded resolved' : 'generic inferred'} ${player.inBox ? 'in-box' : ''} ${player.rushRole ?? ''}`} class:selected={selectedKey === player.id} transform={`translate(${player.x} ${player.y})`} role="button" tabindex="0" aria-label={tooltipLabel(player)} aria-pressed={selectedKey === player.id} on:click={() => selectMarker(player.id, tooltipLabel(player))} on:focus={() => focusedPlayerId = player.id} on:blur={() => focusedPlayerId = null} on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); focusedPlayerId = player.id; selectMarker(player.id, tooltipLabel(player));}}} on:mouseenter={() => focusedPlayerId = player.id} on:mouseleave={() => focusedPlayerId = null}>
                     {#if player.rushRole}<circle class={`rush-ring ${player.rushRole}`} r="1.86"/>{/if}
                     <circle r="1.42" style={`fill:${playerPalette(player.side)[0]};stroke:${playerPalette(player.side)[1]}`}/>
                     <text class="position-label" y=".12" style={`fill:${markerTextColor(player.side)}`}>{player.position.slice(0, 3)}</text>
@@ -112,6 +121,9 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
             {#each schematic.markers as marker, markerIndex}
                 <g class={`event-marker ${marker.kind}`} transform={`translate(${marker.x} ${marker.y})`}
                    role="button" tabindex="0" aria-label={eventLabel(marker.label)}
+                   aria-pressed={selectedKey === `event-${markerIndex}`} class:selected={selectedKey === `event-${markerIndex}`}
+                   on:click={() => selectMarker(`event-${markerIndex}`, eventLabel(marker.label))}
+                   on:keydown={(event) => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); selectMarker(`event-${markerIndex}`, eventLabel(marker.label));}}}
                    on:mouseenter={() => focusedMarkerIndex = markerIndex} on:mouseleave={() => focusedMarkerIndex = null}
                    on:focus={() => focusedMarkerIndex = markerIndex} on:blur={() => focusedMarkerIndex = null}>
                     <circle r=".9"/>
@@ -125,6 +137,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
                 <FootballTooltip label={eventLabel(focusedMarker.label)} x={eventTooltipX(focusedMarker)} y={focusedMarker.y} width={eventTooltipWidth(focusedMarker.label)} event/>
             {/if}
         </FootballField>
+        </SchematicViewport>
         <div class="field-legend">
             <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{play.visualization?.possession_team ?? play.team} offense</span>
             <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
