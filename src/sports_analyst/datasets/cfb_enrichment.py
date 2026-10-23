@@ -11,6 +11,7 @@ import re
 
 from sports_analyst.datasets.cfb_plays import recorded_play
 from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
+from sports_analyst.datasets.cfb_provenance import with_source_provenance
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
 
@@ -89,6 +90,7 @@ class CFBEnrichment:
                     identities = {str(play["id"]): recorded_play(play, raw, directory) for play in plays}
                     cached["rows"] = [with_identity_context(row, identities.get(str(row["play_id"]), {})) for row in cached["rows"]]
                     self.source.store(key, cached)
+                cached["rows"] = [with_source_provenance(row, version) for row in cached["rows"]]
                 return cached
             # Bound pagination and use the application's timeout/retry transport.
             plays = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
@@ -164,5 +166,6 @@ class CFBEnrichment:
                 },
             }
             # A partial sequence is useful but retried rather than cached as complete.
+            result["rows"] = [with_source_provenance(row, version) for row in result["rows"]]
             self.source.store(key, result)
             return result

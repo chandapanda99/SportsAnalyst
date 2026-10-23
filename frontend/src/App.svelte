@@ -14,6 +14,7 @@
   import CompletionToast from './CompletionToast.svelte';
   import NFLGameTablet from './NFLGameTablet.svelte';
   import TeamBadge from './TeamBadge.svelte';
+  import PlayerPortrait from './PlayerPortrait.svelte';
   import {teamLogoUrl} from './teamPalettes';
   import {expandedQuestions} from './expandedQuestions';
   import type {
@@ -1757,7 +1758,7 @@
   function investigationTeamLogo(item: Investigation | InvestigationSummary) {
     const subject = item.run.subject;
     const team = subject?.type === 'team' ? subject.id : subject?.team_id || item.run.scope.team;
-    return teamLogoUrl(team, item.run.sport ?? 'nfl');
+    return teamLogoUrl(team, item.run.sport ?? 'nfl', item.run.scope.comparison.season);
   }
 
   function investigationWindow(item: Investigation | InvestigationSummary) {
@@ -2462,7 +2463,7 @@
                                       aria-selected={selectedPlayerId === player.player_id}
                                       class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
                                       on:mouseenter={() => activePlayerIndex = index}>
-                                <span>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
+                                <span><PlayerPortrait id={player.player_id} sport={activeSport} name={player.name}/>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
                                 <b>{player.teams.map(team => playerTeamLabel(team)).join('/')}</b>
                               </button>
                             {:else}
@@ -3024,7 +3025,7 @@
             <h3>Analysis brief</h3>
             <dl>
               <dt>Subject</dt>
-              <dd>{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : teamInput || 'Choose a team'}</dd>
+              <dd>{#if subjectType === 'player' && selectedPlayer}<PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>{/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : teamInput || 'Choose a team'}</dd>
               <dt>Periods</dt>
               <dd>{periodBrief}</dd>
               <dt>Focus</dt>
@@ -3086,6 +3087,7 @@
         <div class="report-summary">
           <span class="eyebrow">Final Read · {active.fallback_used ? 'Deterministic' : active.model_id}</span>
           <h2>The answer</h2>
+          {#if active.run.subject?.type === 'player'}<PlayerPortrait id={active.run.subject.id} sport={active.run.sport ?? 'nfl'} name={investigationSubject(active, playerNamesById)} historical={active.run.sport === 'cfb'}/>{/if}
           <p>{active.summary}</p>
           <div class="report-meta" aria-label="Investigation scope">
             <span>{investigationSubject(active, playerNamesById)}</span>
@@ -3171,7 +3173,7 @@
                 </div>
               {/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
-                     sport={active.run.sport ?? 'nfl'}/>
+                     sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season}/>
             </article>
           {/each}
         </div>

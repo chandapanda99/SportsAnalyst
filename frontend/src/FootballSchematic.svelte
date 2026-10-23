@@ -46,7 +46,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
 
     function tooltipLabel(player: SchematicPlayer) {
         const identity = player.projected ? `${player.name} · ${player.position} · Projected starter, not confirmed on this play`
-            : player.recorded ? `${player.name} · ${player.position}` : `${player.position} · Identity not recorded`;
+            : player.recorded ? `${player.name} · ${player.position}` : `${player.position} · N/A`;
         const assignment = player.rushRole === 'blitzer' ? 'inferred blitzer'
             : player.rushRole === 'rusher' ? 'inferred rusher'
                 : player.inBox ? 'inferred in box' : '';

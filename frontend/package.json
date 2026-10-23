@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@lottiefiles/dotlottie-web": "0.79.2",
+    "@sportsdataverse/sdvplot": "^0.1.0",
+    "@sportsdataverse/sporty": "^0.1.0",
     "vega": "^6.2.0",
     "vega-embed": "^7.1.0",
     "vega-lite": "^6.4.1"

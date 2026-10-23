@@ -15,6 +15,7 @@ const detail = (id = 'p1') => ({coverage: '2/3 source plays processed', message:
           {id: '2', name: 'Away', side: 'away', color: '#5e0009'}],
   plays: [{id, play_type: 'Pass Reception', formation: 'Shotgun', text: 'Verified passer complete to receiver', down: 2, distance: 7, quarter: 1, clock: '12:00',
            team_id: '1', end_team_id: '1', yards_to_goal: 60, end_yards_to_goal: 45, epa: .3, wpa: .02,
+           source_provenance_json: JSON.stringify({provenance: {formation: {provider_id: 'espn', method: 'text_parsed', processing_version: 'test'}}}),
            participants: [{athlete_id: '10', name: 'Verified QB', role: 'passer', team_id: '1'},
                           {athlete_id: '11', name: 'Verified WR', role: 'receiver', team_id: '1'}]},
           {id: 'p2', play_type: 'Rush', text: 'Recorded rush without identity', down: 1, distance: 10, quarter: 2, clock: '09:00',
@@ -28,6 +29,8 @@ it('opens recorded plays with involved actors, a college field, and scoped model
   expect(screen.getByRole('region', {name: /schematic for play p1/})).toBeTruthy();
   expect(screen.getByText(/a full lineup is a template/)).toBeTruthy();
   expect(screen.getByRole('heading', {name: /Recorded involved players \(2\)/})).toBeTruthy();
+  expect(screen.getByText('Sources and field provenance')).toBeTruthy();
+  expect(screen.getByText(/espn · text parsed · version test/)).toBeTruthy();
   const field = document.querySelector('.football-tablet .field');
   expect(field?.querySelectorAll('.yard-line')).toHaveLength(19);
   expect(field?.querySelectorAll('.inbound-hash')).toHaveLength(160);
@@ -140,7 +143,7 @@ it('labels additional recorded roles and keeps optional starter projections sepa
   expect(screen.getByRole('button', {name: /Recorded Edge · EDGE/})).toBeTruthy();
   expect(screen.getByRole('button', {name: /Recorded Pass Defender · DB/})).toBeTruthy();
   expect(screen.getByRole('button', {name: /Recorded Forced Fumble · S/})).toBeTruthy();
-  expect(screen.getAllByRole('button', {name: /Identity not recorded/}).length).toBeGreaterThan(0);
+  expect(screen.getAllByRole('button', {name: / · N\/A/}).length).toBeGreaterThan(0);
   await fireEvent.click(screen.getByRole('checkbox', {name: 'Show Projected Starters'}));
   expect(document.querySelectorAll('.field-player')).toHaveLength(22);
   expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);

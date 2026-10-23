@@ -15,6 +15,22 @@ from sports_analyst.desktop.app import DesktopController, _run_desktop_worker
 from sports_analyst.desktop.config import DesktopConfigStore
 
 
+def test_windows_installer_isolates_release_binaries_but_keeps_application_identity():
+    """Upgrades must select the new runtime directory, not reuse the old one."""
+    source = Path(__file__).resolve().parents[1] / "packaging" / "windows" / "OpenSportsAnalyst.iss"
+    script = source.read_text(encoding="utf-8")
+    setup = script.split("[Setup]", 1)[1].split("[Languages]", 1)[0]
+    directives = dict(line.split("=", 1) for line in setup.splitlines() if "=" in line and not line.startswith(";"))
+    destination = directives["DefaultDirName"]
+    assert destination == r"{localappdata}\Programs\OpenSportsAnalyst\{#MyAppVersion}"
+    assert directives["UsePreviousAppDir"] == "no"
+    assert directives["AppId"] == "{{46E8B47C-0749-4ECF-BC10-4A216EF2C22B}"
+    assert destination.replace("{#MyAppVersion}", "1.1.0") != destination.replace("{#MyAppVersion}", "1.2.0-beta.1")
+    assert 'DestDir: "{app}"' in script
+    assert 'Filename: "{app}\\{#MyAppExeName}"' in script
+    assert "[UninstallDelete]" not in script  # No broad cleanup of shared data or old releases.
+
+
 def test_windows_packaging_collects_runtime_dlls_and_preserves_loader_paths(tmp_path, monkeypatch):
     import importlib.util
 

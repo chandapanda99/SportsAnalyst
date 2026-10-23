@@ -94,6 +94,7 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
                 pass_location=row.get("pass_direction"), run_location=row.get("rush_direction"),
                 pass_length=row.get("pass_depth"), formation=row.get("formation"), yards_gained=row.get("yards_gained"),
                 cfb_statistics={"selected_play": row, "rows": stat_rows,
+                                "source_provenance": json.loads(row.get("source_provenance_json") or "{}"),
                                 "provider_context": json.loads(row.get("provider_context_json") or "{}"),
                                 "context_provenance": "Provider-parsed text and modeled game state; no tracking, inferred coordinates or assignments used as evidence",
                                 "teams": json.loads(row.get("teams_json") or "[]"),

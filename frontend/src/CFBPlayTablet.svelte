@@ -1,6 +1,8 @@
 <script lang="ts">
   import type {CFBGameRosterPlayer, CFBParticipant, CFBRecordedPlay, CFBTeamContext} from './types';
-  import {colorContrastRatio} from './teamPalettes';
+  import {colorContrastRatio, teamChartPalette, teamLogoUrl} from './teamPalettes';
+  import PlayerPortrait from './PlayerPortrait.svelte';
+  import {footballHash} from './surfaceGeometry';
   import FootballSchematic from './FootballSchematic.svelte';
   import {adaptCollegePlay, collegeProviderContext} from './cfbSchematic';
   import {buildPlaySchematic} from './playSchematic';
@@ -8,6 +10,7 @@
 
   export let event: CFBRecordedPlay;
   export let teams: CFBTeamContext[] = [];
+  export let season: number | undefined = undefined;
   export let roster: CFBGameRosterPlayer[] = [];
   let showProjected = false;
   $: home = teams.find(team => team.side === 'home');
@@ -17,11 +20,16 @@
   $: adapted = adaptCollegePlay(event, teams, roster, showProjected);
   $: projectionAvailable = adaptCollegePlay(event, teams, roster, true).projectedCount > 0;
   $: providerFields = Object.entries(collegeProviderContext(event));
-  $: schematic = buildPlaySchematic(adapted.visualization, 20);
+  $: sourceFields = fieldSources(event.source_provenance_json);
+  function fieldSources(payload?: string | null): Array<[string, {provider_id: string; method: string; processing_version: string}]> {
+    try { return Object.entries(JSON.parse(payload ?? '{}').provenance ?? {}); }
+    catch { return []; }
+  }
+  $: schematic = buildPlaySchematic(adapted.visualization, footballHash(true));
   $: schematicPlay = {evidence_id: 'cfb-' + event.id, visualization: adapted.visualization};
-  $: homePalette = [home?.color ?? '#142c3d', home?.alternate_color ?? '#edf7ff'];
-  $: offensePalette = [offense?.color ?? '#536575', offense?.alternate_color ?? '#edf7ff'];
-  $: defensePalette = [defense?.color ?? '#364e68', defense?.alternate_color ?? '#edf7ff'];
+  $: homePalette = teamChartPalette(home?.id ?? '', 'cfb', season, [home?.color ?? '#142c3d', home?.alternate_color ?? '#edf7ff']);
+  $: offensePalette = teamChartPalette(offense?.id ?? '', 'cfb', season, [offense?.color ?? '#536575', offense?.alternate_color ?? '#edf7ff']);
+  $: defensePalette = teamChartPalette(defense?.id ?? '', 'cfb', season, [defense?.color ?? '#364e68', defense?.alternate_color ?? '#edf7ff']);
   function involved(participants: CFBParticipant[]) {
     const unique = new Map<string, CFBParticipant & {roles: string[]}>();
     for (const actor of participants) {
@@ -69,7 +77,7 @@
   {/if}
   <FootballSchematic play={schematicPlay}
     homeTeamName={home?.name ?? home?.abbreviation ?? 'Home'} homeTeam={home?.abbreviation ?? 'HOME'}
-    homeLogo={home?.logo ?? null} {homePalette} {offensePalette} {defensePalette}
+    homeLogo={home ? teamLogoUrl(home.id, 'cfb', season) ?? home.logo ?? null : null} {homePalette} {offensePalette} {defensePalette}
     endzoneTextColor={textColor(homePalette[0])} hashFromSideline={20}
     fieldLabel="College football field with recorded field position and illustrative involved-player markers"
     illustrative showPlayers={adapted.reconstruct} showMovement={adapted.movement}
@@ -81,7 +89,8 @@
     <span>Modeled EPA: {event.epa == null ? 'Not prepared/available' : event.epa.toFixed(3)}</span>
     <span>Spread-free WPA: {event.wpa == null ? 'Not prepared/available' : `${(event.wpa * 100).toFixed(2)} pp`}</span></div>
   <h4>Recorded involved players ({actors.length})</h4>
-  {#if actors.length}<ul>{#each actors as actor}<li>{actor.name ?? `ESPN athlete ${actor.athlete_id}`} · {actor.roles.join(', ')}
+  <p class="scope">Schools reflect the selected game, not current player profiles. Photos are omitted because no game-time headshot is verified.</p>
+  {#if actors.length}<ul>{#each actors as actor}<li><PlayerPortrait id={actor.athlete_id} sport="cfb" name={actor.name ?? 'Player'} historical/>{actor.name ?? `ESPN athlete ${actor.athlete_id}`} · {actor.roles.join(', ')}
     {#if actor.position}<span title={actor.position_source ?? 'Recorded roster position'}> · {actor.position}</span>{/if} · {teams.find(team => team.id === actor.team_id)?.name ?? 'School not verified'} · ESPN ID {actor.athlete_id}
     {#if actor.name_source}<span class="identity-source"> · {actor.name_source}</span>{/if}</li>{/each}</ul>
   {:else}<p>No participant IDs recorded for this play. This does not mean no players were on the field.</p>{/if}
@@ -90,6 +99,14 @@
       <summary>Available Provider Context ({providerFields.length} fields)</summary>
       <p>SportsDataverse {event.render_provider_version ?? ''}: parsed play text and modeled game state, not tracking coordinates. EPA, EP, WP and completion probabilities are models. False and zero are preserved; missing fields are not filled.</p>
       <dl>{#each providerFields as [key, value]}<div><dt>{key.replaceAll('_', ' ')}</dt><dd>{String(value)}</dd></div>{/each}</dl>
+    </details>
+  {/if}
+  {#if sourceFields.length}
+    <details class="play-details provider-context">
+      <summary>Sources and field provenance</summary>
+      <p>Recorded values, parsed text and models are distinguished below. Actor placement remains illustrative; these sources do not verify routes or coverage assignments.</p>
+      <dl>{#each sourceFields as [field, source]}<div><dt>{field.replaceAll('_', ' ')}</dt>
+        <dd>{source.provider_id} · {source.method.replaceAll('_', ' ')} · version {source.processing_version}</dd></div>{/each}</dl>
     </details>
   {/if}
   {#if event.personnel_context?.entries?.length}

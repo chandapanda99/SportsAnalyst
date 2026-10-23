@@ -1,6 +1,6 @@
 export type CFBParticipant = {
   athlete_id: string; name?: string | null; position?: string | null; role: string; team_id?: string | null;
-  identity_source?: string;
+  identity_source?: string; team_source?: string | null;
   position_id?: string | null; position_source?: string | null; name_source?: string | null;
 };
 export type CFBGameRosterPlayer = {
@@ -11,6 +11,7 @@ export type CFBTeamContext = {
   id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
 };
 export type CFBRecordedPlay = {
+  source_provenance_json?: string | null;
   provider_context_json?: string | null; end_down?: number | null; end_distance?: number | null;
   air_yards?: number | null; yards_after_catch?: number | null; air_yards_to_endzone?: number | null;
   pass_direction?: string | null; rush_direction?: string | null; pass_depth?: string | null;
@@ -29,6 +30,7 @@ export type CFBRecordedPlay = {
   epa?: number | null; wpa?: number | null; cpoe?: number | null; participants?: CFBParticipant[];
 };
 export type DatasetManifest = {
+  provider_id?: string; processing_version?: string;
   availability?: 'available' | 'partial' | 'source_unavailable' | 'download_failed' | 'season_unverified';
   availability_message?: string | null;
   source_url?: string; package_version?: string; attribution?: string; license?: string;

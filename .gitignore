@@ -30,3 +30,4 @@ node_modules/
 /gha-creds-*.json
 /ngrok.local.yml
 /ngrok.local.yaml
+/docs/audits/

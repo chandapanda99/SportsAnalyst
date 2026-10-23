@@ -1,4 +1,5 @@
 import type {PlayVisualization} from './types';
+import {footballWidth, footballHash} from './surfaceGeometry';
 
 export type SchematicPlayer = {
   id: string;
@@ -61,8 +62,8 @@ export type PlaySchematic = {
   };
 };
 
-export const FOOTBALL_FIELD_WIDTH = 160 / 3;
-export const NFL_HASH_FROM_SIDELINE = (70 + 9 / 12) / 3;
+export const FOOTBALL_FIELD_WIDTH = footballWidth;
+export const NFL_HASH_FROM_SIDELINE = footballHash();
 const FIELD_MIN = 10;
 const FIELD_MAX = 110;
 const FIELD_MIDDLE = FOOTBALL_FIELD_WIDTH / 2;

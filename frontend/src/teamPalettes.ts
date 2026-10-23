@@ -1,3 +1,4 @@
+import {branding} from './sportsBranding';
 export type TeamChartPalette = readonly [primary: string, secondary: string];
 
 // Reference: NFL Colors (Community), Figma node 44:26.
@@ -95,7 +96,10 @@ const CHART_GRID_COLOR = '#31506A';
 const METRIC_PLOT_HEIGHT = 130;
 const METRIC_CHART_SPACING = 32;
 
-export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette {
+export function teamChartPalette(team: string, sport = 'nfl', season?: number, fallback: TeamChartPalette = DEFAULT_CHART_PALETTE): TeamChartPalette {
+    const supplied = branding(team, sport.toLowerCase(), season).colors;
+    if (supplied) return supplied;
+    if (!['nfl', 'nba'].includes(sport.toLowerCase())) return fallback;
     const normalized = team.toUpperCase();
     if (sport.toLowerCase() === 'nba') {
         return NBA_TEAM_CHART_PALETTES[NBA_TEAM_ALIASES[normalized] ?? normalized] ?? DEFAULT_CHART_PALETTE;
@@ -103,7 +107,9 @@ export function teamChartPalette(team: string, sport = 'nfl'): TeamChartPalette 
     return NFL_TEAM_CHART_PALETTES[normalized] ?? DEFAULT_CHART_PALETTE;
 }
 
-export function teamLogoUrl(team: string, sport = 'nfl'): string | null {
+export function teamLogoUrl(team: string, sport = 'nfl', season?: number): string | null {
+    const supplied = branding(team, sport.toLowerCase(), season).logo;
+    if (supplied) return supplied;
     sport = sport.toLowerCase();
     if (sport === 'cfb' || sport === 'soccer') {
         const id = team.trim();
@@ -161,13 +167,13 @@ function accessibleChartColor(color: string): string {
     return CHART_OUTLINE_COLOR;
 }
 
-export function teamChartDisplayPalette(team: string, sport = 'nfl'): TeamChartPalette {
-    const [primary, secondary] = teamChartPalette(team, sport);
+export function teamChartDisplayPalette(team: string, sport = 'nfl', season?: number): TeamChartPalette {
+    const [primary, secondary] = teamChartPalette(team, sport, season);
     return [accessibleChartColor(primary), accessibleChartColor(secondary)];
 }
 
-export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl'): string[] {
-    const [primary, secondary] = teamChartDisplayPalette(team, sport);
+export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl', season?: number): string[] {
+    const [primary, secondary] = teamChartDisplayPalette(team, sport, season);
     if (count <= 2) return [primary, secondary];
     return Array.from({length: count}, (_, index) =>
         accessibleChartColor(mixColors(primary, secondary, index / (count - 1)))
@@ -208,14 +214,14 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
     };
 }
 
-export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl'): Record<string, unknown> {
+export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl', season?: number): Record<string, unknown> {
     const themed = structuredClone(specification);
     const usermeta = themed.usermeta as Record<string, unknown> | undefined;
     if (usermeta?.chartKind === 'metric-rows') {
         const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values ?? [];
         const seriesField = typeof usermeta.seriesField === 'string' ? usermeta.seriesField : undefined;
         const seriesCount = seriesField ? new Set(values.map((value) => value[seriesField])).size : 2;
-        const palette = teamChartSeriesPalette(team, Math.max(2, seriesCount), sport);
+        const palette = teamChartSeriesPalette(team, Math.max(2, seriesCount), sport, season);
 
         const polishNestedSpec = (node: Record<string, unknown>) => {
             const height = node.height;
@@ -327,7 +333,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             ...color,
             scale: {
                 ...((color.scale as Record<string, unknown> | undefined) ?? {}),
-                range: teamChartSeriesPalette(team, Math.max(2, seriesCount), sport)
+                range: teamChartSeriesPalette(team, Math.max(2, seriesCount), sport, season)
             },
             legend: {
                 ...((color.legend as Record<string, unknown> | undefined) ?? {}),
@@ -420,7 +426,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     if (xField === 'season' && typeof yField === 'string' && values && values.length > 1) {
         const ordered = [...values].sort((left, right) => Number(left.season) - Number(right.season));
         const endpoints = [ordered[0], ordered.at(-1)!];
-        const endpointColors = [...teamChartDisplayPalette(team, sport)];
+        const endpointColors = [...teamChartDisplayPalette(team, sport, season)];
         endpoints.forEach((endpoint, index) => {
             const value = Number(endpoint[yField]);
             const endpointData = {

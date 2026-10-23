@@ -79,7 +79,9 @@ class LocalStore:
                         SELECT manifest_id,
                                row_number() OVER (
                                    PARTITION BY sport, coalesce(json_extract_string(payload, '$.competition'), ''),
-                                                coalesce(json_extract_string(payload, '$.partition_key'), ''), dataset, season
+                                                coalesce(json_extract_string(payload, '$.partition_key'), ''), dataset, season,
+                                                coalesce(json_extract_string(payload, '$.provider_id'), 'primary'),
+                                                coalesce(json_extract_string(payload, '$.processing_version'), '1')
                                    ORDER BY acquired_at DESC, manifest_id DESC
                                ) AS version_rank
                         FROM datasets
@@ -116,12 +118,19 @@ class LocalStore:
     @staticmethod
     def _dataset_metadata_key(manifest: DatasetManifest) -> str:
         return LocalStore._dataset_metadata_lookup_key(manifest.sport, manifest.dataset, manifest.season,
-                                                      manifest.competition, manifest.partition_key)
+                                                      manifest.competition, manifest.partition_key,
+                                                      manifest.provider_id, manifest.processing_version)
 
     @staticmethod
     def _dataset_metadata_lookup_key(sport: str, dataset: str, season: int, competition: str | None = None,
-                                     partition_key: str | None = None) -> str:
+                                     partition_key: str | None = None, provider_id: str = "primary", processing_version: str = "1") -> str:
         branch = f"{sport}/{competition}" if competition else sport
+        if provider_id != "primary" or processing_version != "1":
+            # Validate identifiers even when called without a manifest instance.
+            import re
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", processing_version):
+                raise ValueError("Invalid provider or processing version")
+            branch += f"/providers/{provider_id}/{processing_version}"
         if partition_key:
             branch += f"/partitions/{partition_key.replace(':', '/')}"
         return normalize_object_key(f"metadata/datasets/{branch}/{dataset}/{season}.json")
@@ -136,10 +145,14 @@ class LocalStore:
         manifest = DatasetManifest.model_validate(record["manifest"]).model_copy(
             update={"local_path": str(self._local_object_path(object_path))}
         )
+        self._check_provider_scope(db, manifest, object_path)
         db.execute(
             "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ? "
-            "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ?",
-            [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or ""],
+            "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ? "
+            "AND coalesce(json_extract_string(payload, '$.provider_id'), 'primary') = ? "
+            "AND coalesce(json_extract_string(payload, '$.processing_version'), '1') = ?",
+            [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or "",
+             manifest.provider_id, manifest.processing_version],
         )
         db.execute(
             """INSERT OR REPLACE INTO datasets
@@ -234,16 +247,18 @@ class LocalStore:
         return {"manifest": manifest.model_dump(mode="json"), "object_path": object_path}
 
     @staticmethod
-    def _dataset_record_key(record: dict) -> tuple[str, str, str, int, str]:
+    def _dataset_record_key(record: dict) -> tuple:
         manifest = record["manifest"]
         return (str(manifest.get("sport", "nfl")), str(manifest.get("competition") or ""),
-                str(manifest["dataset"]), int(manifest["season"]), str(manifest.get("partition_key") or ""))
+                str(manifest["dataset"]), int(manifest["season"]), str(manifest.get("partition_key") or ""),
+                str(manifest.get("provider_id", "primary")), str(manifest.get("processing_version", "1")))
 
     def publish_dataset_catalog(self, manifests: list[DatasetManifest]) -> None:
         if not self.persistence.durable or not manifests:
             return
         replacements = {
-            (manifest.sport, manifest.competition or "", manifest.dataset, manifest.season, manifest.partition_key or ""): self._dataset_catalog_record(
+            (manifest.sport, manifest.competition or "", manifest.dataset, manifest.season, manifest.partition_key or "",
+             manifest.provider_id, manifest.processing_version): self._dataset_catalog_record(
                 manifest, self._managed_relative_path(Path(manifest.local_path))
             )
             for manifest in manifests
@@ -257,12 +272,12 @@ class LocalStore:
         self._mutate_catalog(self.DATASET_CATALOG_KEY, merge)
 
     def refresh_durable_datasets(self, sport: str, seasons: list[int], datasets: list[str], competition: str | None = None,
-                                partition_key: str | None = None) -> None:
+                                partition_key: str | None = None, *, provider_id: str = "primary", processing_version: str = "1") -> None:
         """Restore only packages relevant to one sync instead of scanning the whole bucket."""
         if not self.persistence.durable:
             return
         keys = {
-            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key)
+            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key, provider_id, processing_version)
             for dataset in datasets
             for season in {*seasons, 0}
         }
@@ -319,9 +334,24 @@ class LocalStore:
         with self.publication_guard():
             self._save_manifest(manifest, publish_catalog=publish_catalog, upload_data=upload_data)
 
+    def _check_provider_scope(self, db, manifest, object_path):
+        if manifest.provider_id != "primary" or manifest.processing_version != "1":
+            branch = f"raw/{manifest.sport}/"
+            if manifest.competition:
+                branch += f"{manifest.competition}/"
+            branch += f"providers/{manifest.provider_id}/{manifest.processing_version}/"
+            if not object_path.startswith(branch):
+                raise ValueError("Provider snapshots must use an isolated sport/provider/version directory")
+        existing = db.execute("SELECT payload FROM datasets WHERE manifest_id = ?", [manifest.manifest_id]).fetchone()
+        if existing and self._dataset_record_key({"manifest": json.loads(existing[0])}) != self._dataset_record_key(
+                {"manifest": manifest.model_dump(mode="json")}):
+            raise ValueError("Dataset manifest ID belongs to a different provider scope")
+
     def _save_manifest(self, manifest: DatasetManifest, *, publish_catalog: bool = True, upload_data: bool = True) -> None:
         source = Path(manifest.local_path)
         object_path = self._managed_relative_path(source)
+        with self._persistence_lock, self.connect() as db:
+            self._check_provider_scope(db, manifest, object_path)
         if self.persistence.durable and upload_data:
             # Managed transfers can overlap across package workers; only the
             # small local catalog transaction needs process-level serialization.
@@ -331,8 +361,11 @@ class LocalStore:
                 db.execute("BEGIN TRANSACTION")
                 db.execute(
                     "DELETE FROM datasets WHERE sport = ? AND dataset = ? AND season = ? AND coalesce(json_extract_string(payload, '$.competition'), '') = ? "
-                    "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ?",
-                    [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or ""],
+                    "AND coalesce(json_extract_string(payload, '$.partition_key'), '') = ? "
+                    "AND coalesce(json_extract_string(payload, '$.provider_id'), 'primary') = ? "
+                    "AND coalesce(json_extract_string(payload, '$.processing_version'), '1') = ?",
+                    [manifest.sport, manifest.dataset, manifest.season, manifest.competition or "", manifest.partition_key or "",
+                     manifest.provider_id, manifest.processing_version],
                 )
                 db.execute(
                     """
@@ -373,7 +406,7 @@ class LocalStore:
         with self._persistence_lock:
             if self.persistence.durable:
                 self._restore_durable_index()
-            manifests = self.manifests(sport=sport, competition=competition)
+            manifests = self.manifests(sport=sport, competition=competition, provider_id=None, processing_version=None)
             paths = [self._local_object_path(self._managed_relative_path(Path(item.local_path))) for item in manifests]
             # Validate every target before deleting anything.
             cache_key = f"raw/soccer/{competition}" if sport == "soccer" else f"raw/{sport}" if sport in {"nba", "cfb"} else "raw/nflverse"
@@ -426,7 +459,8 @@ class LocalStore:
         marker.write_bytes(generation)
 
     def manifests(self, dataset: str | None = None, sport: str | None = None, competition: str | None = None,
-                  partition_key: str | None = None) -> list[DatasetManifest]:
+                  partition_key: str | None = None, *, provider_id: str | None = "primary",
+                  processing_version: str | None = "1") -> list[DatasetManifest]:
         with self.connect(read_only=True) as db:
             clauses, parameters = [], []
             if dataset is not None:
@@ -441,19 +475,27 @@ class LocalStore:
             if partition_key is not None:
                 clauses.append("json_extract_string(payload, '$.partition_key') = ?")
                 parameters.append(partition_key)
+            for field, value, default in (("provider_id", provider_id, "primary"), ("processing_version", processing_version, "1")):
+                if value is not None:
+                    clauses.append(f"coalesce(json_extract_string(payload, '$.{field}'), '{default}') = ?")
+                    parameters.append(value)
             where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
             rows = db.execute(f"SELECT payload FROM datasets{where} ORDER BY season DESC, acquired_at DESC", parameters).fetchall()
         manifests = [DatasetManifest.model_validate_json(row[0]) for row in rows]
         return manifests
 
     def manifest_for_season(self, season: int, dataset: str = "play_by_play", sport: str = "nfl", competition: str | None = None,
-                            partition_key: str | None = None) -> DatasetManifest:
-        matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key)
+                            partition_key: str | None = None, *, provider_id: str = "primary",
+                            processing_version: str = "1") -> DatasetManifest:
+        matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key,
+                                                         provider_id=provider_id, processing_version=processing_version)
                    if manifest.season == season and manifest.partition_key == partition_key]
         if not matches and self._refresh_durable_record(
-            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key), self._register_durable_dataset
+            self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key, provider_id, processing_version),
+            self._register_durable_dataset
         ):
-            matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key)
+            matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key,
+                                                             provider_id=provider_id, processing_version=processing_version)
                        if manifest.season == season and manifest.partition_key == partition_key]
         if not matches:
             raise KeyError(f"{sport} {dataset} season {season} has not been synced")

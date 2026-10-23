@@ -57,8 +57,8 @@ describe('football evidence tablet venue styling', () => {
     expect([...container.querySelectorAll('.endzone-name')].map(node => node.textContent)).toEqual(['BILLS', 'BILLS']);
     expect((container.querySelector('.field') as SVGElement).style.getPropertyValue('--venue-endzone-text')).toBe('#F4F8FA');
     expect(container.querySelector('[aria-label^="Generic Tackle · LT"]')?.classList.contains('resolved')).toBe(true);
-    expect(container.querySelector('[aria-label^="LT · Identity not recorded"]')).toBeNull();
-    expect(container.querySelector('[aria-label^="LG · Identity not recorded"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label^="LT · N/A"]')).toBeNull();
+    expect(container.querySelector('[aria-label^="LG · N/A"]')).toBeTruthy();
     expect(container.querySelectorAll('.yard-line')).toHaveLength(19);
     expect(container.querySelectorAll('.major-yard-line')).toHaveLength(9);
     expect(container.querySelectorAll('.inbound-hash')).toHaveLength(160);

@@ -6,6 +6,8 @@ import math
 import re
 from urllib.parse import urlparse
 
+IDENTITY_VERSION = 2
+
 
 def source_id(value, kind):
     value = value or {}
@@ -57,6 +59,7 @@ def teams_and_athletes(summary):
                         "name": athlete.get("displayName"),
                         "position": (athlete.get("position") or {}).get("abbreviation"),
                         "team_id": team_id if team_id in teams else None,
+                        "team_source": "ESPN game box score",
                         "name_source": "ESPN box score",
                         "position_source": "ESPN box score position" if (athlete.get("position") or {}).get("abbreviation") else None,
                     }
@@ -79,8 +82,19 @@ def recorded_play(play, summary, directory=None):
             continue
         seen.add((identity, role))
         known = athletes.get(identity, {})
-        match = re.search(r"/competitors/(\d+)/roster/", (entry.get("statistics") or {}).get("$ref", ""))
-        attributed_team = match.group(1) if match and match.group(1) in teams else known.get("team_id")
+        # ESPN can rewrite a historical participant's statistics $ref to their
+        # CURRENT school. Even a season-scoped athlete URL is not proof of a stint.
+        # Snap possession/role and the game's box score take precedence instead.
+        normalized_role = role.lower().replace("-", "_").replace(" ", "_")
+        offense_roles = {"passer", "receiver", "rusher"}
+        defense_roles = {"tackler", "assisted_by", "tackle_assist", "sacker", "sacked_by",
+                         "sack_assist", "interceptor", "interception", "pass_defender", "forced_by"}
+        attributed_team, team_source = known.get("team_id"), known.get("team_source")
+        if possession in teams and normalized_role in offense_roles:
+            attributed_team, team_source = possession, "Recorded play possession and offensive role"
+        elif possession in teams and len(teams) == 2 and normalized_role in defense_roles:
+            attributed_team = next(identity for identity in teams if identity != possession)
+            team_source = "Recorded play possession and defensive role"
         position_id = source_id(entry.get("position"), "positions")
         position = positions.get(position_id) or (entry.get("position") or {}).get("abbreviation")
         participants.append(
@@ -90,6 +104,7 @@ def recorded_play(play, summary, directory=None):
                 "name": known.get("name") or (entry.get("athlete") or {}).get("displayName"),
                 "position": position or known.get("position"),
                 "team_id": attributed_team,
+                "team_source": team_source,
                 "position_id": position_id,
                 "position_source": "ESPN participant position" if position else known.get("position_source"),
                 "name_source": known.get("name_source") or ("ESPN box score" if known.get("name") else "ESPN structured participant"),
@@ -121,7 +136,7 @@ def recorded_play(play, summary, directory=None):
         "yards_gained": finite(play.get("statYardage")),
         "play_type": (play.get("type") or {}).get("text"),
         "participants": participants,
-        **({"identity_context_version": 1} if len(directory) > 2 else {}),
+        **({"identity_context_version": IDENTITY_VERSION} if len(directory) > 2 else {}),
         "scoring_play": play.get("scoringPlay"),
         "pass": is_pass, "rush": is_rush,
         "scrimmage": (is_pass or is_rush) and not no_play,

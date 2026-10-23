@@ -39,6 +39,14 @@ def _play_context(play) -> str:
     personnel = selected.get("personnel_context") or {}
     if personnel:
         parts.append(f"Personnel: {personnel.get('status', 'unknown')}. {personnel.get('scope', '')}")
+    provenance = (context.get("source_provenance") or {}).get("provenance") or {}
+    if provenance:
+        sources = sorted({item["provider_id"] for item in provenance.values()})
+        parts.append("Sources: " + ", ".join(sources))
+        for method in ("text_parsed", "model_derived"):
+            fields = sorted(key for key, item in provenance.items() if item.get("method") == method)
+            if fields:
+                parts.append(method.replace("_", " ").capitalize() + ": " + ", ".join(fields))
     return " · ".join(parts)
 
 

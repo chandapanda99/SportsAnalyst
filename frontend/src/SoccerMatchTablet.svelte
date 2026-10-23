@@ -1,5 +1,8 @@
 <script lang="ts">
   import type {Evidence, PlayVisualization} from './types';
+  import PitchReference from './PitchReference.svelte';
+  import TeamBadge from './TeamBadge.svelte';
+  import {teamLogoUrl, teamChartPalette} from './teamPalettes';
 
   export let play: Evidence;
   export let onclose: () => void;
@@ -44,6 +47,8 @@
   }
 
   $: match = play.visualization;
+  $: homeAccent = teamChartPalette(match?.home_team_name ?? '', 'soccer', play.season)[0];
+  $: awayAccent = teamChartPalette(match?.away_team_name ?? '', 'soccer', play.season)[0];
   $: events = normalizeEvents(match?.soccer_timeline ?? [])
       .map((event, index) => ({event, index, minute: minuteOf(event.clock), kind: kindOf(event)}))
       .sort((a, b) => (a.minute ?? Number.POSITIVE_INFINITY) - (b.minute ?? Number.POSITIVE_INFINITY) || a.index - b.index);
@@ -56,7 +61,7 @@
   $: selectedEvent = events[selectedEventIndex] ?? events[0];
 </script>
 
-<section class="soccer-match-tablet" aria-label="Soccer match evidence">
+<section class="soccer-match-tablet" aria-label="Soccer match evidence" style={`--home-team-accent:${homeAccent};--away-team-accent:${awayAccent}`}>
   <header>
     <div>
       <small>RECORDED MATCH CONTEXT</small>
@@ -66,9 +71,9 @@
     <button type="button" aria-label="Close match detail" on:click={onclose}>×</button>
   </header>
   <div class="soccer-match-score">
-    <span>{match?.home_team_name ?? 'Home'}</span>
+    <span><TeamBadge logo={teamLogoUrl(match?.home_team_name ?? '', 'soccer', play.season)} label={match?.home_team_name ?? 'Home'} initials="H"/>{match?.home_team_name ?? 'Home'}</span>
     <strong>{match?.home_score ?? '–'} : {match?.away_score ?? '–'}</strong>
-    <span>{match?.away_team_name ?? 'Away'}</span>
+    <span><TeamBadge logo={teamLogoUrl(match?.away_team_name ?? '', 'soccer', play.season)} label={match?.away_team_name ?? 'Away'} initials="A"/>{match?.away_team_name ?? 'Away'}</span>
   </div>
   {#if match?.home_expected_goals != null || match?.away_expected_goals != null}
     <p class="soccer-match-xg">Expected goals (ESPN): {match?.home_expected_goals?.toFixed(2) ?? 'Unavailable'}
@@ -82,6 +87,7 @@
     {/if}
     {#if match?.match_notes}<span>{match.match_notes}</span>{/if}
   </div>
+  <PitchReference/>
   <div class="timeline-heading">
     <div><h4>Match Timeline</h4>
       <p>Select a marker to read the recorded event.</p></div>
@@ -156,6 +162,8 @@
 </section>
 
 <style>
+  .timeline li.home .event-marker {border-left:3px solid var(--home-team-accent);}
+  .timeline li.away .event-marker {border-right:3px solid var(--away-team-accent);}
   .soccer-match-tablet {
     --accent: var(--color-accent-primary);
     border: 1px solid var(--line);

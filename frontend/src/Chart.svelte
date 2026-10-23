@@ -1,5 +1,6 @@
 <script lang="ts">
-    import {applyTeamChartPalette} from './teamPalettes';
+    import {applyTeamChartPalette, teamLogoUrl} from './teamPalettes';
+    import TeamBadge from './TeamBadge.svelte';
     import SchematicViewport from './SchematicViewport.svelte';
     import {comparisonRows, filterMetric} from './chartRows';
     import {loadChartRenderer} from './chartRenderer';
@@ -8,9 +9,10 @@
         specification: Record<string, unknown>;
         team: string;
         sport?: string;
+        season?: number;
     }
 
-    let {specification, team, sport = 'nfl'}: Props = $props();
+    let {specification, team, sport = 'nfl', season}: Props = $props();
     let target: HTMLDivElement;
     let renderError = $state('');
     let metric = $state('');
@@ -27,7 +29,7 @@
     let metricRowCount = $derived(Number(metricMetadata?.metricRowCount ?? 0));
 
     $effect(() => {
-        const themedSpecification = applyTeamChartPalette(filterMetric(specification, metric), team, sport);
+        const themedSpecification = applyTeamChartPalette(filterMetric(specification, metric), team, sport, season);
         // Vega's concatenated plots do not reliably resolve a hidden container's
         // width. Give each metric plot a measured width, including after expand.
         if (Array.isArray(themedSpecification.vconcat)) {
@@ -85,6 +87,7 @@
         };
     });
 </script>
+{#if team}<div class="chart-team"><TeamBadge logo={teamLogoUrl(team, sport, season)} label={team} initials={team.slice(0, 2)}/><span>{team} · Team-colored comparison</span></div>{/if}
 {#if rows.length}
     <label class="metric-filter">Show metric
         <select bind:value={metric}><option value="">All metrics</option>{#each rows as row}<option value={row.metric}>{row.metric}</option>{/each}</select>
@@ -108,6 +111,7 @@
 </div>
 
 <style>
+    .chart-team {display:flex; align-items:center; gap:.6rem; padding:.5rem 0; color:var(--color-text-secondary); font-size:.85rem;}
     .metric-filter {display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.5rem 0;}
     select {max-width:100%; min-height:44px; background:var(--color-surface-control); color:var(--color-text-primary); padding:.5rem;}
     .mobile-metric-values {display:none;}

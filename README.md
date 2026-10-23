@@ -245,6 +245,8 @@ CLI example: `uv run sports-analyst data sync cfb --season 2025 --team 333 --tea
 The desktop edition runs the same FastAPI service and compiled Svelte application inside a native WebView2 window. It binds the API to a random loopback-only port for the
 life of the window. Synced datasets and investigation history stay in the normal per-user data directory, so upgrades and uninstallations do not remove them.
 
+New installers default to `%LOCALAPPDATA%\Programs\OpenSportsAnalyst\<version>`, with prerelease suffixes included. They do not reuse an earlier install directory, so different releases do not mix bundled Python/native runtime files. The application identity remains stable and shortcuts target the newly installed release. Older binary folders (including the old unversioned directory) are not automatically removed; this is not independent side-by-side installation management. Reinstalling the same version still targets its existing folder, so use a new version for a new release. Data, settings and credentials remain shared across releases; a versioned binary folder does not make older versions compatible with newer data schemas or resolve Windows App Control/signing restrictions. Close the running app before upgrading.
+
 On first launch, the application asks for the model provider, analysis model, optional chat model, and credentials. API keys are stored in Windows Credential Manager; the
 remaining preferences are stored in `%LOCALAPPDATA%\open-sports-analyst\desktop.json`. Select **Use deterministic mode** to run without an LLM. To reopen model setup from a
 development installation, run `uv run sports-analyst-desktop --configure`.

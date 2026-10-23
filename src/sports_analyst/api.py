@@ -162,10 +162,18 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         refresh_catalog()
         return {"deleted_packages": count}
 
+    @api.get("/api/data-sources")
+    def data_sources(sport: str | None = None):
+        from sports_analyst.datasets.providers import CAPABILITIES
+
+        if sport is not None and sport not in {"nfl", "nba", "cfb", "soccer"}:
+            raise HTTPException(status_code=400, detail="Unsupported sport")
+        return [item.model_dump(mode="json") for item in CAPABILITIES if sport is None or item.sport == sport]
+
     @api.get("/api/datasets", response_model=list[DatasetManifest])
-    def datasets(sport: str | None = None) -> list[DatasetManifest]:
+    def datasets(sport: str | None = None, provider_id: str = "primary", processing_version: str = "1") -> list[DatasetManifest]:
         refresh_catalog()
-        return service.store.manifests(sport=sport)
+        return service.store.manifests(sport=sport, provider_id=provider_id, processing_version=processing_version)
 
     @api.get("/api/sports", response_model=list[SportOption])
     def sports() -> list[SportOption]:

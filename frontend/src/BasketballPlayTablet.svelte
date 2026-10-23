@@ -1,10 +1,13 @@
 <script lang="ts">
     import type {Evidence} from './types';
+    import PlayerPortrait from './PlayerPortrait.svelte';
+    import {nbaCourt, nbaCenterToTablet} from './surfaceGeometry';
     import SchematicViewport from './SchematicViewport.svelte';
     import {colorContrastRatio, teamChartDisplayPalette, teamChartPalette, teamLogoUrl} from './teamPalettes';
 
     export let play: Evidence;
     export let onclose: () => void;
+    const arcY = nbaCourt.basket_center_to_baseline + Math.sqrt(nbaCourt.basket_center_to_three_point_arc[0] ** 2 - nbaCourt.basket_center_to_corner_three[0] ** 2);
     let selectedLabel = '';
     $: if (play.evidence_id) selectedLabel = '';
     function playerLabel(player: ReturnType<typeof lineupMarkers>[number]) {
@@ -25,8 +28,8 @@
     $: teamPalette = teamChartDisplayPalette(eventTeam, 'nba');
     $: homePalette = teamChartDisplayPalette(home, 'nba');
     $: awayPalette = teamChartDisplayPalette(away, 'nba');
-    $: homeVenuePalette = teamChartPalette(home, 'nba');
-    $: homeLogo = teamLogoUrl(home, 'nba');
+    $: homeVenuePalette = teamChartPalette(home, 'nba', play.season);
+    $: homeLogo = teamLogoUrl(home, 'nba', play.season);
     $: defenseTeam = eventTeam === home ? away : home;
     $: defensePalette = teamChartDisplayPalette(defenseTeam, 'nba');
     $: courtPlayers = lineupMarkers(
@@ -50,7 +53,7 @@
             return rawX >= 0 && rawX <= 50 && rawY >= 0 && rawY <= 47 ? {x: rawX, y: rawY} : null;
         }
         // Legacy evidence stored SportsDataverse's centered/transformed values.
-        const legacy = {x: 25 - rawY, y: 41.75 - rawX};
+        const legacy = nbaCenterToTablet(rawX, rawY);
         if (legacy.x >= 0 && legacy.x <= 50 && legacy.y >= 0 && legacy.y <= 47) return legacy;
         return rawX >= 0 && rawX <= 50 && rawY >= 0 && rawY <= 47 ? {x: rawX, y: rawY} : null;
     }
@@ -152,12 +155,12 @@
             <svg class="court" viewBox="0 0 50 47" role="img" aria-label={shot ? 'Half court with the recorded shot coordinate marked' : 'Half court; no shot coordinate was recorded'}>
                 <rect class="court-floor" x=".5" y=".5" width="49" height="46" rx=".8"/>
                 <line x1="0" x2="50" y1="46.5" y2="46.5"/>
-                <rect class="paint" x="17" y="0" width="16" height="19"/>
-                <circle cx="25" cy="19" r="6"/>
-                <path d="M3 0 A22 22 0 0 0 47 0" transform="translate(0 5)"/>
-                <path d="M3 0 L3 14 M47 0 L47 14"/>
+                <rect class="paint" x={(nbaCourt.court_width - nbaCourt.lane_width[0]) / 2} y="0" width={nbaCourt.lane_width[0]} height={nbaCourt.lane_length[0]}/>
+                <circle cx="25" cy={nbaCourt.lane_length[0]} r={nbaCourt.free_throw_circle_radius}/>
+                <path d={`M3 ${arcY} A${nbaCourt.basket_center_to_three_point_arc[0]} ${nbaCourt.basket_center_to_three_point_arc[0]} 0 0 0 47 ${arcY}`}/>
+                <path d={`M3 0 L3 ${arcY} M47 0 L47 ${arcY}`}/>
                 <line x1="22" x2="28" y1="4" y2="4" class="backboard"/>
-                <circle cx="25" cy="5.25" r=".75" class="rim"/>
+                <circle cx="25" cy={nbaCourt.basket_center_to_baseline} r={nbaCourt.basket_ring_inner_radius} class="rim"/>
                 <g class="court-brand" aria-label={`${home} home-court logo`}>
                     <circle cx="25" cy="39" r="5.4"/>
                     <text x="25" y="39.4">{home}</text>
@@ -187,6 +190,7 @@
         <div class="event-card">
             <span>{visualization?.team_abbreviation ?? play.team}</span>
             <h4>{visualization?.player_name ?? 'Recorded NBA event'}</h4>
+            {#if visualization?.player_id}<PlayerPortrait id={visualization.player_id} sport="nba" name={visualization.player_name ?? 'Player'}/>{/if}
             <p>{play.description}</p>
             <dl>
                 <div><dt>Shot value</dt><dd>{visualization?.shot_value ?? '—'}</dd></div>

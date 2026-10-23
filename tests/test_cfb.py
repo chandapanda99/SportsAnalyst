@@ -791,7 +791,8 @@ def test_game_identity_resolution_preserves_roles_roster_positions_and_saved_evi
             return {"items": [{"id": "100", "type": {"text": "Pass Reception"}, "statYardage": 15,
                                "start": {"team": {"id": "1"}, "yardsToEndzone": 60},
                                "participants": [
-                                   {"athlete": {"id": identity}, "type": role, "position": {"$ref": f"{CORE}/positions/{position}"}}
+                                   {"athlete": {"id": identity}, "type": role, "position": {"$ref": f"{CORE}/positions/{position}"},
+                                    "statistics": {"$ref": f"{CORE}/events/20251/competitions/20251/competitors/2/roster/{identity}/statistics/0"}}
                                    for identity, role, position in [("10", "passer", "8"), ("12", "receiver", "7"),
                                                                     ("22", "assisted_by", "264"), ("99", "sacked_by", "35"),
                                                                     ("22", "tackler", "264")]]}]}
@@ -820,6 +821,10 @@ def test_game_identity_resolution_preserves_roles_roster_positions_and_saved_evi
         ("Transfer QB", "QB"), ("Receiver", "TE"), ("Recorded Defender", "EDGE"),
         ("Resolved Safety", "S"), ("Recorded Defender", "EDGE")]
     assert all(actor["position_source"] == "ESPN participant position" for actor in row["participants"])
+    # A transferred QB's historical participant statistics link can now point
+    # at the opponent. Snap possession, not that mutable link, sets his school.
+    assert row["participants"][0]["team_id"] == "1"
+    assert row["participants"][0]["team_source"] == "Recorded play possession and offensive role"
     assert next(actor for actor in row["participants"] if actor["athlete_id"] == "99")["team_id"] == "2"
     assert next(actor for actor in detail["game_roster"] if actor["athlete_id"] == "66")["position"] == "G"
     assert all(actor["athlete_id"] != "88" for actor in detail["game_roster"])
@@ -827,10 +832,12 @@ def test_game_identity_resolution_preserves_roles_roster_positions_and_saved_evi
     assert connector.game_plays("20251", 2025) == detail
     assert max(identity_calls.values()) == 1  # Positions, roster and missing names are shared/cached.
     assert not any("seasons/2026" in path or path.endswith("/athletes/66") for path in identity_calls)
-    saved = {"play_id": "100", "participants": [{"athlete_id": "12", "role": "receiver"}], "epa": .25}
+    saved = {"play_id": "100", "identity_context_version": 1,
+             "participants": [{"athlete_id": "12", "role": "receiver", "team_id": "2"}], "epa": .25}
     merged = with_identity_context(saved, row)
     assert merged["epa"] == .25 and len(merged["participants"]) == 5
-    assert saved["participants"] == [{"athlete_id": "12", "role": "receiver"}]
+    assert merged["participants"][0]["team_id"] == "1"
+    assert saved["participants"] == [{"athlete_id": "12", "role": "receiver", "team_id": "2"}]
     # Opening an older saved analysis upgrades labels without replacing model values.
     from types import SimpleNamespace
 

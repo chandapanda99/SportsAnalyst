@@ -11,7 +11,11 @@ AppId={{46E8B47C-0749-4ECF-BC10-4A216EF2C22B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\OpenSportsAnalyst
+; Keep each release's frozen runtime separate: upgrading must not mix native
+; modules with files left over from another version. Keep AppId stable so the
+; normal application shortcuts and Installed Apps entry follow the new release.
+DefaultDirName={localappdata}\Programs\OpenSportsAnalyst\{#MyAppVersion}
+UsePreviousAppDir=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest

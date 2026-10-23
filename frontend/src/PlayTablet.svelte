@@ -16,14 +16,14 @@
     $: offenseTeam = play.visualization?.possession_team ?? play.team ?? '';
     $: defenseTeam = play.visualization?.defensive_team ?? '';
     $: homeTeam = play.visualization?.home_team_abbreviation ?? inferredHomeTeam(play.game_id) ?? offenseTeam;
-    $: offensePalette = teamChartPalette(offenseTeam);
-    $: defensePalette = teamChartPalette(defenseTeam);
-    $: homePalette = teamChartPalette(homeTeam);
+    $: offensePalette = teamChartPalette(offenseTeam, 'nfl', play.season);
+    $: defensePalette = teamChartPalette(defenseTeam, 'nfl', play.season);
+    $: homePalette = teamChartPalette(homeTeam, 'nfl', play.season);
     $: homeTeamName = NFL_TEAM_NAMES[homeTeam.toUpperCase()] ?? homeTeam.toUpperCase();
     $: endzoneTextColor = colorContrastRatio(homePalette[0], homePalette[1]) >= 3
         ? homePalette[1]
         : colorContrastRatio(homePalette[0], '#F4F8FA') >= 4.5 ? '#F4F8FA' : '#07121D';
-    $: homeLogo = teamLogoUrl(homeTeam);
+    $: homeLogo = teamLogoUrl(homeTeam, 'nfl', play.season);
     $: schematic = buildPlaySchematic(play.visualization);
     $: sourcePackages = play.visualization?.source_packages ?? ['play_by_play'];
     $: offensePlayers = playerRows(play.visualization?.offense_names, play.visualization?.offense_positions);

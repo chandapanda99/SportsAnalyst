@@ -3,11 +3,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
-from sports_analyst.datasets.cfb_plays import source_id, teams_and_athletes
+from sports_analyst.datasets.cfb_plays import IDENTITY_VERSION, source_id, teams_and_athletes
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import OptionalDependencyError
-
-IDENTITY_VERSION = 1
 
 
 def needs_identity_refresh(rows):
@@ -65,6 +63,8 @@ def game_directory(source, game, season, summary, plays, ttl):
                 if not known.get(key) and entry.get(key):
                     known[key] = entry[key]
                     known[f"{key}_source"] = "ESPN game roster"
+                    if key == "team_id":
+                        known["team_source"] = "ESPN game roster"
             if entry.get("position_id"):
                 positions[entry["position_id"]] = None
         for play in plays:
@@ -91,9 +91,8 @@ def game_directory(source, game, season, summary, plays, ttl):
             known = athletes[identity]
             if record.get("displayName"):
                 known.update(name=record["displayName"], name_source="ESPN season athlete")
-            team_id = source_id(record.get("team"), "teams")
-            if team_id in teams and not known.get("team_id"):
-                known["team_id"] = team_id
+            # Athlete profiles may expose a new school after a transfer, even
+            # through a historical season URL. They can resolve a name, not a stint.
             position = record.get("position") or {}
             if position.get("abbreviation") and not known.get("position"):
                 known.update(position=position["abbreviation"], position_source="ESPN season athlete")
@@ -134,5 +133,6 @@ def with_identity_context(saved, fresh):
     actors = {(actor["athlete_id"], actor["role"]): dict(actor) for actor in saved.get("participants") or []}
     for actor in fresh.get("participants") or []:
         key = actor["athlete_id"], actor["role"]
-        actors[key] = {**actors.get(key, {}), **{name: value for name, value in actor.items() if value is not None}}
+        actors[key] = {**actors.get(key, {}), **{name: value for name, value in actor.items()
+                                               if value is not None or name in {"team_id", "team_source"}}}
     return {**saved, "participants": list(actors.values()), "identity_context_version": fresh["identity_context_version"]}

@@ -412,7 +412,7 @@ class SportsDataverseCFBConnector:
             provider = "unknown"
         raw = self.summary(game_id, season)
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
-        key = f"normalized-plays/v1/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
+        key = f"normalized-plays/v2/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         cached = self.source._cached(key, ttl)
         if cached is not None:
@@ -468,6 +468,9 @@ class SportsDataverseCFBConnector:
             except Exception:
                 logger.exception("cfb_render_context_unavailable game_id=%s season=%s", game_id, season)
                 context_message = " Additional provider-derived play context could not load; recorded plays remain available."
+        from sports_analyst.datasets.cfb_provenance import with_source_provenance
+
+        rows = [with_source_provenance({**row, "game_id": game_id}, importlib.metadata.version("sportsdataverse")) for row in rows]
         return {
             "plays": rows,
             "teams": list(directory[0].values()),
