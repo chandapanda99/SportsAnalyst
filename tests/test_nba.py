@@ -258,10 +258,12 @@ def test_nba_subject_options_are_limited_to_franchises_and_their_players() -> No
 
 
 def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, monkeypatch) -> None:
-    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, foundry_endpoint=""))
     connector = application.connectors["nba"]
     for season, points in ((2024, 105), (2025, 114)):
-        for dataset, frame in _nba_frames(season, points).items():
+        frames = _nba_frames(season, points)
+        frames["shots"] = frames["play_by_play"].filter(pl.col("shooting_play"))
+        for dataset, frame in frames.items():
             source = tmp_path / f"{dataset}-{season}.parquet"
             frame.write_parquet(source)
             application.store.save_manifest(connector.register_local(source, season, dataset))

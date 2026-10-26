@@ -384,6 +384,17 @@ def _fallback_synthesis(
             confidence=_sample_confidence(primary.sample_size),
         )
     ]
+    accounting = [item for item in aggregate if item.metric == "epa_phase_contribution"]
+    if (accounting and abs(float(primary.value or 0)) > 1e-9
+            and any(word in question.lower() for word in ("phase", "contribut", "accounted", "decompos"))):
+        sign = -1 if float(primary.value or 0) < 0 else 1
+        largest = max(accounting, key=lambda item: sign * float(item.value))
+        summary += (f" {largest.label} supplied the largest accounting contribution in the direction of the EPA/play change "
+                    f"({float(largest.value):+.4f} EPA per qualifying offensive play). "
+                    "This is an exclusive descriptive breakdown, not a causal estimate.")
+        claims.append(Claim(claim_id=stable_id("claim", {"accounting": largest.evidence_id}), claim_type=ClaimType.MEASURED,
+            statement=f"{largest.label} contributed {float(largest.value):+.4f} EPA/play to the change; categories reconcile to the overall change.",
+            evidence_ids=[item.evidence_id for item in accounting], confidence=_sample_confidence(largest.sample_size)))
     seasonal = [item for item in aggregate if item.metric == f"seasonal_{primary.metric}" and item.value is not None]
     if analysis_seasons and seasonal:
         seasonal.sort(key=lambda item: int(item.label.split(" ·", 1)[0]))
@@ -681,6 +692,10 @@ class EvidenceBoundAgent:
                     f"Build a clear hierarchy: answer, supported explanation (or what remains unresolved), qualification, "
                     f"then supporting detail. The reader should "
                     f"understand both what changed and why the available {sport_noun} evidence makes that interpretation reasonable.\n\n"
+                    "For phase-contribution questions use epa_phase_contribution evidence when supplied. Its categories are exclusive: "
+                    "turnovers override sacks, passing and rushing. Values are category EPA divided by ALL qualifying offensive plays, "
+                    "not category EPA/play. Rank contributions in the direction of the overall change; do not rank raw rate deltas. "
+                    "Derived arithmetic marked arithmetic_only has not established statistical meaning or causal attribution. "
                     "For a growth or change question, prioritize the measured conclusion, supported contributors or associations, "
                     "and material counterevidence. Discuss stability using sport-appropriate intervals only when measured. "
                     "Do not force a causal driver, ruled-out alternative, or fixed number of limitations.\n\n"

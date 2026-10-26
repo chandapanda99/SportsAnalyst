@@ -318,13 +318,13 @@ The workflow attaches the versioned Windows x64 installer and its SHA-256 checks
 downloadable Actions artifact for verification but does not publish a release. Public downloads require a public repository; for a private source repository, publish from a
 separate public distribution repository instead.
 
-## Google Cloud Run deployment (recommended cloud hosting)
+## Local configuration
 
-Use the [Cloud Run deployment guide](docs/cloud-run.md) for managed hosting with scale-to-zero and R2 storage. A public Cloud Run service serves the web app, a private service
-handles concurrent package acquisition through Cloud Tasks, and a private Cloud Run analysis service invoked by Cloud Tasks handles investigations and follow-ups. Compact
-versioned R2 catalogs avoid full bucket scans on web requests, and role-specific API, sync, and analysis images reduce cold-start work. The recommended cloud path no longer
-requires Neon. Manual deployment and a separate GitHub workflow use the same Cloud Build configuration. The Windows installer
-and desktop defaults remain independent. Public access is enabled; cloud usage is subject to provider free-tier limits rather than a guaranteed zero bill.
+Local development and the Windows desktop app are the supported setup paths for now.
+See [environment settings](docs/environment.md) for model credentials, local storage,
+optional tracing, CFB sources, and desktop worker behavior. Hosting deployment scripts
+and the deployment workflow have been removed; the Windows release workflow remains.
+Removing these files does not stop resources already running with a hosting provider.
 
 ## Model providers
 
@@ -456,13 +456,10 @@ investigations
 and settings are retained; dataset-backed tools need a fresh sync afterward. Deletion is
 permanent unless you have a backup or object-storage versioning enabled.
 
-For a shared cloud deployment, configure `SPORTS_ANALYST_DATA_ADMIN_TOKEN` as a secret.
-The UI requests it only when clearing data and does not save it. Durable-storage deployments
-reject deletion until this secret is configured. Configure it for public deployments using
-local storage as well. Clearing a cloud library affects every user, not the browser's local
-machine. Wait for all jobs to finish and pause new submissions during this administrative
-operation; detected queued/running jobs block deletion. Other replicas invalidate their
-source checkpoints on their next sync using a durable reset marker.
+Optionally configure `SPORTS_ANALYST_DATA_ADMIN_TOKEN` to protect dataset deletion.
+The UI requests it only when clearing data and does not save it. This is not general
+authentication; keep the development server private. Wait for queued/running work to
+finish before clearing data; detected active jobs block deletion.
 
 Every dataset manifest records its sport, source, season, acquisition time, schema, package version, local SHA-256, size, license, and attribution. Catalog lookups, SQL views,
 history, and caches are partitioned by sport so an NBA request cannot resolve an NFL manifest. Investigation bundles also retain tool versions, parameters, execution timing,
@@ -657,7 +654,7 @@ FastAPI exposes:
 |    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
 |    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |
 
-Dataset sync and investigation progress use server-sent events locally or durable status polling on Cloud Run, selected by runtime capabilities. The frontend recovers
+Dataset sync and investigation progress use server-sent events or status polling, selected by runtime capabilities. The frontend recovers
 interrupted work through the status endpoint and validates the complete
 bundle and thread before rendering them. History responses are compact summaries; complete bundles, threads, and evidence are loaded on demand.
 

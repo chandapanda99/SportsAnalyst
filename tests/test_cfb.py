@@ -581,7 +581,7 @@ def test_scoped_preparation_refills_workers_and_resumes_failed_games(tmp_path, s
     pending = {**schedules["20251"], "game_id": "20254", "completed": False}
     requested = []
 
-    def recorded(game, season):
+    def recorded(game, season, **kwargs):
         requested.append(game)
         return {"plays": [{"id": game + "001", "text": "Recorded play"}], "teams": []}
 
@@ -613,7 +613,7 @@ def test_recorded_sync_skips_unplayed_fixtures_and_tracks_only_completed_gaps(tm
     requested = Counter()
     fail = {"20252"}
 
-    def recorded(game, season):
+    def recorded(game, season, **kwargs):
         requested[game] += 1
         assert game in {"20251", "20252"}, "Unplayed game was requested"
         if game in fail:
@@ -633,7 +633,8 @@ def test_recorded_sync_skips_unplayed_fixtures_and_tracks_only_completed_gaps(tm
     fail.add("20251")
     missing = app.sync([2025], "all-completed-missing", ["recorded_plays"], "cfb", team_ids=["1"])
     missing = next(item for item in missing if item.dataset == "recorded_plays")
-    assert missing.availability == "partial" and missing.row_count == 0
+    assert missing.availability == "partial" and missing.row_count == 1
+    assert "retained" in missing.availability_message
     assert missing.coverage["missing_completed_matches"] == 2
     assert missing.coverage["skipped_uncompleted_matches"] == 2
     fail.clear()
@@ -765,7 +766,8 @@ def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified
              "yards_after_catch": 2 if row.get("complete") and not row.get("no_play") else None,
              "provider_context_json": json.dumps({"qb_hurry": True, "cp": .75,
                                                    "penalty_negated_play": row["play_id"].endswith("03")}),
-             "provider_version": "verified-test-model", "model_family": "SportsDataverse test EP"}
+             "provider_version": "verified-test-model", "model_identity": "cfb-models:verified-test-model",
+             "model_family": "SportsDataverse test EP"}
             for row in frame.to_dicts()], infer_schema_length=None)
         saved["enriched_plays"][year] = saved["recorded_plays"][year].model_copy(
             update={"dataset": "enriched_plays", "manifest_id": f"modeled-{year}"})
@@ -1038,6 +1040,9 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
     assert any(item["metric"] == "passing_air_yards" for item in agent_aggregates)
     assert any(row.get("air_yards") == 12 for item in agent_plays
                for row in item["visualization"]["cfb_statistics"].get("modeled_plays", []))
-    mismatched = modeled[2025].with_columns(pl.lit("different-provider").alias("provider_version"))
+    mismatched = modeled[2025].with_columns(pl.lit("different-model-artifact").alias("model_identity"))
     with pytest.raises(ValueError, match="No comparable"):
         CFBPlugin().analyze(request, schedules, manifests, {"enriched_plays": {2024: modeled[2024], 2025: mismatched}})
+    with pytest.raises(ValueError, match="model identity"):
+        CFBPlugin().analyze(request, schedules, manifests,
+                            {"enriched_plays": {2024: modeled[2024], 2025: modeled[2025].drop("model_identity")}})

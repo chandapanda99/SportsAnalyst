@@ -24,7 +24,6 @@ frontend/node_modules
 packaging
 tests
 gha-creds-*.json
-deploy/cloud-run/secrets
 ngrok.local.yml
 ngrok.local.yaml
 *.duckdb

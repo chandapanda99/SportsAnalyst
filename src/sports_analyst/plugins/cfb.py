@@ -349,6 +349,7 @@ class CFBPlugin:
         parameters = request.model_dump(mode="json")
         execution_id = stable_id("execution", parameters)
         aggregates, gaps, evidence = [], [], []
+        model_gaps = []
         schedules = {name: self.window(datasets[window.season], window, request) for name, window in windows}
         context_frames = {window.season: context_frame(supplemental.get("recorded_plays", {}).get(window.season, pl.DataFrame()),
             supplemental.get("enriched_plays", {}).get(window.season, pl.DataFrame())) for _, window in windows}
@@ -368,10 +369,12 @@ class CFBPlugin:
             frames = [supplemental.get(metric_source, {}).get(window.season, pl.DataFrame()) for _, window in windows]
             if metric in ADVANCED:
                 versions = [
-                    {*data["provider_version"].drop_nulls().to_list()} if "provider_version" in data.columns else set() for data in frames
+                    {*data["model_identity"].drop_nulls().to_list()} if "model_identity" in data.columns
+                    and data["model_identity"].null_count() == 0 else set() for data in frames
                 ]
                 if not versions[0] or versions[0] != versions[1] or len(versions[0]) != 1:
                     gaps.append(metric)
+                    model_gaps.append(metric)
                     continue
             values = [self.value(metric, schedules[name], data, subject) for (name, window), data in zip(windows, frames, strict=True)]
             (before, before_n), (after, after_n) = values
@@ -431,6 +434,9 @@ class CFBPlugin:
                 )
             )
         if not any(item.metric in requested_metrics for item in aggregates):
+            if model_gaps:
+                raise ValueError("No comparable advanced college-football metrics: model identity is absent or differs between windows. "
+                                 "Re-prepare both windows with the same current model bundle.")
             raise ValueError("No comparable college-football metrics have attributed coverage in both windows")
         for name, window in windows:
             stats = supplemental.get(source, {}).get(window.season, pl.DataFrame())

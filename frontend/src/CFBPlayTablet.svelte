@@ -21,6 +21,23 @@
   $: projectionAvailable = adaptCollegePlay(event, teams, roster, true).projectedCount > 0;
   $: providerFields = Object.entries(collegeProviderContext(event));
   $: sourceFields = fieldSources(event.source_provenance_json);
+  $: sourceDetail = sourceDetails(event.source_provenance_json);
+  $: conflicts = Object.entries(sourceDetail.conflicts ?? {});
+  $: sourceStatuses = Object.entries(sourceDetail.secondary_status ?? {});
+  $: secondaryCoverage = coverageDetails(event.secondary_coverage_json);
+  function sourceDetails(payload?: string | null): {
+    conflicts?: Record<string, Array<{provider_id: string; value: unknown}>>;
+    secondary_status?: Record<string, string>;
+    alignment?: Record<string, {clock_disagreement?: boolean}>;
+    source_policy?: {version?: string; feature?: string; decisions?: Record<string, {selected_provider?: string; reason: string}>};
+  } {
+    try { return JSON.parse(payload ?? '{}'); } catch { return {}; }
+  }
+  function coverageDetails(payload?: string | null): Array<[string, {
+    matched_plays: number; unmatched: number; primary_overtime_plays: number; matched_overtime_plays: number;
+  }]> {
+    try { return Object.entries(JSON.parse(payload ?? '{}')); } catch { return []; }
+  }
   function fieldSources(payload?: string | null): Array<[string, {provider_id: string; method: string; processing_version: string}]> {
     try { return Object.entries(JSON.parse(payload ?? '{}').provenance ?? {}); }
     catch { return []; }
@@ -107,6 +124,27 @@
       <p>Recorded values, parsed text and models are distinguished below. Actor placement remains illustrative; these sources do not verify routes or coverage assignments.</p>
       <dl>{#each sourceFields as [field, source]}<div><dt>{field.replaceAll('_', ' ')}</dt>
         <dd>{source.provider_id} · {source.method.replaceAll('_', ' ')} · version {source.processing_version}</dd></div>{/each}</dl>
+      {#each sourceStatuses as [provider, status]}<p>{provider}: {status}</p>{/each}
+      {#each secondaryCoverage as [provider, coverage]}
+        <p>{provider}: {coverage.matched_plays} corroborated play matches; {coverage.unmatched} primary plays not supplemented.</p>
+        {#if coverage.primary_overtime_plays > coverage.matched_overtime_plays}
+          <p>Overtime: primary ESPN plays retained. {provider} overtime context is incomplete; no missing period or possession is inferred.</p>
+        {/if}
+      {/each}
+      {#if Object.values(sourceDetail.alignment ?? {}).some(value => value.clock_disagreement)}
+        <p>The sources disagree on this play's clock. Other matching context corroborates the link; the primary clock is unchanged.</p>
+      {/if}
+      {#if sourceDetail.source_policy?.version}<p>Source policy: {sourceDetail.source_policy.version} · {sourceDetail.source_policy.feature}</p>
+        <dl>{#each Object.entries(sourceDetail.source_policy.decisions ?? {}) as [field, decision]}
+          <div><dt>{field.replaceAll('_', ' ')}</dt><dd>{decision.selected_provider ?? 'Unresolved'} · {decision.reason}</dd></div>
+        {/each}</dl>
+      {/if}
+      {#if conflicts.length}<h4>Source disagreements — resolved by field policy</h4>
+        <dl>{#each conflicts as [field, values]}<div><dt>{field.replaceAll('_', ' ')}</dt>
+          <dd>{values.map(value => `${value.provider_id}: ${String(value.value)}`).join(' · ')}</dd></div>{/each}</dl>
+      {/if}
+      {#if event.resolution_version}<p>Resolution: {event.resolution_version}. Raw inputs and manifest IDs are retained with this snapshot.</p>{/if}
+      {#if event.model_identity}<p>Current model bundle: {event.model_identity}. Secondary-source EPA/WPA are not substituted.</p>{/if}
     </details>
   {/if}
   {#if event.personnel_context?.entries?.length}

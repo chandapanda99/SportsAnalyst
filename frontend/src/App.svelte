@@ -507,6 +507,7 @@
           && source === (subjectType === 'player' ? 'team_boxscores' : 'player_boxscores')));
   $: suggestedSources = [...new Set([...requiredSources, ...(setup?.recommended_datasets ?? [])])];
   $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition)
+      && item.row_count !== 0 && item.availability !== 'source_unavailable'
       && (!item.partition_key || item.partition_key === `${subjectType}:${resolvedSubject}`))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
   $: dataReady = activeSport === 'cfb' ? Boolean(analysisOptions && resolvedTeam && !cfbLoading && !cfbError && !cfbHistoryLoading)
       : Boolean(analysisOptions && requiredSeasons.length && (analysisOptions.automatic_preparation || !sourceGaps.length));
@@ -1572,6 +1573,7 @@
 
   function syncedPackages(season: number) {
     return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season
+        && dataset.row_count !== 0 && dataset.availability !== 'source_unavailable'
         && (activeSport !== 'soccer' || (dataset.competition === selectedCompetition && !dataset.partition_key))
         && (activeSport !== 'cfb' || dataset.partition_key === `team:${resolvedTeam}`)).map((dataset) => dataset.dataset));
   }
@@ -1634,6 +1636,16 @@
     }
     const eligibleSeasons = eligibleSelectedSeasons(dataset, selectedSeasons);
     if (!eligibleSeasons.length) return null;
+    const scopedSnapshots = datasets.filter(item => (item.sport ?? 'nfl') === activeSport
+        && item.dataset === dataset && eligibleSeasons.includes(item.season)
+        && (activeSport !== 'soccer' || (item.competition === selectedCompetition && !item.partition_key))
+        && (activeSport !== 'cfb' || item.partition_key === `team:${selectedTeam}`));
+    if (scopedSnapshots.some(item => item.availability === 'download_failed'))
+      return {state: 'partial', label: 'Download failed · retry'};
+    if (scopedSnapshots.some(item => item.availability === 'source_unavailable'))
+      return {state: 'partial', label: activeSport === 'cfb' ? 'Limited source coverage · recheck hourly' : 'Not published for selection · recheck'};
+    if (scopedSnapshots.some(item => item.coverage?.retained_previous_data || item.coverage?.source_unavailable))
+      return {state: 'partial', label: 'Previous data retained · retry refresh'};
     const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
     if (!local) return null;
     if (activeSport === 'cfb') {

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import hashlib
+import importlib.metadata
 import json
 import logging
 import math
@@ -15,6 +15,7 @@ import polars as pl
 
 from sports_analyst.config import Settings
 from sports_analyst.datasets.acquisition import bounded_results, timed_stage
+from sports_analyst.datasets.availability import completed_games, missing_source, retain_previous
 from sports_analyst.datasets.cfb_source import CORE, SITE, WEB, CFBSource, query_url
 from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError
@@ -401,7 +402,20 @@ class SportsDataverseCFBConnector:
         _, roster = game_directory(self.source, game_id, season, self.summary(game_id, season), [], season_ttl(season))
         return roster
 
-    def game_plays(self, game_id, season):
+    def game_plays(self, game_id, season, *, feature="rendering"):
+        from sports_analyst.datasets.cfb_policy import acquisition_plan
+
+        result = self._primary_game_plays(game_id, season)
+        enabled = [name for name in ("ncaa", "cfbd") if getattr(self.settings, f"cfb_{name}_enabled")]
+        plan = acquisition_plan(result["plays"], feature, enabled)
+        if plan["providers"]:
+            ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
+            source = self.source.collection(f"{CORE}/events/{game_id}/competitions/{game_id}/plays", ttl, maximum=800)
+            result = {**result, "plays": self.resolve_secondary(result["plays"], source, self.summary(game_id, season),
+                                                                str(game_id), season, feature=feature)}
+        return result
+
+    def _primary_game_plays(self, game_id, season):
         """Share successful normalized games across teams; retry coverage gaps."""
         from sports_analyst.datasets.cfb_identity import IDENTITY_VERSION
 
@@ -412,7 +426,8 @@ class SportsDataverseCFBConnector:
             provider = "unknown"
         raw = self.summary(game_id, season)
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
-        key = f"normalized-plays/v2/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
+        sources = f"n{int(self.settings.cfb_ncaa_enabled)}c{int(self.settings.cfb_cfbd_enabled)}"
+        key = f"normalized-plays/v4/{sources}/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         cached = self.source._cached(key, ttl)
         if cached is not None:
@@ -429,14 +444,17 @@ class SportsDataverseCFBConnector:
                            for row in result["plays"] for actor in row.get("participants", []))
             roster_teams = {entry["team_id"] for entry in result["game_roster"]}
             teams = {str(entry["id"]) for entry in result["teams"]}
+            secondary_ready = all(all(status == "acquired" for status in
+                json.loads(row.get("source_provenance_json") or "{}").get("secondary_status", {}).values())
+                for row in result["plays"])
             if (provider != "unknown" and complete and teams and teams <= roster_teams
-                    and "could not load" not in result["message"]):
+                    and secondary_ready and "could not load" not in result["message"]):
                 self.source.store(key, result)
             return result
 
     def _game_plays(self, game_id, season, raw):
-        from sports_analyst.datasets.cfb_plays import recorded_play
         from sports_analyst.datasets.cfb_identity import game_directory
+        from sports_analyst.datasets.cfb_plays import recorded_play
 
         game_id = self.validate_id(game_id)
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
@@ -480,15 +498,49 @@ class SportsDataverseCFBConnector:
                        "full lineups, tracking and assignments are not verified." + context_message,
         }
 
+    def resolve_secondary(self, rows, source_plays, summary, game, season, *, feature="rendering"):
+        from sports_analyst.datasets.cfb_policy import acquisition_plan
+
+        enabled = [name for name in ("ncaa", "cfbd") if getattr(self.settings, f"cfb_{name}_enabled")]
+        plan = acquisition_plan(rows, feature, enabled)
+        if not plan["providers"]:
+            return rows
+        from sports_analyst.datasets.cfb_resolution import resolve_game
+        from sports_analyst.datasets.cfb_secondary import SecondarySources
+
+        adapter = SecondarySources(self.source, self.settings)
+        primary_input = adapter.input("espn", season, game, {"summary": summary, "plays": source_plays},
+                                      f"{CORE}/events/{game}/competitions/{game}/plays", None)
+        inputs, statuses = {}, {}
+        for provider in plan["providers"]:
+            try:
+                inputs[provider] = getattr(adapter, provider)(game, season, summary)
+                statuses[provider] = "acquired"
+            except Exception as error:
+                statuses[provider] = "unavailable; primary ESPN plays retained"
+                logger.warning("cfb_secondary_unavailable provider=%s game_id=%s season=%s error_type=%s",
+                               provider, game, season, type(error).__name__)
+        return resolve_game(rows, source_plays, summary, game, season, inputs, statuses, primary_input, policy=plan)
+
+    def selected_play_context(self, row, game, season):
+        from sports_analyst.datasets.cfb_policy import acquisition_plan
+
+        enabled = [name for name in ("ncaa", "cfbd") if getattr(self.settings, f"cfb_{name}_enabled")]
+        if not acquisition_plan([row], "rendering", enabled)["providers"]:
+            return row
+        ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
+        source = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
+        return self.resolve_secondary([row], source, self.summary(game, season), str(game), season)[0]
+
     def prepare_recorded(self, season, partition, schedule, callback=None, progress=None):
         rows, completed = [], 0
         # Future fixtures are not failed downloads and cannot supply play evidence.
-        games = schedule.filter(pl.col("completed") == True)["game_id"].unique().sort().to_list()  # noqa: E712
+        games = completed_games(schedule, flag="completed")["game_id"].unique().sort().to_list()
         scheduled = schedule["game_id"].n_unique()
         skipped = scheduled - len(games)
         with self.source.lease(f"recorded:{partition}:{season}", seconds=1800):
             for index, (game, future) in enumerate(bounded_results(
-                    lambda game: self.game_plays(game, season), games, self.settings.dataset_sync_concurrency)):
+                    lambda game: self.game_plays(game, season, feature="analysis"), games, self.settings.dataset_sync_concurrency)):
                 if progress:
                     progress("downloading", "recorded_plays", season, index, len(games),
                              index / max(1, len(games)),
@@ -502,8 +554,11 @@ class SportsDataverseCFBConnector:
                     completed += 1
                 except OptionalDependencyError:
                     raise
-                except Exception:
-                    logger.exception("cfb_recorded_plays_unavailable game_id=%s season=%s", game, season)
+                except Exception as error:
+                    if missing_source(error):
+                        logger.warning("cfb_recorded_plays_source_unavailable game_id=%s season=%s", game, season)
+                    else:
+                        logger.exception("cfb_recorded_plays_unavailable game_id=%s season=%s", game, season)
             if progress:
                 detail = (f"Recorded play evidence · {completed}/{len(games)} completed games available · "
                           f"{len(games) - completed} missing · {skipped} not completed skipped" if games else
@@ -544,7 +599,7 @@ class SportsDataverseCFBConnector:
 
     def prepare_enriched(self, season, partition, schedule, manifest_callback=None, progress=None):
         """Enrich selected completed games only; ordinary box-score startup stays cheap."""
-        games = schedule.filter(pl.col("completed") == True)["game_id"].unique().to_list()  # noqa: E712
+        games = completed_games(schedule, flag="completed")["game_id"].unique().to_list()
         if not games:
             return self.snapshot(
                 season, partition, {"enriched_plays": []}, 0, 0, manifest_callback,
@@ -556,7 +611,7 @@ class SportsDataverseCFBConnector:
             raise ValueError("Select a bounded completed-game sample for play enrichment")
         from sports_analyst.datasets.cfb_enrichment import CFBEnrichment
 
-        rows, successful, complete = [], 0, 0
+        rows, successful, complete, failures = [], 0, 0, []
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         with self.source.lease(f"enrich-partition:{partition}:{season}", seconds=1800):
             enrichment = CFBEnrichment(self.source)
@@ -571,11 +626,19 @@ class SportsDataverseCFBConnector:
                     complete += result["provenance"]["source_plays"] == result["provenance"]["processed_plays"]
                 except OptionalDependencyError:
                     raise
-                except Exception:
-                    logger.exception("cfb_enrichment_unavailable game_id=%s season=%s", game, season)
+                except Exception as error:
+                    if missing_source(error):
+                        logger.warning("cfb_enrichment_source_unavailable game_id=%s season=%s", game, season)
+                    else:
+                        failures.append(error)
+                        logger.exception("cfb_enrichment_unavailable game_id=%s season=%s", game, season)
             if not rows:
-                raise ValueError("No usable advanced play values could be prepared; ordinary box-score analysis remains available")
-            manifests = self.snapshot(season, partition, {"enriched_plays": rows}, len(games), successful, None)
+                if failures:
+                    raise failures[0]
+                return self.snapshot(season, partition, {"enriched_plays": []}, len(games), 0, manifest_callback,
+                    availability={"enriched_plays": ("source_unavailable", "No published advanced play data for completed games; retry later.")})[0]
+            manifests = self.snapshot(season, partition, {"enriched_plays": rows}, len(games), successful, None,
+                                      input_callback=manifest_callback)
             manifest = manifests[0].model_copy(update={"coverage": {**manifests[0].coverage, "complete_play_games": complete}})
             if manifest_callback:
                 manifest_callback(manifest)
@@ -637,7 +700,7 @@ class SportsDataverseCFBConnector:
             )
         return teams, players, scoring
 
-    def snapshot(self, season, partition, rows, total, completed, callback, availability=None, extra_coverage=None):
+    def snapshot(self, season, partition, rows, total, completed, callback, availability=None, extra_coverage=None, input_callback=None):
         manifests = []
         for dataset, values in rows.items():
             status, message = (availability or {}).get(dataset, ("available", None))
@@ -650,6 +713,29 @@ class SportsDataverseCFBConnector:
             elif status == "available" and dataset != "rosters" and completed < total:
                 status, message = "partial", "Some game summaries could not be retrieved; retry to resume."
             data = frame(values)
+            path = self.data_dir / "partitions" / partition.replace(":", "/") / str(season) / f"{dataset}.parquet"
+            if status != "available" and (total > 0 or dataset == "rosters"):
+                data, retained = retain_previous(path, data)
+                if retained:
+                    values = data.to_dicts()
+                    status = "partial"
+                    message = (message or "Source unavailable.") + " Last downloaded data retained; retry refresh."
+            source_inputs = {item["manifest_id"]: item for row in values
+                             for item in json.loads(row.get("source_inputs_json") or "[]")}
+            register_input = input_callback or callback
+            if register_input:
+                for item in source_inputs.values():
+                    # On another replica the immutable input is restored from
+                    # durable storage before the primary lineage is registered.
+                    source_manifest = DatasetManifest.model_validate(item)
+                    relative = source_manifest.local_path.replace("\\", "/").split("/raw/cfb/", 1)[-1]
+                    local = self.data_dir / relative
+                    expected = f"providers/{source_manifest.provider_id}/{source_manifest.processing_version}/"
+                    if not relative.startswith(expected) or not local.resolve().is_relative_to(self.data_dir.resolve()):
+                        raise ValueError("Secondary input artifact is outside its managed provider scope")
+                    if not local.exists() and self.source.persistence.durable:
+                        self.source.persistence.download_file(f"raw/cfb/{relative}", local)
+                    register_input(source_manifest.model_copy(update={"local_path": str(local.resolve())}))
             # Completion order must not change checksums for identical source
             # data, otherwise parallel refreshes cause unnecessary reuploads.
             order = [field for field in ("game_id", "team_id", "athlete_id", "play_id", "quarter", "clock", "text")
@@ -677,6 +763,9 @@ class SportsDataverseCFBConnector:
                 season=season,
                 source_url=CORE if dataset == "recorded_plays" else SITE,
                 package_version=importlib.metadata.version("sportsdataverse"),
+                resolution_version="cfb-resolved-2" if source_inputs else None,
+                input_manifest_ids=sorted(source_inputs),
+                source_inputs=list(source_inputs.values()),
                 license="See ESPN data terms.",
                 attribution="ESPN data acquired through SportsDataverse.",
                 sha256=checksum,

@@ -15,7 +15,12 @@ const detail = (id = 'p1') => ({coverage: '2/3 source plays processed', message:
           {id: '2', name: 'Away', side: 'away', color: '#5e0009'}],
   plays: [{id, play_type: 'Pass Reception', formation: 'Shotgun', text: 'Verified passer complete to receiver', down: 2, distance: 7, quarter: 1, clock: '12:00',
            team_id: '1', end_team_id: '1', yards_to_goal: 60, end_yards_to_goal: 45, epa: .3, wpa: .02,
-           source_provenance_json: JSON.stringify({provenance: {formation: {provider_id: 'espn', method: 'text_parsed', processing_version: 'test'}}}),
+           resolution_version: 'cfb-resolved-1',
+           secondary_coverage_json: JSON.stringify({ncaa: {matched_plays: 1, unmatched: 1, primary_overtime_plays: 2, matched_overtime_plays: 0}}),
+           source_provenance_json: JSON.stringify({provenance: {formation: {provider_id: 'espn', method: 'text_parsed', processing_version: 'test'}},
+             secondary_status: {ncaa: 'acquired', cfbd: 'unavailable; primary ESPN plays retained'},
+             conflicts: {formation: [{provider_id: 'espn', value: 'Shotgun'}, {provider_id: 'ncaa', value: 'I-Formation'}]},
+             alignment: {ncaa: {clock_disagreement: true}}}),
            participants: [{athlete_id: '10', name: 'Verified QB', role: 'passer', team_id: '1'},
                           {athlete_id: '11', name: 'Verified WR', role: 'receiver', team_id: '1'}]},
           {id: 'p2', play_type: 'Rush', text: 'Recorded rush without identity', down: 1, distance: 10, quarter: 2, clock: '09:00',
@@ -31,6 +36,10 @@ it('opens recorded plays with involved actors, a college field, and scoped model
   expect(screen.getByRole('heading', {name: /Recorded involved players \(2\)/})).toBeTruthy();
   expect(screen.getByText('Sources and field provenance')).toBeTruthy();
   expect(screen.getByText(/espn · text parsed · version test/)).toBeTruthy();
+  expect(screen.getByText(/Source disagreements/)).toBeTruthy();
+  expect(screen.getByText(/cfbd: unavailable; primary ESPN plays retained/)).toBeTruthy();
+  expect(screen.getByText(/Overtime: primary ESPN plays retained/)).toBeTruthy();
+  expect(screen.getByText(/sources disagree on this play's clock/)).toBeTruthy();
   const field = document.querySelector('.football-tablet .field');
   expect(field?.querySelectorAll('.yard-line')).toHaveLength(19);
   expect(field?.querySelectorAll('.inbound-hash')).toHaveLength(160);

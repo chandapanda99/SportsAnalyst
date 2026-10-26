@@ -14,7 +14,7 @@ def with_source_provenance(row, version):
     game = row.get("game_id")
     identity = str(row.get("id") or row.get("play_id") or "")
     source_url = row.get("source_url") or (f"{CORE}/events/{game}/competitions/{game}/plays/{identity}" if game else CORE)
-    model = f"sportsdataverse:{version}:cfb-spread-free"
+    model = row.get("model_identity") or f"sportsdataverse:{version}:cfb-spread-free"
     observations = [FieldObservation(
         provider_id="espn", source_record_id=identity, source_url=source_url,
         field=field, value=row[field], method=method, processing_version=version,

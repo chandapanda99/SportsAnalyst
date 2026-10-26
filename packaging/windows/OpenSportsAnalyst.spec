@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
 ROOT = Path(SPEC).resolve().parents[2]
@@ -15,6 +15,7 @@ if not FRONTEND.joinpath("index.html").exists():
     raise SystemExit("frontend/dist is missing; run `npm run build` in frontend first")
 
 datas = [(str(FRONTEND), "frontend/dist")]
+datas += collect_data_files("quickjs_rs", includes=["*.wasm"])
 distributions = desktop_distributions()
 binaries = collect_runtime_dlls(distributions)
 datas += collect_provider_resources(distributions)
@@ -29,6 +30,9 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "keyring.backends.Windows",
+        "langchain_quickjs",
+        "quickjs_rs",
+        "wasmtime",
         "sports_analyst.worker",
         # Provider imports are intentionally lazy; keep them available in the
         # frozen build without importing them during normal app startup.

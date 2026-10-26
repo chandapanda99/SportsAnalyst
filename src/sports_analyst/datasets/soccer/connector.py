@@ -17,6 +17,7 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.availability import completed_games, missing_source, unavailable_snapshot
 from sports_analyst.datasets.errors import FixtureDiscoveryError
 from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError, load_optional_module
@@ -311,9 +312,10 @@ class SportsDataverseSoccerConnector:
                                            | (pl.col("away_team_id").cast(pl.String) == team_id))
                 if schedule.is_empty():
                     raise FixtureDiscoveryError(f"No fixtures for the selected team in {competition} {season}")
-            final = schedule.filter(pl.col("status").cast(pl.String).str.to_lowercase().is_in(["status_final", "status_full_time", "final"]))
+            final = completed_games(schedule, status="status")
             ids = final.get_column("event_id").cast(pl.String).to_list()
             summaries: dict[str, dict] = {}
+            failed_summaries = 0
             if summaries_requested and ids:
                 workers = min(self.settings.dataset_sync_concurrency, len(ids), 8)
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="soccer-sync") as pool:
@@ -326,6 +328,8 @@ class SportsDataverseSoccerConnector:
                         except OptionalDependencyError:
                             raise
                         except Exception as error:
+                            if not missing_source(error):
+                                failed_summaries += 1
                             logger.warning("soccer_match_unavailable competition=%s event=%s error=%s", competition, match, error)
                         detail("play_by_play", .2 + (summary_share - .2) * index / len(ids),
                                f"Match details · {index} of {len(ids)} matches checked", index == len(ids))
@@ -351,9 +355,14 @@ class SportsDataverseSoccerConnector:
                                f"Team match reports · {done} of {total} checked", done == total)
                         if progress_callback and not progress_detail_callback:
                             progress_callback("processing", "expected_goals", season, completed, len(work))
-                    frames[dataset] = self.expected_goals.team_matches(
-                        competition, season, final, progress_counts=xg_progress,
-                        refresh=season in (refresh_seasons or set()))
+                    try:
+                        frames[dataset] = self.expected_goals.team_matches(
+                            competition, season, final, progress_counts=xg_progress,
+                            refresh=season in (refresh_seasons or set()))
+                    except Exception as error:
+                        if not missing_source(error):
+                            raise
+                        frames[dataset] = pl.DataFrame()
                     continue
                 section = "key_events" if dataset == "key_events" else dataset
                 parts = []
@@ -372,6 +381,22 @@ class SportsDataverseSoccerConnector:
                 frame = frames[dataset]
                 completed += 1
                 if frame.is_empty():
+                    path = self.data_dir / competition / str(season) / f"{dataset}.parquet"
+                    if team_id:
+                        path = self.data_dir / competition / "partitions" / "team" / team_id / str(season) / f"{dataset}.parquet"
+                    fetched_count, expected_count = len(summaries), len(ids)
+                    manifest = unavailable_snapshot(path, season,
+                        lambda path, data, year=season, name=dataset, fetched=fetched_count, expected=expected_count:
+                            self.manifest_for(path, competition, year, name, data, fetched, expected, 0,
+                                              partition_key=f"team:{team_id}" if team_id else None),
+                        message="No recorded data for this package in completed matches; missing values are not zero.")
+                    if failed_summaries and dataset != "expected_goals":
+                        manifest = manifest.model_copy(update={"availability": "download_failed",
+                            "availability_message": "Match detail requests failed; retry to resume. Previously downloaded rows, if any, were retained.",
+                            "coverage": {**manifest.coverage, "failed_requests": failed_summaries}})
+                    produced.append(manifest)
+                    if manifest_callback:
+                        manifest_callback(manifest)
                     if progress_callback:
                         progress_callback("skipped", dataset, season, completed, len(work))
                     continue
@@ -386,6 +411,10 @@ class SportsDataverseSoccerConnector:
                 recorded_count = (frame.get_column("game_id").n_unique() if dataset != "play_by_play" and "game_id" in frame.columns else 0)
                 manifest = self.manifest_for(path, competition, season, dataset, frame, completed_count, expected_count, recorded_count,
                                              partition_key=f"team:{team_id}" if team_id else None)
+                if failed_summaries and dataset not in {"play_by_play", "expected_goals"}:
+                    manifest = manifest.model_copy(update={"availability": "partial",
+                        "availability_message": "Some match detail requests failed; retry to resume.",
+                        "coverage": {**manifest.coverage, "failed_requests": failed_summaries}})
                 produced.append(manifest)
                 if manifest_callback:
                     manifest_callback(manifest)
@@ -403,6 +432,8 @@ class SportsDataverseSoccerConnector:
                                                        "recorded_matches": recorded_matches})
         if dataset == "expected_goals" or dataset.startswith("player_expected_goals_"):
             coverage = xg_coverage(frame, expected_matches)
+        incomplete = (bool(coverage.get("unavailable_requests") or coverage.get("failed_requests")) if dataset == "expected_goals" or dataset.startswith("player_expected_goals_")
+                      else completed_matches < expected_matches)
         source_url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{competition}/"
         if dataset.startswith("player_game_logs_"):
             source_url = f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{competition}/athletes/{dataset.removeprefix('player_game_logs_')}/gamelog"
@@ -418,7 +449,9 @@ class SportsDataverseSoccerConnector:
             license="See ESPN data terms.",
             attribution="Match data provided by ESPN through SportsDataverse.",
             local_path=str(path.resolve()), file_size=stat.st_size, modified_ns=stat.st_mtime_ns,
-            coverage=coverage,
+            coverage=coverage, availability="partial" if incomplete else "available",
+            availability_message=("Some source requests failed; retry to resume." if coverage.get("failed_requests")
+                                  else "Some source records were unavailable; retry to resume.") if incomplete else None,
         )
 
     def player_game_log_manifest(self, competition: str, season: int, athlete_id: str) -> DatasetManifest:

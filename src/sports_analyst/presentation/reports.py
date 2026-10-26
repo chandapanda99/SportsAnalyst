@@ -47,6 +47,15 @@ def _play_context(play) -> str:
             fields = sorted(key for key, item in provenance.items() if item.get("method") == method)
             if fields:
                 parts.append(method.replace("_", " ").capitalize() + ": " + ", ".join(fields))
+    source_detail = context.get("source_provenance") or {}
+    conflicts = source_detail.get("conflicts") or {}
+    if conflicts:
+        parts.append("Source disagreements (field-policy resolution): " + ", ".join(sorted(conflicts)))
+    for provider, status in (source_detail.get("secondary_status") or {}).items():
+        if status != "acquired":
+            parts.append(f"{provider}: {status}")
+    if selected.get("model_identity"):
+        parts.append("Model bundle: " + selected["model_identity"])
     return " · ".join(parts)
 
 

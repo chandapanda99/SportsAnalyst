@@ -36,6 +36,9 @@ class DatasetManifest(BaseModel):
     # use explicit channels so they never replace a sport's analysis snapshot.
     provider_id: str = Field(default="primary", pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     processing_version: str = Field(default="1", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    resolution_version: str | None = None
+    input_manifest_ids: list[str] = Field(default_factory=list)
+    source_inputs: list[dict[str, Any]] = Field(default_factory=list)
     dataset: str = "play_by_play"
     season: int = Field(ge=0, le=2100, description="NFL season, or 0 for a shared reference table")
     source_url: str

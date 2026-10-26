@@ -80,10 +80,36 @@ def hydrate_rows(rows, pipeline, provider_version):
 def with_render_context(saved, fresh):
     """Refresh geometry and recorded labels; never overwrite saved analysis/model values."""
     from sports_analyst.datasets.cfb_identity import with_identity_context
+    from sports_analyst.datasets.cfb_policy import FIELDS, refinement, valid
 
     saved = with_identity_context(saved, fresh)
     result = {**saved, **{field: fresh[field] for field in RENDER_FIELDS
                          if saved.get(field) is None and fresh.get(field) is not None}}
+    old_provenance = json.loads(saved.get("source_provenance_json") or "{}")
+    new_provenance = json.loads(fresh.get("source_provenance_json") or "{}")
+    copied = set()
+    for field in FIELDS.values():
+        existing = old_provenance.get("provenance", {}).get(field, {})
+        if valid(field, fresh.get(field)) and (not valid(field, saved.get(field)) or
+                (existing.get("method") != "recorded" and refinement(field, saved.get(field), fresh.get(field)))):
+            result[field] = fresh[field]
+            copied.add(field)
+            if field + "_source" in fresh:
+                result[field + "_source"] = fresh[field + "_source"]
+            if field in new_provenance.get("provenance", {}):
+                old_provenance.setdefault("provenance", {})[field] = new_provenance["provenance"][field]
+    if new_provenance.get("source_policy"):
+        for section in ("source_policy", "alignment", "secondary_status", "conflicts"):
+            old_provenance[section] = {**old_provenance.get(section, {}), **new_provenance.get(section, {})}
+        old_provenance["source_policy"]["decisions"] = {
+            field: decision if field in copied or saved.get(field) == fresh.get(field) else {
+                **decision, "selected_provider": old_provenance.get("provenance", {}).get(field, {}).get("provider_id", "saved_snapshot"),
+                "reason": "Saved cited context retained; fresh context is not a compatible refinement"}
+            for field, decision in old_provenance["source_policy"].get("decisions", {}).items()}
+        result["source_provenance_json"] = json.dumps(old_provenance, sort_keys=True)
+        for field in ("resolution_version", "source_inputs_json", "secondary_coverage_json"):
+            if field in fresh:
+                result[field] = fresh[field]
     if fresh.get("provider_context_json"):
         result["provider_context_json"] = json.dumps({**json.loads(fresh["provider_context_json"]),
                                                      **json.loads(saved.get("provider_context_json") or "{}")}, sort_keys=True)

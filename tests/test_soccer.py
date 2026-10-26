@@ -8,6 +8,7 @@ from itertools import count
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 import polars as pl
 from fastapi.testclient import TestClient
@@ -129,7 +130,8 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(soccer_season_label("usa.1", 2025), "2025")
         self._sync([2025])
         first = self.store.manifest_for_season(2025, "team_stats", "soccer", "eng.1")
-        self.assertEqual(first.coverage, {"completed_matches": 1, "expected_matches": 2, "recorded_matches": 1})
+        self.assertEqual(first.coverage, {"completed_matches": 1, "expected_matches": 2, "recorded_matches": 1, "failed_requests": 1})
+        self.assertEqual(first.availability, "partial")
         self._sync([2025])
         resumed = self.store.manifest_for_season(2025, "team_stats", "soccer", "eng.1")
         self.assertEqual(resumed.coverage, {"completed_matches": 2, "expected_matches": 2, "recorded_matches": 2})
@@ -137,6 +139,26 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.store.manifests("play_by_play", "soccer")), 2)
         self.assertEqual(self.store.manifest_for_season(2025, "play_by_play", "soccer", "eng.1").competition, "eng.1")
         self.assertEqual(self.store.manifest_for_season(2025, "play_by_play", "soccer", "esp.1").competition, "esp.1")
+
+    def test_missing_optional_sections_across_leagues_resume_without_losing_good_data(self) -> None:
+        from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+
+        for league in SOCCER_COMPETITIONS:
+            with self.subTest(league=league):
+                self.connector._summary = Mock(side_effect=HTTPError("https://example.test", 404, "missing", {}, None))
+                missing = self.connector.sync([2025], ["play_by_play", "team_stats"], competition=league)
+                self.assertEqual(next(item for item in missing if item.dataset == "play_by_play").availability, "available")
+                self.assertEqual(next(item for item in missing if item.dataset == "team_stats").availability, "source_unavailable")
+                self.connector._summary = lambda competition, season, game: _summary(game)
+                ready = self.connector.sync([2025], ["team_stats"], competition=league)
+                stats = next(item for item in ready if item.dataset == "team_stats")
+                self.assertEqual(stats.availability, "available")
+                self.connector._summary = Mock(side_effect=HTTPError("https://example.test", 404, "missing", {}, None))
+                retained = self.connector.sync([2025], ["team_stats"], competition=league)
+                stats = next(item for item in retained if item.dataset == "team_stats")
+                self.assertEqual(stats.availability, "partial")
+                self.assertGreater(stats.row_count, 0)
+                self.assertEqual(stats.coverage["retained_previous_data"], 1)
 
     def test_champions_league_sync_analysis_and_knockout_context(self) -> None:
         original = self.connector._scoreboard

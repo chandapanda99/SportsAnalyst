@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -197,22 +198,23 @@ class AnalystApplication:
 
     def analysis_options(self, sport: str = "nfl", competition: str | None = None) -> AnalysisOptions:
         connector, plugin = self._sport(sport)
-        manifests = self.store.manifests(sport=sport)
+        manifests = [item for item in self.store.manifests(sport=sport) if item.row_count > 0]
         if sport == "cfb":
             return plugin.analysis_options(manifests)
         if sport == "soccer":
             competition = competition or "eng.1"
-            schedules = {item.season: self._load_dataset(connector, item) for item in self.store.manifests("play_by_play", sport, competition)}
+            schedules = {item.season: self._load_dataset(connector, item) for item in manifests
+                         if item.dataset == "play_by_play" and item.competition == competition}
             options = plugin.analysis_options(manifests, {"competition": competition, "schedules": schedules})
             if not options.teams:
                 options = options.model_copy(update={"teams": [TeamOption.model_validate(team) for team in connector.team_directory(competition)]})
             return self._preparation_options(options)
         if sport == "nfl":
-            team_manifests = self.store.manifests("teams", sport)
+            team_manifests = [item for item in manifests if item.dataset == "teams"]
             context = self._load_dataset(connector, team_manifests[0]) if team_manifests else None
         else:
-            team_frames = [self._load_dataset(connector, item) for item in self.store.manifests("team_boxscores", sport)]
-            schedule_frames = {item.season: self._load_dataset(connector, item) for item in self.store.manifests("schedules", sport)}
+            team_frames = [self._load_dataset(connector, item) for item in manifests if item.dataset == "team_boxscores"]
+            schedule_frames = {item.season: self._load_dataset(connector, item) for item in manifests if item.dataset == "schedules"}
             context = {
                 "teams": pl.concat(team_frames, how="diagonal_relaxed") if team_frames else pl.DataFrame(),
                 "schedules": schedule_frames,
@@ -270,7 +272,7 @@ class AnalystApplication:
                     key=lambda player: player.name,
                 )[:25]
         if sport == "soccer":
-            manifests = self.store.manifests("lineups", sport, competition)
+            manifests = [item for item in self.store.manifests("lineups", sport, competition) if item.row_count > 0]
             sources = [(manifest.season, self._load_dataset(connector, manifest)) for manifest in manifests]
             return plugin.resolve_players(query, sources)
         allowed = (
@@ -288,7 +290,7 @@ class AnalystApplication:
                 "play_by_play",
             }
         )
-        manifests = [manifest for manifest in self.store.manifests(sport=sport) if manifest.dataset in allowed]
+        manifests = [manifest for manifest in self.store.manifests(sport=sport) if manifest.dataset in allowed and manifest.row_count > 0]
         sources = [(manifest.season, self._load_dataset(connector, manifest)) for manifest in manifests]
         return plugin.resolve_players(query, sources)
 
@@ -478,6 +480,8 @@ class AnalystApplication:
             endpoint_seasons = {request.scope.baseline_season, request.scope.comparison_season}
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
             for manifest in self.store.manifests(sport=request.sport, competition=request.scope.competition):
+                if manifest.row_count == 0:
+                    continue
                 if request.sport in {"cfb", "soccer"} and manifest.partition_key != partition:
                     continue
                 if manifest.dataset in {"play_by_play", "teams"}:
@@ -557,6 +561,16 @@ class AnalystApplication:
                 run_type="tool",
         ) as analysis_span:
             result = plugin.analyze(request, datasets, manifests, supplemental, supplemental_manifests)
+            from sports_analyst.analysis.calculations import complete_calculations
+            from sports_analyst.analysis.scoped_data import ScopedData
+
+            self.events.emit(identifier, "analyzing", "Checking the question against measured evidence", 0.57)
+            scoped_data = ScopedData(self, request, partition)
+            complete_calculations(self.settings, request.question, result, {
+                "sport": request.sport, "subject": request.subject.model_dump(mode="json") if request.subject else None,
+                "domain": request.analysis_domain, "scope": request.scope.model_dump(mode="json"),
+            }, data_access=scoped_data)
+            queried_ids = {key for item in result.aggregate_evidence for key in item.dataset_manifest_ids}
             if request.sport == "cfb":
                 for index, evidence in enumerate(result.play_evidence):
                     if not evidence.play_id or not evidence.visualization:
@@ -564,9 +578,18 @@ class AnalystApplication:
                     self.events.emit(identifier, "analyzing", f"Checking selected-play personnel · {index + 1}/{len(result.play_evidence)}", 0.55)
                     context = dict(evidence.visualization.cfb_statistics)
                     selected_play = dict(context.get("selected_play") or {})
+                    try:
+                        selected_play = connector.selected_play_context(selected_play, evidence.game_id, evidence.season)
+                    except Exception:
+                        logger.warning("cfb_selected_context_unavailable game_id=%s", evidence.game_id)
+                    context["source_provenance"] = json.loads(selected_play.get("source_provenance_json") or "{}")
                     selected_play["personnel_context"] = connector.play_personnel(evidence.game_id, evidence.season, evidence.play_id)
                     context["selected_play"] = selected_play
-                    visualization = evidence.visualization.model_copy(update={"cfb_statistics": context})
+                    visualization = evidence.visualization.model_copy(update={"cfb_statistics": context,
+                        "formation": selected_play.get("formation", evidence.visualization.formation),
+                        "pass_location": selected_play.get("pass_direction", evidence.visualization.pass_location),
+                        "run_location": selected_play.get("rush_direction", evidence.visualization.run_location),
+                        "pass_length": selected_play.get("pass_depth", evidence.visualization.pass_length)})
                     result.play_evidence[index] = evidence.model_copy(update={"visualization": visualization})
             self.telemetry.add_outputs(
                 analysis_span,
@@ -605,11 +628,15 @@ class AnalystApplication:
             source_manifests = {item.manifest_id: item for item in manifests.values()}
             for packages in supplemental_manifests.values():
                 source_manifests.update({item.manifest_id: item for item in packages.values()})
+            source_manifests.update({key: item for key, item in scoped_data.manifests.items() if key in queried_ids})
             analytical_context = evidence_brief(
                 result.aggregate_evidence, definitions, list(source_manifests.values()),
                 {"sport": request.sport, "domain": request.analysis_domain,
                  "subject": request.subject.model_dump(mode="json") if request.subject else {"type": "team", "id": request.scope.team},
                  "comparison": request.scope.model_dump(mode="json"), "as_of": datetime.now(UTC).isoformat()})
+            analytical_context["question_coverage_reviews"] = [
+                {"plan": item.parameters.get("plan"), "review": item.parameters.get("question_review")}
+                for item in result.executions if item.tool == "complete_calculations"]
             draft, model_id, fallback = self.agent.synthesize(
                 request.question,
                 request.subject.id if request.subject else request.scope.team,
@@ -669,10 +696,7 @@ class AnalystApplication:
                 play_evidence=result.play_evidence,
                 charts=result.charts,
                 executions=result.executions,
-                dataset_manifests=[
-                    *manifests.values(),
-                    *(manifest for season_manifests in supplemental_manifests.values() for manifest in season_manifests.values()),
-                ],
+                dataset_manifests=list(source_manifests.values()),
                 methodological_caveats=result.caveats,
                 model_id=model_id,
                 fallback_used=fallback,
@@ -740,6 +764,17 @@ class AnalystApplication:
     ) -> InvestigationBundle:
         started_at = perf_counter()
         logger.info("follow_up_started investigation_id=%s parent_id=%s mode=reuse", identifier, root.run.investigation_id)
+        from sports_analyst.analysis.calculations import needs_phase_accounting
+
+        if (root.run.sport == "nfl" and root.run.analysis_domain == "offense" and needs_phase_accounting(question)
+                and ("epa" in question.lower() or "epa_per_play" in root.run.metrics)
+                and not any(item.metric == "epa_phase_contribution" for item in root.aggregate_evidence)):
+            # Older reports may lack a now-supported calculation. Re-enter the
+            # normal preparation/evidence pipeline instead of rewording a gap.
+            return self._investigate(AnalysisRequest(sport=root.run.sport, subject=root.run.subject, question=question,
+                scope=root.run.scope, analysis_domain=root.run.analysis_domain,
+                metrics=list(dict.fromkeys(["epa_per_play", *root.run.metrics])),
+                splits=root.run.splits, parent_investigation_id=root.run.investigation_id), identifier, trace_metadata, root_span)
         with self.telemetry.span(
                 "sports-analyst.reuse-parent-evidence", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as reuse_span:

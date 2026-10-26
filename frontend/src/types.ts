@@ -11,6 +11,10 @@ export type CFBTeamContext = {
   id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
 };
 export type CFBRecordedPlay = {
+  secondary_coverage_json?: string | null;
+  source_inputs_json?: string | null;
+  resolution_version?: string | null;
+  model_identity?: string | null;
   source_provenance_json?: string | null;
   provider_context_json?: string | null; end_down?: number | null; end_distance?: number | null;
   air_yards?: number | null; yards_after_catch?: number | null; air_yards_to_endzone?: number | null;
@@ -30,12 +34,13 @@ export type CFBRecordedPlay = {
   epa?: number | null; wpa?: number | null; cpoe?: number | null; participants?: CFBParticipant[];
 };
 export type DatasetManifest = {
+  resolution_version?: string | null; input_manifest_ids?: string[];
   provider_id?: string; processing_version?: string;
   availability?: 'available' | 'partial' | 'source_unavailable' | 'download_failed' | 'season_unverified';
   availability_message?: string | null;
   source_url?: string; package_version?: string; attribution?: string; license?: string;
   manifest_id: string; sport: string; competition?: string | null; partition_key?: string | null; dataset: string; season: number; row_count: number; sha256: string; acquired_at: string; columns: string[];
-  coverage?: {completed_matches?: number; expected_matches?: number; recorded_matches?: number; fetched_intervals?: number; expected_intervals?: number};
+  coverage?: {completed_matches?: number; expected_matches?: number; recorded_matches?: number; fetched_intervals?: number; expected_intervals?: number; retained_previous_data?: number; source_unavailable?: number};
 };
 export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string };
 export type TeamOption = { value: string; label: string };

@@ -32,6 +32,8 @@ def current_season(sport, competition=None):
 
 
 def reusable(manifest, current):
+    if manifest.availability != "available":
+        return False
     coverage = manifest.coverage
     expected = coverage.get("expected_intervals", coverage.get("expected_matches", 0))
     completed = coverage.get("fetched_intervals", coverage.get("completed_matches", expected))
@@ -63,14 +65,15 @@ def requirements(request, first_install):
         if request.analysis_domain in {"lineups", "impact"}:
             required.add("lineups")
         return required, set()
-    required = {"play_by_play", "key_events"}
+    required = {"play_by_play"}
+    optional = {"key_events"}
     if player:
         required.add("lineups")
     for metric in request.metrics or SOCCER_DEFAULTS.get(request.analysis_domain, SOCCER_DEFAULTS["results"]):
         source = SOCCER_METRICS.get(metric, (None, None))[1]
         if source in {"team_stats", "lineups", "key_events", "expected_goals"}:
             required.add(source)
-    return required, set()
+    return required, optional - required
 
 
 def project_soccer(app, connector, competition, season, partition, dataset, current):
@@ -209,4 +212,12 @@ def prepare_investigation(app, request, identifier):
                             raise
                         logger.exception("optional_preparation_unavailable sport=%s dataset=%s season=%s", request.sport, dataset, season)
                         app.events.emit(identifier, "preparing", f"Optional {dataset} unavailable; continuing with recorded core data", 0.16)
+            for dataset in required:
+                try:
+                    manifest = app.store.manifest_for_season(season, dataset, request.sport, competition, partition)
+                except KeyError as error:
+                    raise ValueError(f"Required {request.sport.upper()} {dataset} data are unavailable for {season}") from error
+                if manifest.row_count == 0 or manifest.availability == "source_unavailable":
+                    raise ValueError(f"Required {request.sport.upper()} {dataset} data are unavailable for {season}; "
+                                     "no analysis can be generated from missing data")
     return partition, request.scope.included_seasons

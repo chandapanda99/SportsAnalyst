@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     model_provider: str = "azure_foundry"
     model: str = "gpt-5.6-luna"
     chat_model: str | None = None
+    calculation_interpreter_enabled: bool = True
     foundry_endpoint: str = ""
     foundry_api_key: SecretStr | None = Field(default=None, repr=False)
     reasoning_effort: str | None = "medium"
@@ -24,6 +25,9 @@ class Settings(BaseSettings):
     event_stream_timeout_seconds: int = Field(default=120, ge=30, le=3_600)
     dataset_cache_mb: int = Field(default=384, ge=0, le=4_096)
     dataset_sync_concurrency: int = Field(default=1, ge=1, le=8)
+    cfb_ncaa_enabled: bool = False
+    cfb_cfbd_enabled: bool = False
+    cfb_secondary_usage_confirmed: bool = False
     verify_dataset_checksums_on_load: bool = False
     investigation_history_limit: int = Field(default=50, ge=1, le=500)
     persistence_backend: str = "local"
@@ -67,6 +71,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_jobs(self) -> Settings:
+        if (self.cfb_ncaa_enabled or self.cfb_cfbd_enabled) and not self.cfb_secondary_usage_confirmed:
+            raise ValueError("Secondary CFB sources require CFB_SECONDARY_USAGE_CONFIRMED=true after reviewing source terms")
         if self.job_dispatch_backend not in {"none", "cloud_run"}:
             raise ValueError("JOB_DISPATCH_BACKEND must be none or cloud_run")
         if self.job_progress_transport not in {"stream", "poll"}:

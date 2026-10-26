@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 import polars as pl
 
+from sports_analyst.datasets.availability import missing_source
 from sports_analyst.datasets.optional import load_optional_module
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,10 @@ def coverage(frame: pl.DataFrame, expected_matches: int) -> dict[str, int]:
     complete = counts.filter((pl.col("rows") == expected_rows) & (pl.col("fetched") == expected_rows)).height
     recorded = counts.filter((pl.col("rows") == expected_rows) & (pl.col("recorded") == expected_rows)).height
     result = {"completed_matches": complete, "expected_matches": expected_matches, "recorded_matches": recorded}
+    if "source_unavailable" in frame.columns:
+        result["unavailable_requests"] = frame["source_unavailable"].sum()
+    if "download_failed" in frame.columns:
+        result["failed_requests"] = frame["download_failed"].sum()
     for field in STAT_FIELDS:
         result[f"{field}_rows"] = frame.get_column(field).is_not_null().sum()
     for metric, fields in TEAM_XG_FIELDS.items():
@@ -121,6 +126,8 @@ class ExpectedGoalsSource:
         url = f"{CORE_ROOT}/{competition}/events/{game_id}/competitions/{game_id}/competitors/{team_id}{suffix}/statistics/0"
         checkpoint = self.data_dir / competition / str(season) / "core_statistics" / game_id / f"{team_id}_{athlete_id or 'team'}.json"
         stats: dict[str, float | None] = {}
+        unavailable = False
+        failed = False
         try:
             try:
                 payload = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() and not refresh else {}
@@ -137,10 +144,14 @@ class ExpectedGoalsSource:
                     temporary.write_text(json.dumps(payload), encoding="utf-8")
                     temporary.replace(checkpoint)
         except (OSError, ValueError, TypeError, KeyError) as error:
+            unavailable = missing_source(error)
+            failed = not unavailable
+            if checkpoint.exists():
+                stats = core_statistics(json.loads(checkpoint.read_text(encoding="utf-8")))
             logger.warning("soccer_xg_unavailable competition=%s game=%s team=%s player=%s error=%s",
                            competition, game_id, team_id, athlete_id, error)
         return {"game_id": game_id, "team_id": team_id, **({"athlete_id": athlete_id} if athlete_id else {}),
-                "stats_available": bool(stats), "source_url": url,
+                "stats_available": bool(stats), "source_url": url, "source_unavailable": unavailable, "download_failed": failed,
                 **{field: stats.get(name) for field, name in STAT_FIELDS.items()}}
 
     def team_matches(self, competition: str, season: int, schedule: pl.DataFrame,

@@ -20,3 +20,9 @@ def check_runtime_dependencies() -> None:
         assert connection.execute("SELECT 1").fetchone() == (1,)
     assert pl.DataFrame({"value": [1, 2]}).select(pl.col("value").sum()).item() == 3
     assert pa.table({"value": [1, 2]}).num_rows == 2
+    # Exercise the bundled Wasm guests as well as wasmtime's native library.
+    from quickjs_rs import Context, Runtime
+
+    with Runtime(memory_limit=32 * 1024 * 1024) as runtime, Context(runtime) as context:
+        assert context.eval("1 + 2") == 3
+        assert context.eval("typeof fetch") == "undefined"

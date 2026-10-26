@@ -1,4 +1,6 @@
 """Crucial provider isolation, restoration, provenance, and resolution contracts."""
+import hashlib
+import io
 import json
 
 import polars as pl
@@ -9,8 +11,11 @@ from test_cfb import DurableMemory
 from sports_analyst.api import create_app
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import Settings
+from sports_analyst.datasets.cfb_alignment import align_sequences
+from sports_analyst.datasets.cfb_normalization import normalized_pair
 from sports_analyst.datasets.cfb_provenance import with_source_provenance
 from sports_analyst.datasets.cfb_source_audit import audit_game
+from sports_analyst.datasets.cfbd_audit import RELEASE_ROOT, audit_season, cached_asset
 from sports_analyst.datasets.providers import FieldObservation, align_plays, resolve_fields
 from sports_analyst.models import DatasetManifest
 from sports_analyst.storage.local import LocalStore
@@ -125,3 +130,92 @@ def test_bounded_game_audit_checks_crosswalk_and_reports_unknown_context_without
     assert report["conservative_context_matches"] == 0 and report["unmatched_espn"] == 1
     ncaa["season"] = 2024
     assert audit_game("1", 2025, "FBS", "2", fetch)["game_team_identity_verified"] is False
+
+
+def test_sequence_crosswalk_rejects_ambiguity_score_conflicts_penalties_and_false_overtime_links():
+    base = dict(quarter=5, team_id="10", down=1, distance=10, yards_to_goal=25, play_type="rush",
+                yards_gained=3, end_yards_to_goal=22, drive_key="d1", home_score=7, away_score=7)
+    primary = [{**base, "id": "1", "clock": "0:00"},
+               {**base, "id": "penalty", "penalty": True},
+               {**base, "id": "2", "down": 2, "yards_to_goal": 22}]
+    secondary = [{**base, "id": "n1", "clock": None},
+                 {**base, "id": "n2", "down": 2, "yards_to_goal": 22}]
+    result = align_sequences(primary, secondary, game_verified=True)
+    assert result["matches"] == {"1": "n1", "2": "n2"}
+    assert not align_sequences(primary, list(reversed(secondary)), game_verified=True)["matches"]
+    assert "penalty" in result["unmatched_primary"]
+    assert align_sequences(primary, secondary, game_verified=False)["matches"] == {}
+    assert align_sequences(primary[:1], [secondary[0], {**secondary[0], "id": "duplicate-context"}],
+                           game_verified=True)["matches"] == {}
+    for change in ({"home_score": 0}, {"quarter": 6}, {"no_play": True}, {"drive_key": None}):
+        assert align_sequences(primary[:1], [{**secondary[0], **change}], game_verified=True)["matches"] == {}
+    # A different clock cannot pass on loose context; corroborated end position,
+    # drive and scores are all mandatory. Conflicting clocks remain visible.
+    right = {**secondary[0], "clock": "0:01"}
+    result = align_sequences(primary[:1], [right], game_verified=True)
+    assert result["matches"] == {"1": "n1"} and result["evidence"]["1"]["clock_disagreement"]
+    assert not align_sequences(primary[:1], [{**right, "end_yards_to_goal": None}], game_verified=True)["matches"]
+
+
+def test_game_scoped_aliases_require_corroborated_drives_and_do_not_guess_historical_scores():
+    ncaa = {"contest_id": "1", "espn_game_id": "2", "season": 2025, "academic_year": 2026,
+            "teams": [{"team": "Wake Forest", "espn_team_id": None, "final": 0, "home_away": "home"},
+                      {"team": "Other", "espn_team_id": "20", "final": 7, "home_away": "away"}],
+            "drives": [{"drive_number": 1, "team": "Wake Forest", "period": 1, "start_clock": "15:00",
+                        "end_clock": "13:00", "start_yard_line": "WFU25", "n_plays": 3, "yards": 9, "end_how": "PUNT"}],
+            "drive_titles": [{"drive_number": 1, "score_home": 0, "score_away": 0}],
+            "pbp": [{"drive_number": 1, "play_number": 1, "offense": "Wake Forest", "down": 1, "distance": 10,
+                     "yard_line_side": "WFU", "yard_line_number": 25, "play_type": "rush", "yards_gained": 3}]}
+    summary = {"header": {"id": "2", "season": {"year": 2025}, "competitions": [{"competitors": [
+        {"team": {"id": "10", "abbreviation": "WAKE", "location": "Wake Forest"}, "score": "0", "homeAway": "home"},
+        {"team": {"id": "20", "abbreviation": "OTH"}, "score": "7", "homeAway": "away"}]}]},
+        "drives": {"previous": [{"id": "21", "team": {"id": "10"}, "offensivePlays": 3, "yards": 9, "result": "PUNT",
+                    "start": {"period": {"number": 1}, "clock": {"displayValue": "15:00"}, "text": "WAKE 25"},
+                    "end": {"period": {"number": 1}, "clock": {"displayValue": "13:00"}}}]}}
+    crosswalk, _, native = normalized_pair(ncaa, summary, [], "2", 2025)
+    assert crosswalk["verified"] and crosswalk["aliases"]["wfu"] == "10"
+    assert native[0]["yards_to_goal"] == 75 and native[0]["home_score"] == 0
+    assert crosswalk["alias_evidence"]["wfu"][0]["method"] == "verified drive boundary"
+    ncaa["drive_titles"][0]["drive_number"] = 2
+    assert normalized_pair(ncaa, summary, [], "2", 2025)[2][0]["home_score"] is None
+    ncaa["drives"][0]["yards"] = 10
+    assert normalized_pair(ncaa, summary, [], "2", 2025)[2][0]["yards_to_goal"] is None
+    ncaa["teams"][0]["espn_team_id"] = "999"  # Never override an explicit conflicting ID with a name match.
+    assert not normalized_pair(ncaa, summary, [], "2", 2025)[0]["verified"]
+    ncaa["teams"][0]["espn_team_id"] = "10"
+    ncaa["drives"][0]["yards"] = 9
+    ncaa["drives"].append({**ncaa["drives"][0], "drive_number": 2, "team": "Other"})
+    first = summary["drives"]["previous"][0]
+    summary["drives"]["previous"].append({**first, "id": "22", "team": {"id": "20"},
+                                          "start": {**first["start"], "text": "OTH 25"}})
+    crosswalk, _, native = normalized_pair(ncaa, summary, [], "2", 2025)
+    assert crosswalk["alias_conflicts"]["wfu"] == ["10", "20"] and native[0]["yards_to_goal"] is None
+
+
+def test_cfbd_asset_audit_bounds_verifies_reuses_and_projects_only_selected_games(tmp_path):
+    stream = io.BytesIO()
+    pl.DataFrame({"game_id": ["1", "2"], "id_play": ["p1", "p2"], "EPA": [0.0, 2.0], "unused": ["a", "b"]}).write_parquet(stream)
+    payload = stream.getvalue()
+    asset = {"id": 123, "name": "play_by_play_2025.parquet", "size": len(payload),
+             "browser_download_url": RELEASE_ROOT + "/play_by_play_2025.parquet",
+             "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}
+    calls = []
+
+    def opener(request, timeout):
+        calls.append(request.full_url)
+        assert timeout == 20
+        return io.BytesIO(payload)
+
+    options = dict(fetch=lambda _: {"assets": [asset]}, opener=opener)
+    first = audit_season(2025, ["1"], tmp_path, **options)
+    second = audit_season(2025, ["2"], tmp_path, **options)
+    assert first["requested_game_rows"] == {"1": 1} and first["populated_fields"]["EPA"] == 1
+    assert "unused" not in first["selected_columns"] and "id_play" in first["selected_columns"]
+    assert not first["cache_reused"] and second["cache_reused"] and len(calls) == 1
+    assert not first["modeled_comparison_approved"] and not first["model_identity_fields"]
+    for invalid in ({"size": 200 * 1024 * 1024}, {"digest": ""}, {"browser_download_url": "https://evil.test/data"}):
+        with pytest.raises(ValueError, match="unverified"):
+            cached_asset({**asset, **invalid}, 2025, tmp_path, opener=opener)
+    with pytest.raises(ValueError, match="size or time bound"):
+        cached_asset({**asset, "size": len(payload) - 1}, 2025, tmp_path, opener=opener)
+    assert not list(tmp_path.rglob("*.partial"))

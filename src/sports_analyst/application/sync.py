@@ -9,6 +9,7 @@ from time import perf_counter
 
 from sports_analyst.config import Settings
 from sports_analyst.datasets.acquisition import timed_stage
+from sports_analyst.datasets.availability import completion_message
 from sports_analyst.datasets.cfb import SportsDataverseCFBConnector
 from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.errors import SyncFailure
@@ -157,6 +158,8 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     application.store.refresh_durable_datasets(sport, seasons, selected_datasets, competition)
     application.store.invalidate_reset_cache(sport, competition)
     existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)}
+    existing -= {(item.dataset, item.season) for item in application.store.manifests(sport=sport, competition=competition)
+                 if getattr(item, "availability", "available") != "available"}
     if sport == "soccer":
         incomplete = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)
                       if (manifest.coverage.get("fetched_intervals", 0) < manifest.coverage.get("expected_intervals", 0)
@@ -236,10 +239,14 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     sync_kwargs = {"competition": competition, "progress_detail_callback": report_sync,
                    "refresh_seasons": {current_season} if competition in SOCCER_COMPETITIONS else set()} if sport == "soccer" else {}
     context["step"] = "downloading selected datasets"
-    with optional_dependencies(f"{sport.upper()} dataset sync"), timed_stage("acquire_datasets", sport=sport, competition=competition):
-        manifests = connector.sync(
-            seasons, selected_datasets, progress_callback=report_sync,
-            manifest_callback=register_manifest, skip=existing, **sync_kwargs)
+    try:
+        with optional_dependencies(f"{sport.upper()} dataset sync"), timed_stage("acquire_datasets", sport=sport, competition=competition):
+            manifests = connector.sync(
+                seasons, selected_datasets, progress_callback=report_sync,
+                manifest_callback=register_manifest, skip=existing, **sync_kwargs)
+    finally:
+        if registered:
+            application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)
@@ -249,7 +256,8 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     context["season_label"] = ", ".join(_season_label(sport, competition, season) for season in seasons)
     application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
     connector.clear_cache()
-    application.events.emit(key, "complete", "Dataset sync complete", 1.0, manifest_ids=[item.manifest_id for item in manifests])
+    application.events.emit(key, "complete", completion_message(manifests), 1.0,
+                            manifest_ids=[item.manifest_id for item in manifests])
     logger.info(
         "dataset_sync_completed job_id=%s manifests=%d duration_ms=%d",
         key,

@@ -168,7 +168,19 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
         if sport is not None and sport not in {"nfl", "nba", "cfb", "soccer"}:
             raise HTTPException(status_code=400, detail="Unsupported sport")
-        return [item.model_dump(mode="json") for item in CAPABILITIES if sport is None or item.sport == sport]
+        sources = [item.model_dump(mode="json") for item in CAPABILITIES if sport is None or item.sport == sport]
+        for item in sources:
+            if item["sport"] == "cfb" and item["provider_id"] in {"ncaa", "cfbd"}:
+                enabled = getattr(service.settings, f"cfb_{item['provider_id']}_enabled")
+                item.update(automatic=enabled, usage_confirmation_required=True,
+                            usage_confirmed=service.settings.cfb_secondary_usage_confirmed,
+                            modeled_values_policy="Current-model recomputation only; legacy secondary EPA/WPA are retained, not merged")
+                from sports_analyst.datasets.cfb_policy import FEATURES, POLICY_VERSION, PROVIDER_FIELDS
+
+                item.update(enabled=enabled, automatic=enabled and bool(PROVIDER_FIELDS[item["provider_id"]]),
+                            feature_policy_version=POLICY_VERSION, feature_policies=FEATURES,
+                            verified_rendering_fields=sorted(PROVIDER_FIELDS[item["provider_id"]]))
+        return sources
 
     @api.get("/api/datasets", response_model=list[DatasetManifest])
     def datasets(sport: str | None = None, provider_id: str = "primary", processing_version: str = "1") -> list[DatasetManifest]:
@@ -509,7 +521,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                 first = modeled[0]
                 rows = [{**row, "id": row["play_id"]} for row in modeled]
                 refreshed = {}
-                if needs_identity_refresh(rows) or any((row.get("render_context_version") or 0) < RENDER_VERSION for row in rows):
+                from sports_analyst.datasets.cfb_policy import acquisition_plan
+
+                enabled = [name for name in ("ncaa", "cfbd") if getattr(service.settings, f"cfb_{name}_enabled")]
+                needs_context = bool(acquisition_plan(rows, "rendering", enabled)["providers"])
+                if needs_context or needs_identity_refresh(rows) or any((row.get("render_context_version") or 0) < RENDER_VERSION for row in rows):
                     try:
                         refreshed = service.connectors["cfb"].game_plays(item.game_id, item.season)
                         by_id = {row["id"]: row for row in refreshed["plays"]}

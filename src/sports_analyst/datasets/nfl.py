@@ -15,6 +15,7 @@ from time import perf_counter
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.availability import SourceUnavailable, missing_source, unavailable_snapshot
 from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.models import DatasetManifest, stable_id
 
@@ -114,7 +115,7 @@ class NFLVerseConnector:
             (season, dataset)
             for season in sorted(set(seasons))
             for dataset in selected
-            if dataset not in REFERENCE_DATASETS and season >= DATASET_MIN_SEASONS[dataset]
+            if dataset not in REFERENCE_DATASETS
         )
         if not work:
             raise ValueError("none of the selected datasets are available for the selected seasons")
@@ -136,11 +137,15 @@ class NFLVerseConnector:
                 progress_callback("downloading", dataset, season, index, len(work))
             path = self.settings.raw_dir / (f"{dataset}.parquet" if season == 0 else f"{dataset}_{season}.parquet")
             frame: pl.DataFrame | None = None
+            if dataset not in REFERENCE_DATASETS and season < DATASET_MIN_SEASONS[dataset]:
+                raise SourceUnavailable("The selected season predates this package's supported coverage")
             if release_path := DIRECT_PARQUET_PATHS.get(dataset):
                 self._download_parquet(f"{NFLVERSE_RELEASE_BASE_URL}{release_path.format(season=season)}", path)
             else:
                 nfl = load_optional_module("nflreadpy", "NFL dataset sync")
                 frame = self._load_remote(nfl, dataset, season)
+                if frame.is_empty():
+                    raise SourceUnavailable("No rows supplied for the selected NFL package/season")
                 if progress_callback:
                     progress_callback("processing", dataset, season, index, len(work))
                 frame.write_parquet(path)
@@ -163,11 +168,21 @@ class NFLVerseConnector:
                 }
                 for future in as_completed(futures):
                     season, dataset = futures[future]
-                    index, manifest = future.result()
+                    try:
+                        index, manifest = future.result()
+                    except Exception as error:
+                        if not missing_source(error):
+                            raise
+                        index = next(i for i, year, name in pending if year == season and name == dataset)
+                        path = self.settings.raw_dir / (f"{dataset}.parquet" if season == 0 else f"{dataset}_{season}.parquet")
+                        manifest = unavailable_snapshot(path, season,
+                            lambda path, frame, year=season, name=dataset: self.manifest_for(path, year, frame, name))
+                        logger.warning("dataset_source_unavailable sport=nfl dataset=%s season=%s", dataset, season)
                     manifests_by_index[index] = manifest
                     completed += 1
                     if progress_callback:
-                        progress_callback("downloaded", dataset, season, completed, len(work))
+                        progress_callback("skipped" if manifest.coverage.get("source_unavailable") else "downloaded",
+                                          dataset, season, completed, len(work))
                     if manifest_callback:
                         manifest_callback(manifest)
 
@@ -208,6 +223,8 @@ class NFLVerseConnector:
         try:
             with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as output:
                 shutil.copyfileobj(response, output, length=1024 * 1024)
+            if pl.scan_parquet(temporary).select(pl.len()).collect().item() == 0:
+                raise SourceUnavailable("Published NFL package contains no recorded rows")
             temporary.replace(destination)
         except Exception:
             temporary.unlink(missing_ok=True)

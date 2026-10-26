@@ -247,11 +247,11 @@ Follow-up questions reuse the saved investigation context. History can be filter
 Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
 both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
 
-Recommended Cloud Run deployments use `JOB_BACKEND=object`: R2 stores request/progress records, and Cloud Tasks invokes private sync and analysis services. A Cloud Run Job remains available as a fallback for analyses that cannot fit the 30-minute request limit. See [Cloud Run Deployment](cloud-run.md). The desktop uses an AppData-backed SQLite queue and a managed sibling worker; command-line
-development retains in-process execution.
-Progress survives web replica restarts, and both investigation and sync streams have frontend status recovery.
+The desktop uses an AppData-backed SQLite queue and a managed sibling worker;
+command-line development retains in-process execution. See [environment settings](environment.md).
+Both investigation and sync streams have frontend status recovery.
 Workers renew leases, retry temporary failures, and reuse already-published investigation results after a crash.
-Execution is at least once: a crash before a result is saved can repeat a model call. Analytical data, reports, and the small cloud job ledger stay in R2.
+Worker execution is at least once: a crash before a result is saved can repeat a model call.
 Desktop progress and retry state survive restarts in `jobs.sqlite3`; datasets, investigations, exports, and the DuckDB catalog remain separate files in the same per-user data
 directory.
 

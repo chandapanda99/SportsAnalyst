@@ -10,12 +10,12 @@ import math
 import re
 
 from sports_analyst.datasets.cfb_plays import recorded_play
-from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
 from sports_analyst.datasets.cfb_provenance import with_source_provenance
+from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
 
-ADAPTER_VERSION = "3"
+ADAPTER_VERSION = "4"
 
 
 def numeric(value):
@@ -61,7 +61,8 @@ def process_summary(game, raw, *, context_only=False):
         for key in ("boxscore", "format", "gameInfo", "drives", "predictor", "header", "standings"):
             summary.setdefault(key, {})
         processor.json = summary
-        output = processor.run_cleaning_pipeline() if context_only else processor.run_processing_pipeline(fourth_down_probs=False, two_pt_probs=False)
+        output = (processor.run_cleaning_pipeline() if context_only else
+                  processor.run_processing_pipeline(fourth_down_probs=False, two_pt_probs=False))
         if not (processor.ran_cleaning_pipeline if context_only else processor.ran_pipeline):
             raise ValueError("SportsDataverse could not validate/process this game's play sequence")
     return output
@@ -75,8 +76,11 @@ class CFBEnrichment:
         from sports_analyst.datasets.cfb_identity import game_directory, needs_identity_refresh, with_identity_context
 
         version = importlib.metadata.version("sportsdataverse")
+        from sports_analyst.datasets.cfb_model_identity import model_identity
+
+        model = model_identity(version)
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
-        key = f"enriched/{season}/{game}/{version}-{ADAPTER_VERSION}-{digest}.json"
+        key = f"enriched/{season}/{game}/{model.split(':')[1]}-{ADAPTER_VERSION}-{digest}.json"
         with self.source.lease(f"enrich:{season}:{game}", seconds=600):
             cached = self.source._cached(key, ttl)
             if cached is not None and (
@@ -121,6 +125,7 @@ class CFBEnrichment:
                         "game_id": str(game),
                         "season": season,
                         "play_id": identity,
+                        "model_identity": model,
                         "team_id": team,
                         "text": recorded.get("text"),
                         "quarter": (recorded.get("period") or {}).get("number"),
@@ -159,6 +164,7 @@ class CFBEnrichment:
                     "adapter_version": ADAPTER_VERSION,
                     "summary_sha256": digest,
                     "wpa_model": "spread-free",
+                    "model_identity": model,
                     "source_plays": len(by_id),
                     "processed_plays": count,
                     "decision_surfaces": "not evaluated: verified market inputs required",

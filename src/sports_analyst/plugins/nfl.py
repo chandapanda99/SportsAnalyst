@@ -25,6 +25,7 @@ from sports_analyst.models import (
     ToolDefinition,
     stable_id,
 )
+from sports_analyst.plugins.nfl_accounting import classified, phase_accounting
 from sports_analyst.plugins.nfl_personnel import NFLPersonnelMixin
 from sports_analyst.plugins.nfl_player import (
     PLAYER_DEFAULTS,
@@ -197,6 +198,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             ToolDefinition(name="find_representative_plays", description="Return supporting and counterexample plays for a diagnosis."),
             ToolDefinition(name="explain_metric", description="Return a metric definition, formula, qualifying rules, and limitations."),
             ToolDefinition(name="decompose_metric_change", description="Separate metric changes into mix and within-group performance."),
+            ToolDefinition(name="account_offensive_epa_change", description="Reconcile exclusive passing, rushing, sack and turnover contributions to EPA/play change."),
             ToolDefinition(name="adjust_for_opponents", description="Compare raw performance with leave-one-game-out opponent context."),
             ToolDefinition(name="analyze_game_state", description="Analyze performance while leading, tied, and trailing."),
             ToolDefinition(name="compare_play_mix", description="Measure changes in formation, personnel, tempo, and situational shares."),
@@ -683,6 +685,9 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             ),
         ]
         required_datasets = self.required_supplemental_datasets(request)
+        if request.analysis_domain == "offense":
+            calls.append(PlannedToolCall(tool="account_offensive_epa_change", arguments={},
+                purpose="Reconcile exclusive phase contributions against the overall EPA/play change when recorded fields are complete."))
         tool_datasets = {
             "build_player_week_dataset": ROSTER_DATASETS | {"participation"},
             "compare_player_usage": {"player_stats", "snap_counts", "participation"},
@@ -1239,6 +1244,33 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             )
         )
         charts = self._charts(aggregate, baseline, comparison, windows, season_frames, primary_metric, analysis_domain)
+        accounting_gap = None
+        if analysis_domain == "offense" and primary_metric == "epa_per_play":
+            accounting, execution, chart, accounting_gap = phase_accounting(baseline, comparison, selected_manifests)
+            aggregate.extend(accounting)
+            if execution:
+                executions.append(execution)
+                charts.append(chart)
+                from sports_analyst.analysis.calculations import needs_phase_accounting
+
+                if needs_phase_accounting(request.question):
+                    phase_examples = []
+                    phase_id = stable_id("execution", {"accounting": execution.execution_id, "tool": "find_phase_examples"})
+                    for item in accounting:
+                        examples = self._representative_plays(
+                            classified(comparison).filter(pl.col("phase") == item.label), team,
+                            manifests[windows[1].season], phase_id, per_window=1,
+                            baseline_frame=classified(baseline).filter(pl.col("phase") == item.label),
+                            baseline_manifest=manifests[windows[0].season])
+                        phase_examples.extend(play.model_copy(update={"selection_reason":
+                            f"Recorded example of {item.label}; illustrates the category, not its aggregate contribution. "
+                            + (play.selection_reason or "")}) for play in examples)
+                    existing_ids = {play.evidence_id for play in plays}
+                    phase_examples = [play for play in phase_examples if play.evidence_id not in existing_ids]
+                    plays.extend(phase_examples)
+                    executions.append(_execution_record("find_phase_examples", phase_id,
+                        {"accounting_execution_id": execution.execution_id}, phase_examples, selected_manifests,
+                        datetime.now(UTC), perf_counter()))
         caveats = [
             "The analysis is observational; football interpretations are not causal estimates.",
             "EPA, CPOE, and other nflverse model outputs inherit their model assumptions.",
@@ -1250,6 +1282,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 "Supplemental tools were skipped because these datasets were not selected for this run or were not synced for both windows: "
                 + ", ".join(missing_supplemental) + "."
             )
+        if accounting_gap:
+            caveats.append(accounting_gap)
         if season_frames:
             caveats.append(
                 "Season-range trends include every selected season; situational decompositions, representative plays, and contextual "

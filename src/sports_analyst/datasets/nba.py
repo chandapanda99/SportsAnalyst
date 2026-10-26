@@ -15,6 +15,7 @@ from typing import NamedTuple
 import polars as pl
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.datasets.availability import missing_source, unavailable_snapshot
 from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.models import DatasetManifest, stable_id
@@ -135,7 +136,7 @@ class SportsDataverseNBAConnector:
         if unknown:
             raise ValueError(f"unsupported SportsDataverse NBA datasets: {unknown}")
         work = [
-            (season, dataset) for season in sorted(set(seasons)) for dataset in selected if season in NBA_DATASETS[dataset].available_seasons
+            (season, dataset) for season in sorted(set(seasons)) for dataset in selected
         ]
         if not work:
             raise ValueError(
@@ -162,9 +163,16 @@ class SportsDataverseNBAConnector:
             item_started_at = perf_counter()
             if progress_callback:
                 progress_callback("downloading", dataset, season, index, len(work))
+            if season not in NBA_DATASETS[dataset].available_seasons:
+                path = self.data_dir / f"{dataset}_{season}.parquet"
+                return index, unavailable_snapshot(path, season,
+                    lambda path, frame: self.manifest_for(path, season, frame, dataset),
+                    message="This package does not advertise a published snapshot for the selected season.")
             try:
                 raw = loaders[dataset]([season], return_as_pandas=False)
-            except SeasonNotFoundError as error:
+            except Exception as error:
+                if not missing_source(error, provider_errors=(SeasonNotFoundError,)):
+                    raise
                 # SportsDataverse's release catalog can lag its loader
                 # metadata. An unavailable optional season must not discard
                 # core datasets that loaded successfully in the same job.
@@ -174,12 +182,16 @@ class SportsDataverseNBAConnector:
                     season,
                     error,
                 )
-                return index, None
+                path = self.data_dir / f"{dataset}_{season}.parquet"
+                return index, unavailable_snapshot(path, season,
+                    lambda path, frame: self.manifest_for(path, season, frame, dataset))
             if progress_callback:
                 progress_callback("processing", dataset, season, index, len(work))
             frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
             if frame.is_empty():
-                return index, None
+                path = self.data_dir / f"{dataset}_{season}.parquet"
+                return index, unavailable_snapshot(path, season,
+                    lambda path, frame: self.manifest_for(path, season, frame, dataset))
             frame = self.normalize(frame, season, dataset)
             path = self.data_dir / f"{dataset}_{season}.parquet"
             frame.write_parquet(path)
@@ -210,7 +222,8 @@ class SportsDataverseNBAConnector:
                         continue
                     manifests_by_index[index] = manifest
                     if progress_callback:
-                        progress_callback("downloaded", dataset, season, completed, len(work))
+                        progress_callback("skipped" if manifest.coverage.get("source_unavailable") else "downloaded",
+                                          dataset, season, completed, len(work))
                     if manifest_callback:
                         manifest_callback(manifest)
 
