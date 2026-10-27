@@ -1,5 +1,6 @@
 import type {PlayVisualization} from './types';
 import {footballWidth, footballHash} from './surfaceGeometry';
+import {buildSpecialTeamsSchematic, resolveSpecialTeams} from './specialTeamsSchematic';
 
 export type SchematicPlayer = {
   id: string;
@@ -27,14 +28,14 @@ type PlayerRecord = {
 export type SchematicPath = {
   id: string;
   d: string;
-  kind: 'pass' | 'carry' | 'after-catch' | 'return';
+  kind: 'pass' | 'carry' | 'after-catch' | 'return' | 'kick';
   label: string;
   endX: number;
   endY: number;
 };
 
 export type SchematicMarker = {
-  kind: 'catch' | 'turnover' | 'recovery' | 'touchdown';
+  kind: 'catch' | 'turnover' | 'recovery' | 'touchdown' | 'kick-result' | 'placement';
   label: string;
   x: number;
   y: number;
@@ -48,6 +49,7 @@ export type PlaySchematic = {
   paths: SchematicPath[];
   markers: SchematicMarker[];
   lineupMode: 'recorded' | 'hybrid' | 'template';
+  specialTeams?: {kind: string; label: string; result: string; startKnown: boolean; note: string};
   context: {
     formation: string;
     offensivePersonnel: string;
@@ -685,6 +687,8 @@ function buildPaths(visualization: PlayVisualization, startX: number, originY: n
 }
 
 export function buildPlaySchematic(visualization: PlayVisualization = {}, hashFromSideline = NFL_HASH_FROM_SIDELINE): PlaySchematic {
+  const kick = resolveSpecialTeams(visualization);
+  if (kick) return buildSpecialTeamsSchematic(kick, visualization, hashFromSideline);
   const startX = clamp(10 + (100 - (visualization.yardline_100 ?? 50)));
   const centerY = hashY(visualization.starting_hash, hashFromSideline);
   const offenseRecorded = playerRecords(visualization.offense_names, visualization.offense_positions, visualization.offense_identity_status);

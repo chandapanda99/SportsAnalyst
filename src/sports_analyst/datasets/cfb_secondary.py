@@ -31,6 +31,10 @@ def digest(value):
 class SecondarySources:
     def __init__(self, source, settings, *, fetch=public_json, opener=urlopen):
         self.source, self.settings, self.fetch, self.opener = source, settings, fetch, opener
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_opener, budget_public_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            self.fetch, self.opener = budget_public_json, budget_opener
 
     @staticmethod
     def key(provider, dataset, season, partition):

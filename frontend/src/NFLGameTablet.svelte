@@ -3,6 +3,7 @@
   import {api} from './api';
   import type {Evidence} from './types';
   import PlayTablet from './PlayTablet.svelte';
+  import TabletLoading from './TabletLoading.svelte';
   import {NFL_TEAM_NAMES} from './teamPalettes';
   export let play: Evidence;
   export let investigationId: string;
@@ -64,7 +65,7 @@
       <button class="return-cited" type="button" on:click={() => { filter = ''; selectedId = String(play.play_id); }}>Return to cited play</button></div>
     <dl aria-label="Selected NFL play metrics">{#each metrics as metric}<div><dt>{metric.label}</dt><dd>{metricValue(metric.value)}</dd></div>{/each}</dl>
   {/if}
-  {#if loading}<p role="status"><span class="button-spinner" aria-hidden="true"></span> Loading recorded NFL game plays…</p>{/if}
+  {#if loading}<TabletLoading sport="nfl" message="Loading game context…" detail="Loading recorded NFL game plays… The cited play remains available below." compact/>{/if}
   {#if error}<p role="alert">{error} <button type="button" on:click={() => void load()}>Retry game plays</button></p>{/if}
   {#if detail}<p>{detail.coverage}. {detail.message ?? ''}
     {#if detail.retryable}<button type="button" on:click={() => void load()}>Retry game plays</button>{/if}</p>{/if}

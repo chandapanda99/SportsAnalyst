@@ -4,7 +4,7 @@ import App from './App.svelte';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it.each(['analysis', 'school download', 'conference download', 'player selection'])(
+it.each(['analysis', 'school download', 'conference download', 'conference download with school', 'player selection'])(
   'keeps CFB subject selection first and scopes the %s workflow', async (workflow) => {
   const storage = new Map<string, string>();
   vi.stubGlobal('localStorage', {getItem: (key: string) => storage.get(key) ?? null,
@@ -81,18 +81,33 @@ it.each(['analysis', 'school download', 'conference download', 'player selection
     await fireEvent.click(screen.getByRole('button', {name: 'Player'}));
     expect((screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement).disabled).toBe(true);
   }
+  if (workflow === 'conference download with school') {
+    await fireEvent.change(screen.getByLabelText('Browse season'), {target: {value: '2024'}});
+    await fireEvent.change(screen.getByLabelText('Subdivision'), {target: {value: 'fcs'}});
+    await waitFor(() => expect((screen.getByLabelText('Conference') as HTMLSelectElement).disabled).toBe(false));
+  }
   await fireEvent.change(screen.getByLabelText('Conference'), {target: {value: '8'}});
   await screen.findByRole('option', {name: 'Selected School'});
   expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
-  if (workflow === 'conference download') {
+  if (workflow.startsWith('conference download')) {
     expect((dataSetup.querySelector('.download-data-button') as HTMLButtonElement).disabled).toBe(true);
+    if (workflow === 'conference download with school') {
+      await fireEvent.change(screen.getByLabelText('School'), {target: {value: '1'}});
+    }
     await fireEvent.click(screen.getByRole('checkbox', {name: 'Rosters'}));
     await fireEvent.click(screen.getByRole('button', {name: 'Download Entire Conference'}));
     await waitFor(() => expect(downloaded).not.toBeNull());
-    expect(downloaded).toMatchObject({subdivision: 'fbs', conference_id: '8', seasons: [2025, 2024]});
+    expect(downloaded).toMatchObject({subdivision: workflow === 'conference download with school' ? 'fcs' : 'fbs', conference_id: '8', seasons: [2025, 2024]});
     expect(downloaded.team_ids).toBeUndefined();
     expect(downloaded.datasets).not.toContain('rosters');
     expect(downloaded.datasets).toContain('schedules');
+    await waitFor(() => {
+      expect((screen.getByLabelText('Conference') as HTMLSelectElement).value).toBe('8');
+      expect((screen.getByLabelText('Conference') as HTMLSelectElement).disabled).toBe(false);
+      expect((screen.getByLabelText('School') as HTMLSelectElement).value).toBe(workflow === 'conference download with school' ? '1' : '');
+      expect((screen.getByLabelText('Browse season') as HTMLSelectElement).value).toBe(workflow === 'conference download with school' ? '2024' : '2025');
+      expect((screen.getByLabelText('Subdivision') as HTMLSelectElement).value).toBe(workflow === 'conference download with school' ? 'fcs' : 'fbs');
+    });
     return;
   }
   await fireEvent.change(screen.getByLabelText('School'), {target: {value: '1'}});
@@ -102,6 +117,12 @@ it.each(['analysis', 'school download', 'conference download', 'player selection
     await waitFor(() => expect(downloaded).not.toBeNull());
     expect(downloaded).toMatchObject({team_ids: ['1'], seasons: [2025, 2024]});
     expect(downloaded.conference_id).toBeUndefined();
+    await waitFor(() => {
+      expect((screen.getByLabelText('Conference') as HTMLSelectElement).value).toBe('8');
+      expect((screen.getByLabelText('School') as HTMLSelectElement).value).toBe('1');
+      expect((screen.getByLabelText('School') as HTMLSelectElement).disabled).toBe(false);
+      expect((screen.getByLabelText('Browse season') as HTMLSelectElement).value).toBe('2025');
+    });
     return;
   }
   if (workflow === 'player selection') {

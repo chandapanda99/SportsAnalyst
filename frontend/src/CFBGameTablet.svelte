@@ -3,6 +3,7 @@
   import type {Evidence} from './types';
   import {api} from './api';
   import CFBPlayTablet from './CFBPlayTablet.svelte';
+  import TabletLoading from './TabletLoading.svelte';
   export let play: Evidence;
   export let investigationId: string;
   export let onclose: () => void;
@@ -61,7 +62,7 @@
   <h4>Recorded scoring events · game context</h4>
   {#if events.length}<ol>{#each events as event}<li>Q{event.quarter ?? '?'} {event.clock ?? ''} · {event.text}</li>{/each}</ol>
   {:else}<p>No scoring-event section was recorded in this snapshot.</p>{/if}
-  {#if loading}<p role="status">Loading recorded plays and participants…</p>{/if}
+  {#if loading}<TabletLoading sport="cfb" detail="Loading recorded plays and participants…"/>{/if}
   {#if detailError}<p role="alert">{detailError} <button type="button" on:click={() => void loadPlays()}>Retry play detail</button></p>{/if}
   {#if detail}
     <p>{detail.coverage}. {detail.message ?? ''}</p>

@@ -27,10 +27,14 @@ const detail = (id = 'p1') => ({coverage: '2/3 source plays processed', message:
            team_id: '2', end_team_id: '2', yards_to_goal: 20, end_yards_to_goal: 17, participants: []}]});
 
 it('opens recorded plays with involved actors, a college field, and scoped modeled context', async () => {
-  vi.spyOn(api, 'cfbPlays').mockResolvedValue(detail());
+  let resolveDetail!: (value: ReturnType<typeof detail>) => void;
+  vi.spyOn(api, 'cfbPlays').mockImplementation(() => new Promise(resolve => {resolveDetail = resolve;}));
   render(CFBGameTablet, {play: evidence('game1'), investigationId: 'investigation', onclose: vi.fn()});
-  expect(await screen.findByRole('status')).toBeTruthy();
+  expect(await screen.findByText('Rendering Tablet…')).toBeTruthy();
+  await fireEvent.input(screen.getByRole('slider', {name: 'Move preview ball'}), {target: {value: '75'}});
+  resolveDetail(detail());
   await screen.findByRole('option', {name: /Verified passer/});
+  expect(screen.queryByLabelText('Tablet loading')).toBeNull();
   expect(screen.getByRole('region', {name: /schematic for play p1/})).toBeTruthy();
   expect(screen.getByText(/a full lineup is a template/)).toBeTruthy();
   expect(screen.getByRole('heading', {name: /Recorded involved players \(2\)/})).toBeTruthy();
@@ -70,7 +74,6 @@ it('does not invent scrimmage action for penalties, special teams, missing posit
   const view = render(CFBPlayTablet, {event: {...base, id: 'penalty', play_type: 'Penalty', text: 'NO PLAY'}, teams: detail().teams});
   for (const event of [
     {...base, id: 'penalty', play_type: 'Penalty', text: 'NO PLAY'},
-    {...base, id: 'kickoff', play_type: 'Kickoff'},
     {...base, id: 'negated', provider_context_json: JSON.stringify({penalty_negated_play: true})},
     {...base, id: 'missing', yards_to_goal: null}
   ]) {

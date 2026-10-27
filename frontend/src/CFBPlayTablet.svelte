@@ -14,7 +14,9 @@
   export let roster: CFBGameRosterPlayer[] = [];
   let showProjected = false;
   $: home = teams.find(team => team.side === 'home');
-  $: offense = teams.find(team => team.id === event.team_id);
+  $: offense = (adapted?.visualization.special_teams?.kicking_team
+    ? teams.find(team => [team.id, team.abbreviation, team.name].includes(adapted.visualization.special_teams!.kicking_team!)) : undefined)
+    ?? teams.find(team => team.id === event.team_id);
   $: defense = offense ? teams.find(team => team.id !== offense.id) : undefined;
   $: actors = involved(event.participants ?? []);
   $: adapted = adaptCollegePlay(event, teams, roster, showProjected);
@@ -63,9 +65,10 @@
   <header><div><span>PLAY-BY-PLAY SCHEMATIC</span><h3>{event.play_type ?? 'Recorded play'} · Q{event.quarter ?? '?'} {event.clock ?? ''}</h3>
     <p>{event.down != null && event.down > 0 ? `${event.down} & ${event.distance ?? '?'}` : 'Down unavailable'} · {offense?.name ?? 'Possession team unavailable'}
       {#if event.yards_gained != null} · {event.yards_gained} recorded yards{/if}</p></div><div class="tablet-actions"><span>Recorded Play Context</span></div></header>
-  <p class="scope reconstruction-meta">Recorded play context with illustrative football reconstruction; a full lineup is a template, not verified on-field personnel.</p>
-  <p class="scope">Formation: {event.formation ?? 'Not recorded in this play narrative'}
+  <p class="scope reconstruction-meta">{adapted.visualization.special_teams ? 'Recorded special-teams context with illustrative kick and return movement; no full lineup is assumed.' : 'Recorded play context with illustrative football reconstruction; a full lineup is a template, not verified on-field personnel.'}</p>
+  {#if !adapted.visualization.special_teams}<p class="scope">Formation: {event.formation ?? 'Not recorded in this play narrative'}
     {#if event.formation_source} · {event.formation_source}{/if}. A formation label does not establish exact alignment.</p>
+  {/if}
   {#if event.personnel_context}
     <p class="scope">Personnel source: {event.personnel_context.status.replaceAll('_', ' ')}
       {#if event.personnel_context.entries?.length} · {event.personnel_context.entries.length} recorded entries{/if}.
@@ -97,7 +100,7 @@
     homeLogo={home ? teamLogoUrl(home.id, 'cfb', season) ?? home.logo ?? null : null} {homePalette} {offensePalette} {defensePalette}
     endzoneTextColor={textColor(homePalette[0])} hashFromSideline={20}
     fieldLabel="College football field with recorded field position and illustrative involved-player markers"
-    illustrative showPlayers={adapted.reconstruct} showMovement={adapted.movement}
+    illustrative showPlayers={adapted.reconstruct || Boolean(schematic.specialTeams)} showMovement={adapted.movement || Boolean(schematic.specialTeams)}
     movementLabel={adapted.inference.airYardsAvailable ? 'Ball flight · provider-derived distance' : 'Illustrative movement (net yards)'}
     showFieldPosition={event.yards_to_goal != null && event.yards_to_goal >= 0 && event.yards_to_goal <= 100}/>
   <p class="legend">{adapted.note} College hashes are 20 yards from each sideline. Attack direction is normalized left-to-right.</p>

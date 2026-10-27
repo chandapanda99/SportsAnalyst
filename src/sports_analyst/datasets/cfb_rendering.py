@@ -4,12 +4,15 @@ import json
 
 from sports_analyst.datasets.cfb_plays import finite
 
-RENDER_VERSION = 2
+RENDER_VERSION = 3
 # Exclude injected betting inputs and model decision surfaces.
 PROVIDER_FIELDS = (
     "air_yards", "yards_after_catch", "air_yardsToEndzone", "pass_direction", "rush_direction", "pass_depth",
     "qb_hurry", "sack", "completion", "int", "touchdown", "fumble_vec", "fumble_lost", "fumble_recovered",
     "yds_int_return", "yds_fumble_return", "interception_player_name", "fumble_recovered_player_name",
+    "yds_punted", "yds_punt_return", "yds_fg", "yds_kickoff", "yds_kickoff_return",
+    "punt_tb", "punt_oob", "punt_fair_catch", "punt_downed", "punt_blocked",
+    "kickoff_tb", "kickoff_oob", "kickoff_fair_catch", "kickoff_downed", "kickoff_onside",
     "penalty_in_text", "penalty_enforcement", "penalty_negated_play", "penalty_yards_net", "penalty_side",
     "first_down_earned", "first_down_penalty", "goal_to_go", "kneel_down", "new_down", "new_distance",
     "EP_start", "EP_end", "EPA", "wpa_naive", "wp_before_naive", "wp_after_naive",

@@ -31,3 +31,5 @@ node_modules/
 /ngrok.local.yml
 /ngrok.local.yaml
 /docs/audits/
+/docs/research-source-validation.md
+/scripts/validate_research_sources.py

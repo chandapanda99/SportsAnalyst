@@ -343,6 +343,12 @@
     .football-tablet .event-marker.recovery circle { fill: #ffb35c }
     .football-tablet .event-marker.touchdown circle { fill: var(--mint) }
     .football-tablet .event-marker.catch circle { fill: #ecf3f6 }
+    .football-tablet .event-marker.kick-result circle { fill: #ffd36d }
+    .football-tablet .event-marker.failed-kick circle { fill: #ff754f }
+    .football-tablet .event-marker.placement circle { fill: #91dbe4 }
+    .football-tablet .special-teams-summary {padding: 12px 16px; background: #102638; border-top: 1px solid #315063;}
+    .football-tablet .special-teams-summary > div {display: flex; gap: 8px 24px; flex-wrap: wrap; margin-top: 8px;}
+    .football-tablet .special-teams-summary p {font-size: 12px; color: var(--text-muted); margin: 8px 0 0;}
 
     .football-tablet .event-tooltip {
         opacity: 0;

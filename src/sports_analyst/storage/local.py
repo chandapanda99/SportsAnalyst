@@ -49,7 +49,15 @@ class LocalStore:
         # same configuration. API reads can overlap a completed investigation
         # write, so use one access mode and enforce read-only behavior in SQL.
         del read_only
-        return duckdb.connect(str(self.settings.database_path))
+        for attempt in range(5):
+            try:
+                return duckdb.connect(str(self.settings.database_path))
+            except duckdb.IOException as error:
+                message = str(error).lower()
+                transient = "being used by another process" in message or "could not set lock on file" in message
+                if not transient or attempt == 4:
+                    raise
+                time.sleep(0.05 * (2 ** attempt))
 
     def _initialize(self) -> None:
         with self.connect() as db:

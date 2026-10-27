@@ -3,16 +3,19 @@
   import {api} from './api';
   import type {TeamOption} from './types';
   export let initialSeason: number;
+  export let initialSubdivision = 'fbs';
+  export let initialConference = '';
+  export let initialTeam = '';
   export let disabled = false;
   export let onchange: (selection: {season: number; seasons: number[]; teams: TeamOption[]; team: string; subdivision: string; conference: string; conferenceLabel: string; loading: boolean; error: string}) => void;
   let seasons: number[] = [];
   let season = initialSeason;
-  let subdivision = 'fbs';
+  let subdivision = initialSubdivision;
   let subdivisions: TeamOption[] = [];
   let conferences: TeamOption[] = [];
-  let conference = '';
+  let conference = initialConference;
   let teams: TeamOption[] = [];
-  let team = '';
+  let team = initialTeam;
   let loading = true;
   let error = '';
   let cached = false;
@@ -37,13 +40,18 @@
       const catalog = await api.cfbCatalog(season, subdivision, conference || undefined);
       if (current !== version) return;
       conferences = catalog.conferences; teams = catalog.teams; cached = catalog.cached;
+      if (conference && !conferences.some(option => option.value === conference)) {
+        conference = ''; teams = []; team = '';
+      } else if (team && !teams.some(option => option.value === team)) {
+        team = '';
+      }
     } catch (problem) {
       if (current === version) error = String(problem);
     } finally {
       if (current === version) { loading = false; notify(); }
     }
   }
-  onMount(() => { void load(true); });
+  onMount(() => { void load(false); });
   onDestroy(() => { version += 1; });
 </script>
 

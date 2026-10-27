@@ -565,11 +565,15 @@ class AnalystApplication:
             from sports_analyst.analysis.scoped_data import ScopedData
 
             self.events.emit(identifier, "analyzing", "Checking the question against measured evidence", 0.57)
-            scoped_data = ScopedData(self, request, partition)
+            scoped_data = ScopedData(self, request, partition, identifier)
+            scoped_data.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.57)
             complete_calculations(self.settings, request.question, result, {
                 "sport": request.sport, "subject": request.subject.model_dump(mode="json") if request.subject else None,
                 "domain": request.analysis_domain, "scope": request.scope.model_dump(mode="json"),
             }, data_access=scoped_data)
+            from sports_analyst.analysis.research.presentation import add_research_charts
+
+            add_research_charts(result)
             queried_ids = {key for item in result.aggregate_evidence for key in item.dataset_manifest_ids}
             if request.sport == "cfb":
                 for index, evidence in enumerate(result.play_evidence):
@@ -637,6 +641,10 @@ class AnalystApplication:
             analytical_context["question_coverage_reviews"] = [
                 {"plan": item.parameters.get("plan"), "review": item.parameters.get("question_review")}
                 for item in result.executions if item.tool == "complete_calculations"]
+            analytical_context["calculation_stage_status"] = (
+                "failed" if any(item.tool == "complete_calculations_failed" for item in result.executions) else "complete_or_not_requested")
+            analytical_context["calculation_failure_types"] = [item.parameters["error_type"] for item in result.executions
+                                                               if item.tool == "complete_calculations_failed"]
             draft, model_id, fallback = self.agent.synthesize(
                 request.question,
                 request.subject.id if request.subject else request.scope.team,
@@ -653,6 +661,11 @@ class AnalystApplication:
                 competition=request.scope.competition,
                 analytical_context=analytical_context,
             )
+            if analytical_context["calculation_stage_status"] == "failed":
+                draft = draft.model_copy(update={"summary": (
+                    "Partial analysis: the additional calculation stage failed. "
+                    "The findings below use existing evidence; this failure does not establish that source data are missing.\n\n"
+                    + draft.summary)[:2500]})
             self.telemetry.add_outputs(
                 synthesis_span,
                 {"claim_count": len(draft.claims), "model_id": model_id or "deterministic", "fallback_used": fallback},
@@ -793,13 +806,42 @@ class AnalystApplication:
                 },
             )
         self.events.emit(identifier, "synthesizing", "Answering the follow-up from validated evidence", 0.75)
+        from types import SimpleNamespace
+
+        from sports_analyst.analysis.calculations import complete_calculations
+        from sports_analyst.analysis.research.presentation import add_research_charts
+        from sports_analyst.analysis.scoped_data import ScopedData
+
+        request = AnalysisRequest(sport=root.run.sport, subject=root.run.subject, question=question,
+            scope=root.run.scope, analysis_domain=root.run.analysis_domain, metrics=root.run.metrics,
+            splits=root.run.splits, parent_investigation_id=root.run.investigation_id)
+        partition = None
+        if request.sport == "cfb" and request.subject:
+            partition = f"{request.subject.type}:{request.subject.id}"
+        elif request.sport == "soccer" and request.subject and request.subject.type == "team":
+            partition = f"team:{request.subject.id}"
+        scoped = ScopedData(self, request, partition, identifier)
+        scoped.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.6)
+        work = SimpleNamespace(aggregate_evidence=list(root.aggregate_evidence), executions=[],
+                               caveats=[], charts=list(root.charts))
+        complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped)
+        add_research_charts(work)
+        source_manifests = {m.manifest_id: m for m in root.dataset_manifests}
+        used = {key for e in work.aggregate_evidence for key in e.dataset_manifest_ids}
+        source_manifests.update({key: m for key, m in scoped.manifests.items() if key in used})
+        context = evidence_brief(work.aggregate_evidence, [], list(source_manifests.values()),
+                                 {"sport": request.sport, "comparison": request.scope.model_dump(mode="json")})
+        context["question_coverage_reviews"] = [{"plan": e.parameters.get("plan"), "review": e.parameters.get("question_review")}
+                                                for e in work.executions if e.tool == "complete_calculations"]
+        failed = any(e.tool == "complete_calculations_failed" for e in work.executions)
+        context["calculation_stage_status"] = "failed" if failed else "complete_or_not_requested"
         with self.telemetry.span("sports-analyst.synthesize-follow-up", metadata=trace_metadata, parent=root_span) as synthesis_span:
             draft, model_id, fallback = self.agent.synthesize(
                 question,
                 root.run.subject.id if root.run.subject else root.run.scope.team,
                 root.run.scope.baseline,
                 root.run.scope.comparison,
-                root.aggregate_evidence,
+                work.aggregate_evidence,
                 root.play_evidence,
                 root.run.scope.included_seasons if root.run.scope.comparison_design == "full_seasons" else None,
                 conversation_context,
@@ -808,7 +850,10 @@ class AnalystApplication:
                 progress_callback=lambda message, progress: self.events.emit(identifier, "synthesizing", message, progress),
                 trace_metadata=trace_metadata,
                 competition=root.run.scope.competition,
+                analytical_context=context,
             )
+            if failed:
+                draft = draft.model_copy(update={"summary": ("Partial analysis: additional research failed; independently validated evidence remains usable.\n\n" + draft.summary)[:2500]})
             self.telemetry.add_outputs(
                 synthesis_span,
                 {"claim_count": len(draft.claims), "model_id": model_id or "deterministic", "fallback_used": fallback},
@@ -851,14 +896,15 @@ class AnalystApplication:
                 plan=plan,
                 summary=draft.summary,
                 claims=draft.claims,
-                aggregate_evidence=root.aggregate_evidence,
+                aggregate_evidence=work.aggregate_evidence,
                 play_evidence=root.play_evidence,
-                charts=root.charts,
-                executions=root.executions,
-                dataset_manifests=root.dataset_manifests,
+                charts=work.charts,
+                executions=[*root.executions, *work.executions],
+                dataset_manifests=list(source_manifests.values()),
                 methodological_caveats=[
                     *root.methodological_caveats,
-                    "This follow-up reused the parent investigation's immutable evidence; no deterministic tools were rerun.",
+                    *work.caveats,
+                    "This follow-up reused parent evidence; additional host-validated research was permitted for unanswered objectives.",
                 ],
                 model_id=model_id,
                 fallback_used=fallback,

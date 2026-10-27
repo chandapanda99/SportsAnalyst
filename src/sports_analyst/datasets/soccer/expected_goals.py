@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 from typing import Any, Callable
 
 import polars as pl
 
+from sports_analyst.analysis.research.state import ContextPool as ThreadPoolExecutor
 from sports_analyst.datasets.availability import missing_source
 from sports_analyst.datasets.optional import load_optional_module
 
@@ -89,6 +90,10 @@ class ExpectedGoalsSource:
 
     @staticmethod
     def _team_statistics(competition: str, game_id: str, team_id: str) -> dict:
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            return budget_json(f"{CORE_ROOT}/{competition}/events/{game_id}/competitions/{game_id}/competitors/{team_id}/statistics/0")
         espn_soccer_game_team_statistics = load_optional_module("sportsdataverse.soccer", "Soccer team-statistics sync").espn_soccer_game_team_statistics
         SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer team-statistics sync").SportsDataverseError
 
@@ -104,6 +109,10 @@ class ExpectedGoalsSource:
 
     @staticmethod
     def _player_statistics(competition: str, game_id: str, team_id: str, athlete_id: str) -> dict:
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            return budget_json(f"{CORE_ROOT}/{competition}/events/{game_id}/competitions/{game_id}/competitors/{team_id}/roster/{athlete_id}/statistics/0")
         download = load_optional_module("sportsdataverse.dl_utils", "Soccer player-statistics sync").download
         SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer player-statistics sync").SportsDataverseError
 

@@ -61,6 +61,10 @@ class CFBSource:
 
     @staticmethod
     def _request(url: str) -> dict:
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            return budget_json(checked_url(url))
         with optional_dependencies("College football data"):
             try:
                 download = load_optional_module("sportsdataverse.dl_utils", "College football data").download

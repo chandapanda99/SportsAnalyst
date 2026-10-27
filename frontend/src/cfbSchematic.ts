@@ -1,5 +1,6 @@
 import type {CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, PlayVisualization} from './types';
 import {buildPlaySchematic} from './playSchematic';
+import {resolveSpecialTeams} from './specialTeamsSchematic';
 
 const normalizeRole = (role: string) => role.trim().toLowerCase().replace(/[ -]+/g, '_');
 const rolePositions: Record<string, string> = {passer: 'QB', receiver: 'WR', rusher: 'RB',
@@ -106,7 +107,7 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
     yards_to_go: event.distance ?? undefined, down: event.down ?? undefined,
     quarter: event.quarter ?? undefined, clock: event.clock ?? undefined,
     formation: event.formation ?? undefined, shotgun: /shotgun/i.test(event.formation ?? ''),
-    play_type: isPass ? 'pass' : isRush ? 'run' : undefined,
+    play_type: specialTeams ? event.play_type ?? undefined : isPass ? 'pass' : isRush ? 'run' : undefined,
     yards_gained: gain, passer: actors.passer, receiver: actors.receiver, rusher: actors.rusher,
     air_yards: event.air_yards ?? undefined, yards_after_catch: event.yards_after_catch ?? undefined,
     suppress_inferred_yac: event.yards_after_catch == null,
@@ -125,6 +126,36 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
     possession_team: offense?.abbreviation ?? offense?.name ?? 'Offense',
     defensive_team: defense?.abbreviation ?? defense?.name ?? 'Defense',
   };
+  const kick = resolveSpecialTeams(visualization, text);
+  if (kick) {
+    const providerNumber = (field: string) => typeof provider[field] === 'number' && Number.isFinite(provider[field]) ? provider[field] as number : undefined;
+    const kickDistance = providerNumber(kick.kind === 'punt' ? 'yds_punted' : kick.kind === 'kickoff' ? 'yds_kickoff' : 'yds_fg');
+    const returnDistance = providerNumber(kick.kind === 'punt' ? 'yds_punt_return' : 'yds_kickoff_return');
+    const kicker = participants.find(actor => /^(kicker|punter|kickoff_kicker)$/.test(normalizeRole(actor.role)));
+    const returner = participants.find(actor => /^(returner|kick_returner|kickoff_returner|punt_returner)$/.test(normalizeRole(actor.role)));
+    const kicking = teams.find(team => team.id === kicker?.team_id)
+      ?? (returner?.team_id ? teams.find(team => team.id !== returner.team_id) : undefined) ?? offense;
+    const receiving = kicking ? teams.find(team => team.id !== kicking.id) : defense;
+    const end = event.end_yards_to_goal != null && event.end_team_id && kicking
+      ? event.end_team_id === kicking.id ? event.end_yards_to_goal : event.end_team_id === receiving?.id ? 100 - event.end_yards_to_goal : undefined
+      : undefined;
+    const prefix = kick.kind === 'punt' ? 'punt' : 'kickoff';
+    visualization.special_teams = {...kick, no_play: noPlay,
+      kick_distance: kickDistance != null && (kickDistance > 0 || !['field_goal', 'extra_point'].includes(kick.kind)) ? kickDistance : kick.kick_distance,
+      return_yards: returnDistance ?? kick.return_yards,
+      blocked: kick.blocked || provider.punt_blocked === true,
+      touchback: kick.touchback || provider[`${prefix}_tb`] === true,
+      fair_catch: kick.fair_catch || provider[`${prefix}_fair_catch`] === true,
+      downed: kick.downed || provider[`${prefix}_downed`] === true,
+      out_of_bounds: kick.out_of_bounds || provider[`${prefix}_oob`] === true,
+      onside: kick.onside || provider.kickoff_onside === true,
+      kicking_team: kicking?.abbreviation ?? kicking?.name, receiving_team: receiving?.abbreviation ?? receiving?.name,
+      kicker: kicker?.name, returner: returner?.name,
+      start_yards_to_goal: validPosition && kicking ? kicking.id === event.team_id ? event.yards_to_goal : 100 - event.yards_to_goal! : undefined,
+      end_yards_to_goal: !/penalty/i.test(text) ? end ?? kick.end_yards_to_goal : undefined,
+      return_touchdown: event.touchdown && Boolean(returner), source: kickDistance != null || returnDistance != null
+        ? 'Recorded ESPN actors and SportsDataverse text-derived kick/return distances' : 'Recorded ESPN play context and explicitly stated narrative distances'};
+  }
   const airYardsAvailable = event.air_yards != null && Number.isFinite(event.air_yards);
   const yardsAfterCatchAvailable = event.yards_after_catch != null && Number.isFinite(event.yards_after_catch);
   const returnYards = typeof provider.yds_int_return === 'number' && provider.yds_int_return >= 0 ? provider.yds_int_return : undefined;

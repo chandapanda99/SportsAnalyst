@@ -1,8 +1,8 @@
 """Game-scoped identity resolution; roster membership never implies snap participation."""
 
-from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
+from sports_analyst.analysis.research.state import ContextPool as ThreadPoolExecutor
 from sports_analyst.datasets.cfb_plays import IDENTITY_VERSION, source_id, teams_and_athletes
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import OptionalDependencyError

@@ -25,6 +25,32 @@ from sports_analyst.plugins.nfl_shared import (
 from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 
+def special_teams_context(row):
+    kind = next((kind for kind, field in (("field_goal", "field_goal_attempt"), ("extra_point", "extra_point_attempt"),
+                                         ("punt", "punt_attempt"), ("kickoff", "kickoff_attempt"))
+                 if _row_boolean(row, field) is True or row.get("play_type") == kind), None)
+    if kind is None:
+        return None
+    yardline = _row_number(row, "yardline_100")
+    kickoff = kind == "kickoff"
+    # nflverse kickoff possession/yardline belongs to the RECEIVING team.
+    return {"kind": kind, "kicking_team": _row_text(row, "defteam" if kickoff else "posteam"),
+            "receiving_team": _row_text(row, "posteam" if kickoff else "defteam"),
+            "kicker": _row_text(row, "punter_player_name" if kind == "punt" else "kicker_player_name"),
+            "returner": _row_text(row, "punt_returner_player_name" if kind == "punt" else "kickoff_returner_player_name"),
+            "start_yards_to_goal": (100 - yardline if kickoff else yardline) if yardline is not None else None,
+            "kick_distance": _row_number(row, "kick_distance"), "return_yards": _row_number(row, "return_yards"),
+            "result": _row_text(row, "field_goal_result" if kind == "field_goal" else "extra_point_result") if kind in {"field_goal", "extra_point"} else None,
+            "blocked": _row_boolean(row, "punt_blocked") if kind == "punt" else _row_text(row, "field_goal_result") == "blocked" if kind == "field_goal" else None,
+            "touchback": _row_boolean(row, "touchback"),
+            "fair_catch": _row_boolean(row, "kickoff_fair_catch" if kickoff else "punt_fair_catch"),
+            "out_of_bounds": _row_boolean(row, "kickoff_out_of_bounds" if kickoff else "punt_out_of_bounds"),
+            "downed": _row_boolean(row, "kickoff_downed" if kickoff else "punt_downed"),
+            "own_recovery": _row_boolean(row, "own_kickoff_recovery") if kickoff else None,
+            "return_touchdown": _row_boolean(row, "return_touchdown"),
+            "no_play": row.get("play_type") == "no_play", "source": "Recorded nflverse play-by-play fields"}
+
+
 class NFLPresentationMixin:
     """Provide evidence selection and report-chart construction methods."""
 
@@ -118,6 +144,7 @@ class NFLPresentationMixin:
                 score_differential=_row_number(row, "score_differential"),
                 goal_to_go=_row_boolean(row, "goal_to_go"),
                 play_type=_row_text(row, "play_type"),
+                special_teams=special_teams_context(row),
                 formation=_row_text(row, "offense_formation"),
                 personnel=_row_text(row, "offense_personnel"),
                 shotgun=_row_boolean(row, "shotgun"),

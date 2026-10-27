@@ -1,5 +1,8 @@
 # Interpreter-first calculations
 
+For automatic acquisition, validated multi-table joins, temporal/cross-provider
+relationships and persisted research budgets, see [research-workflow.md](research-workflow.md).
+
 NFL overall-offense EPA runs now include a deterministic exclusive accounting
 breakdown before narrative generation. Turnovers (interceptions or lost fumbles)
 take precedence, then sacks, pass-coded plays, run-coded plays, and other plays.
@@ -26,18 +29,22 @@ Schema discovery exposes installed dataset IDs, columns, coverage and attributio
 in the requested seasons/competition and permitted partitions, without paths.
 Full-season investigations can query intermediate years using `season:YYYY`;
 other designs retain only their explicitly selected windows.
+
 The aggregation tool accepts recorded columns, up to three grouping fields, eight
 measures (count/sum/mean/min/max/distinct non-null count), and eight literal filters.
-No SQL, file paths, arbitrary Python, downloads, mutations or new permissions are
-available. Required data that is not installed is reported as a gap, not fetched
-automatically by this planner. Existing metric preparation continues unchanged.
+No SQL, file paths or arbitrary Python are available. Approved missing packages
+can be queued for budgeted worker acquisition, including NFL/NBA bulk assets.
+Two acquisition/replanning rounds resume outside the Interpreter evaluation;
+historical reuse, current freshness and source availability remain explicit.
 
 The host enforces subject attribution and window/season compatibility. Unknown
 attribution, named segments without verified attribution, and non-NFL season-type
 restrictions that cannot be verified are rejected, not silently broadened. This
-generic tool does not yet perform schedule joins, cross-table joins or resolve
-new model compatibility definitions. Existing sport-specific metrics remain the
-preferred option for those cases. Raw scoped rows are NOT automatically the same
+legacy tool's strict schedule joins compile to the new validated executor.
+Additional tools support contract-controlled enrichment, existence filters, child
+preaggregation, verified crosswalks and native temporal membership. Unsupported
+keys/orderings and new model compatibility definitions remain explicit limitations.
+Existing sport-specific metrics remain preferred. Raw scoped rows are NOT automatically the same
 sample as a predefined metric; the planner must state qualifying filters.
 
 Each query reads only needed columns with a lazy subject/time predicate and
@@ -49,6 +56,17 @@ reports. Derived arithmetic may use measured results by their evidence IDs.
 All objective reviews are included in the report model's analytical context;
 unresolved objectives are also stored as report caveats. Rejected query arguments
 are returned as errors so the model can revise them within the graph budget.
+Invalid filters and measures identify the offending field/operator and supported
+alternatives; the host already applies the subject and window restrictions.
+
+Both planner and report writer receive a complete metric-family index. Evidence
+retrieval supports filtering and pagination, so later records are not hidden by
+the initial payload limit. The planner cannot finalize unresolved objectives until
+it has inspected every existing metric family. The writer receives compact
+accounting contributions directly and must cite evidence for covered objectives;
+one repair attempt precedes deterministic fallback if citation coverage fails.
+These checks improve discovery and citation coverage, not semantic proof that the
+model has interpreted every measurement correctly.
 
 The shared optional calculation stage uses MODEL (never CHAT_MODEL), LangChain's
 agent loop, and CodeInterpreterMiddleware. It can inspect bounded existing evidence
@@ -59,12 +77,16 @@ meaning, or causation. These remain explicit caveats for the narrative reviewer.
 No raw SQL, paths, network, package installation or dynamic subagents are exposed.
 
 Limits: 32 MiB JavaScript heap, 3-second eval timeout, 16 bridged calls per eval,
-20 graph recursion steps, eight accepted derived arithmetic records, and 24 registration
+32 graph recursion steps per planning round, eight accepted derived arithmetic records, and 24 registration
 attempts. These are not a global LLM wall-time or billing cap. Code and tool
 receipts from a completed stage are saved in ToolExecutionRecord before the
-citation ledger is built. Partial calculations from a failed stage are discarded.
-Missing model configuration skips composition; interpreter failures add a report
-caveat without blocking deterministic analysis. CALCULATION_INTERPRETER_ENABLED=false
+citation ledger is built. Independently validated measurements survive later stage failures.
+Failures save a separate failed-stage audit containing the error type, plan,
+review, tool receipts and retained evidence IDs. Raw provider exception text is not
+persisted in this audit. Existing evidence remains usable, but the report summary
+and caveats explicitly identify partial analysis due to execution failure, rather
+than claiming the source data are absent. Missing model configuration skips
+composition. CALCULATION_INTERPRETER_ENABLED=false
 disables optional composition, not tested NFL accounting.
 
 ## Installation and verification

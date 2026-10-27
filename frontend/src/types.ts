@@ -1,3 +1,12 @@
+export type SpecialTeamsContext = {
+  kind: 'field_goal' | 'extra_point' | 'punt' | 'kickoff';
+  kicking_team?: string | null; receiving_team?: string | null; kicker?: string | null; returner?: string | null;
+  start_yards_to_goal?: number | null; landing_yards_to_goal?: number | null; end_yards_to_goal?: number | null;
+  kick_distance?: number | null; return_yards?: number | null; result?: string | null;
+  blocked?: boolean | null; touchback?: boolean | null; fair_catch?: boolean | null; out_of_bounds?: boolean | null;
+  downed?: boolean | null; onside?: boolean | null; own_recovery?: boolean | null; return_touchdown?: boolean | null;
+  no_play?: boolean | null; source?: string | null;
+};
 export type CFBParticipant = {
   athlete_id: string; name?: string | null; position?: string | null; role: string; team_id?: string | null;
   identity_source?: string; team_source?: string | null;
@@ -112,6 +121,7 @@ export type PlayVisualization = {
   week?: number; quarter?: number; clock?: string; down?: number; yards_to_go?: number; yardline_100?: number;
   possession_team?: string; defensive_team?: string; possession_score?: number; defensive_score?: number;
   possession_timeouts?: number; defensive_timeouts?: number; score_differential?: number; goal_to_go?: boolean; play_type?: string;
+  special_teams?: SpecialTeamsContext | null;
   formation?: string; personnel?: string; defensive_personnel?: string; shotgun?: boolean; no_huddle?: boolean; pass_length?: string;
   pass_location?: string; run_location?: string; run_gap?: string; air_yards?: number; yards_after_catch?: number;
   suppress_inferred_yac?: boolean;

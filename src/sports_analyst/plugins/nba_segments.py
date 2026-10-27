@@ -4,6 +4,8 @@ from datetime import date, timedelta
 
 import polars as pl
 
+from sports_analyst.datasets.nba import normalize_season_phase
+
 NBA_SEGMENTS = [
     {"value": "full_season", "label": "Full season", "description": "All regular-season and postseason games."},
     {"value": "regular_season", "label": "Regular season", "description": "Completed regular-season games."},
@@ -46,7 +48,7 @@ ROUND_PATTERNS = {
 def _prepared_schedule(schedule: pl.DataFrame) -> pl.DataFrame:
     if schedule.is_empty() or "game_id" not in schedule.columns:
         return pl.DataFrame()
-    frame = schedule
+    frame = normalize_season_phase(schedule)
     if "game_date" not in frame.columns:
         if "game_date_time" not in frame.columns:
             return pl.DataFrame()

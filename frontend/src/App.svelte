@@ -6,13 +6,10 @@
   import SupportingEvidence from './SupportingEvidence.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
   import SoccerLoadingAnimation from './SoccerLoadingAnimation.svelte';
-  import BasketballPlayTablet from './BasketballPlayTablet.svelte';
-  import SoccerMatchTablet from './SoccerMatchTablet.svelte';
+  import TabletPanel from './TabletPanel.svelte';
   import CFBDiscovery from './CFBDiscovery.svelte';
-  import CFBGameTablet from './CFBGameTablet.svelte';
   import Icon from './Icon.svelte';
   import CompletionToast from './CompletionToast.svelte';
-  import NFLGameTablet from './NFLGameTablet.svelte';
   import TeamBadge from './TeamBadge.svelte';
   import PlayerPortrait from './PlayerPortrait.svelte';
   import {teamLogoUrl} from './teamPalettes';
@@ -2407,7 +2404,8 @@
                   <h3 id="scope-heading" tabindex="-1">{activeSport === 'cfb' ? 'Choose Your Subject' : 'Who do you want to understand?'}</h3></div>
                 <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
               {#if activeSport === 'cfb'}
-                <CFBDiscovery initialSeason={comparison} disabled={busy} onchange={cfbSelectionChanged}/>
+                <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
+                              initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
                 {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
               {/if}
               {#if activeSport === 'soccer'}
@@ -3225,15 +3223,7 @@
           </div>
         {/each}
         {#if selectedPlay}
-          {#if selectedPlay.visualization?.sport === 'cfb'}
-            <CFBGameTablet play={selectedPlay} investigationId={active.run.investigation_id} onclose={() => selectedPlay = null}/>
-          {:else if selectedPlay.visualization?.sport === 'soccer'}
-            <SoccerMatchTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
-          {:else if selectedPlay.visualization?.sport === 'nba'}
-            <BasketballPlayTablet play={selectedPlay} onclose={() => selectedPlay = null}/>
-          {:else}
-            <NFLGameTablet play={selectedPlay} investigationId={active.run.investigation_id} onclose={() => selectedPlay = null}/>
-          {/if}
+          <TabletPanel play={selectedPlay} investigationId={active.run.investigation_id} onclose={() => selectedPlay = null}/>
         {/if}
       </section>
       <details class="methodology">

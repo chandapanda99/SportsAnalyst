@@ -561,7 +561,8 @@ class EvidenceBoundAgent:
             progress_handler = SynthesisProgressHandler()
 
             @tool
-            def inspect_aggregate_evidence(metric: str | None = None, citation_keys: list[str] | None = None, limit: int = 60) -> str:
+            def inspect_aggregate_evidence(metric: str | None = None, citation_keys: list[str] | None = None,
+                                           limit: int = 60, offset: int = 0) -> str:
                 """Return validated aggregate findings, optionally filtered by metric or exact citation keys."""
                 requested = set(citation_keys or [])
                 filtered = [
@@ -570,12 +571,20 @@ class EvidenceBoundAgent:
                     if (not metric or metric.lower() in str(item.get("metric", "")).lower())
                     and (not requested or item["citation_key"] in requested)
                 ]
-                return json.dumps(filtered[: max(1, min(limit, 100))], indent=2, default=str)
+                return json.dumps(filtered[max(0, offset):max(0, offset) + max(1, min(limit, 100))], indent=2, default=str)
 
             @tool
             def inspect_analysis_context() -> str:
                 """Read metric definitions, selected scope and recorded source coverage before interpreting evidence."""
-                return json.dumps(analytical_context or {"coverage": "unknown", "metric_definitions": []}, default=str)
+                from sports_analyst.analysis.discovery import metric_index
+
+                return json.dumps({**(analytical_context or {"coverage": "unknown", "metric_definitions": []}),
+                    "metric_index": metric_index(aggregate_payload), "aggregate_count": len(aggregate_payload),
+                    "accounting_findings": [{key: row.get(key) for key in (
+                        "metric", "label", "value", "baseline_value", "comparison_value", "unit", "citation_key")}
+                        for row in aggregate_payload if row.get("context", {}).get("role") == "accounting_contribution"],
+                    "retrieval": "Filter inspect_aggregate_evidence by metric or page with offset; default page is not all evidence."},
+                    default=str)
 
             @tool
             def inspect_representative_plays(supporting: bool | None = None, citation_keys: list[str] | None = None, limit: int = 12) -> str:
@@ -616,7 +625,9 @@ class EvidenceBoundAgent:
                 + "\n\n"
                 + analysis_guidance(sport, analysis_domain)
                 + "\nRead inspect_analysis_context before interpreting metrics. Context metadata is not a citation; cite actual evidence "
-                "records."
+                "records. Read the complete metric_index: missing from a default page does not mean missing evidence. "
+                "Existing accounting_findings override any planner assertion that those contributions were not calculated. "
+                "If calculation_stage_status is failed, state the answer is partial and distinguish execution failure from unavailable data."
             )
             if sport == "soccer" and competition:
                 common += f" Competition code: {competition}. Use match and season terminology, not plays or weeks."
@@ -764,6 +775,18 @@ class EvidenceBoundAgent:
                 )
             report_progress("Validating every finding and citation", 0.94)
             resolved_draft = _resolve_citation_draft(aliased_draft, ledger)
+            expected = [set(ids) for entry in (analytical_context or {}).get("question_coverage_reviews", [])
+                        for ids in (entry.get("review") or {}).get("evidence_by_objective", {}).values() if ids]
+            cited = {key for claim in resolved_draft.claims for key in claim.evidence_ids}
+            if any(not keys.intersection(cited) for keys in expected):
+                repaired = invoke("The draft omitted evidence supporting one or more answered question objectives. "
+                    "Read inspect_analysis_context, metric_index and the question coverage review. Retrieve those metrics and "
+                    "answer the objectives using their evidence; do not claim the measurements are absent. "
+                    f"Question: {json.dumps(question)}. Use these exact citation keys: {allowed_citations}.")
+                resolved_draft = _resolve_citation_draft(repaired, ledger)
+                cited = {key for claim in resolved_draft.claims for key in claim.evidence_ids}
+                if any(not keys.intersection(cited) for keys in expected):
+                    raise ValueError("Report still omits measured evidence required by the question review")
             if conversational:
                 report_progress("Polishing the analyst's response", 0.955)
                 try:

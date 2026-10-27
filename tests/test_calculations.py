@@ -47,7 +47,9 @@ def test_interpreter_composes_scoped_evidence_and_registers_only_checked_results
     baseline, comparison = accounting_sample()
     evidence, _, _, _ = phase_accounting(baseline, comparison, [manifest(2024, baseline.columns)])
     first = evidence[0]
-    code = '''const data = JSON.parse(await tools.inspectCalculationInputs({metric: "epa_phase_contribution"}));
+    code = '''const index = JSON.parse(await tools.inspectCalculationInputs({}));
+if (!index.metric_index.some(x => x.metric === "epa_phase_contribution")) throw Error("Hidden accounting family");
+const data = JSON.parse(await tools.inspectCalculationInputs({metric: "epa_phase_contribution"}));
 const e = data.evidence[0];
 await tools.recordAnalysisPlan({objectives:["Compare contributions"],existing_evidence_ids:[e.evidence_id],
 required_data:[],calculations:["Double the contribution"],limitations:[]});
@@ -70,7 +72,8 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":[e.evidence_id,regi
                              AIMessage(content="Calculation complete")])
     monkeypatch.setattr("sports_analyst.providers.get_provider", lambda name: SimpleNamespace(
         build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-calculation-model")))
-    result = SimpleNamespace(aggregate_evidence=list(evidence), executions=[], caveats=[])
+    noise = [first.model_copy(update={"evidence_id": f"noise-{i}", "metric": "unrelated_metric"}) for i in range(100)]
+    result = SimpleNamespace(aggregate_evidence=[*noise, *evidence], executions=[], caveats=[])
     complete_calculations(Settings(_env_file=None, model_provider="ollama"), "Compare the contributions", result, {"team": "CHI"})
     assert not result.caveats
     derived = [item for item in result.aggregate_evidence if item.metric == "derived_arithmetic"]
@@ -80,6 +83,66 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":[e.evidence_id,regi
     for expression in ("__import__('os')", "a.__class__", "a ** 10000", "1 / 0"):
         with pytest.raises((ValueError, ZeroDivisionError)):
             checked_arithmetic(expression, {"a": 2.})
+    # A prematurely finished live-model stage remains a persisted execution
+    # failure, not an ordinary source-coverage gap.
+    model.responses = [AIMessage(content="Cannot proceed")]
+    broken = SimpleNamespace(aggregate_evidence=list(evidence), executions=[], caveats=[])
+    complete_calculations(Settings(_env_file=None, model_provider="ollama"), "Compare contributions", broken, {})
+    assert broken.executions[-1].tool == "complete_calculations_failed"
+    assert broken.executions[-1].parameters["error_type"] == "ValueError"
+    assert "execution failure" in broken.caveats[0]
+
+
+def test_controlled_game_join_and_scoped_acquisition(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
+    from sports_analyst.analysis.scoped_data import ScopedData
+    from sports_analyst.datasets.nfl import sha256_file
+
+    left_path, right_path = tmp_path / "plays.parquet", tmp_path / "schedule.parquet"
+    left = pl.DataFrame({"team_id": ["1", "1", "9"], "game_id": ["g1", "g1", "g2"],
+                         "play_id": ["p1", "p2", "p3"], "yards": [5., 10., 999.]})
+    right = pl.DataFrame({"game_id": ["g1", "g2"], "venue": ["home", "away"]})
+    left.write_parquet(left_path)
+    right.write_parquet(right_path)
+    sources = [manifest(2025, frame.columns, dataset).model_copy(update={"sport": "cfb", "partition_key": "team:1",
+        "local_path": str(path), "sha256": sha256_file(path)})
+        for frame, path, dataset in [(left, left_path, "recorded_plays"), (right, right_path, "schedules")]]
+    persisted = []
+    store = SimpleNamespace(manifests=lambda **kwargs: sources, materialize_manifest=lambda item: item,
+                            save_manifest=lambda item: persisted.append(item))
+    fetched = []
+
+    def sync(seasons, datasets, **kwargs):
+        fetched.append((seasons, datasets, kwargs["team_ids"]))
+        item = sources[0].model_copy(update={"dataset": "team_stats", "manifest_id": "prepared-stats"})
+        kwargs["manifest_callback"](item)
+        return [item]
+
+    from sports_analyst.storage.persistence import LocalPersistenceBackend
+
+    store.persistence = LocalPersistenceBackend()
+    app = SimpleNamespace(settings=Settings(_env_file=None, data_dir=tmp_path), store=store,
+                          connectors={"cfb": SimpleNamespace(sync=sync)})
+    monkeypatch.setattr("sports_analyst.application.preparation.coordinator", lambda app: SimpleNamespace(lease=lambda *a, **k: nullcontext()))
+    request = AnalysisRequest(sport="cfb", question="Compare yardage by venue", scope={"team": "1", "season_type": "ALL",
+        "comparison_design": "full_seasons", "baseline": {"season": 2024}, "comparison": {"season": 2025}})
+    access = ScopedData(app, request, "team:1")
+    result = access.aggregate(sources[0].manifest_id, "comparison", ["game__venue"], [{"op": "sum", "field": "yards"}], [],
+                              sources[1].manifest_id, ["venue"])
+    assert result["rows"][0]["m0"] == 15 and result["qualifying_rows"] == 2
+    assert result["joined_sha256"] == sources[1].sha256
+    assert access.prepare_dataset("team_stats", 2025)[0]["dataset_id"] == "prepared-stats"
+    assert fetched == [([2025], ["team_stats"], ["1"])] and persisted
+    with pytest.raises(ValueError):
+        access.prepare_dataset("team_stats", 2025)
+    right = pl.concat([right, right.head(1)])
+    right.write_parquet(right_path)
+    duplicate = sources[1].model_copy(update={"sha256": sha256_file(right_path)})
+    access.manifests[duplicate.manifest_id] = duplicate
+    with pytest.raises(ValueError, match="duplicated"):
+        access.aggregate(sources[0].manifest_id, "comparison", ["game__venue"], [{"op": "count"}], [],
+                         duplicate.manifest_id, ["venue"])
 
 
 def test_nfl_phase_request_persists_accounting_chart_and_play_examples(tmp_path, pbp_pair):
@@ -126,7 +189,11 @@ def test_scoped_discovery_aggregation_and_isolation(tmp_path, monkeypatch, sport
     frame.write_parquet(path)
     source = manifest(2025, frame.columns).model_copy(update={"sport": sport, "local_path": str(path),
         "sha256": sha256_file(path), "competition": "eng.1" if sport == "soccer" else None})
-    app = SimpleNamespace(store=SimpleNamespace(manifests=lambda **kwargs: [source], materialize_manifest=lambda item: item))
+    from sports_analyst.storage.persistence import LocalPersistenceBackend
+
+    app = SimpleNamespace(settings=Settings(_env_file=None, data_dir=tmp_path),
+        store=SimpleNamespace(manifests=lambda **kwargs: [source], materialize_manifest=lambda item: item,
+                              persistence=LocalPersistenceBackend()))
     request = AnalysisRequest(sport=sport, question="How is recorded yardage distributed across weeks?", scope={"team": "A",
         "season_type": "ALL", "comparison_design": "full_seasons", "baseline": {"season": 2024}, "comparison": {"season": 2025}})
     access = ScopedData(app, request, None)
@@ -134,7 +201,7 @@ def test_scoped_discovery_aggregation_and_isolation(tmp_path, monkeypatch, sport
     payload = access.aggregate(source.manifest_id, "comparison", ["week"], [{"op": "sum", "field": "yards"}], [])
     assert payload["qualifying_rows"] == 2
     assert payload["rows"][0]["m0"] == 10 and payload["rows"][1]["m0"] is None
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="authorized dataset IDs"):
         access.aggregate("outside-catalog", "comparison", [], [{"op": "count"}], [])
     with pytest.raises(ValueError):
         access.aggregate(source.manifest_id, "comparison", [], [{"op": "sum", "field": "__import__('os')"}], [])
@@ -151,7 +218,7 @@ def test_scoped_discovery_aggregation_and_isolation(tmp_path, monkeypatch, sport
         code = '''await tools.recordAnalysisPlan({objectives:["Distribute recorded yardage by week", "Explain coverage assignments"],
 existing_evidence_ids:[],required_data:["yards", "week", "coverage_assignments"],calculations:["Sum yards by week"],limitations:[]});
 const catalog = JSON.parse(await tools.inspectScopedDatasets({}));
-const measured = JSON.parse(await tools.aggregateScopedData({dataset_id:catalog[0].dataset_id, window:"comparison",
+const measured = JSON.parse(await tools.aggregateScopedData({dataset_id:catalog.datasets[0].dataset_id, window:"comparison",
 group_by:["week"],measures:[{op:"sum",field:"yards"}],filters:[]}));
 await tools.finishQuestionReview({evidence_by_objective:{"0":measured.evidence.map(e=>e.evidence_id)},
 unresolved:{"1":"Coverage assignments are not recorded in the scoped catalog."}});

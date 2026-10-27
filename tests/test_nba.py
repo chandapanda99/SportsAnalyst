@@ -218,6 +218,18 @@ def test_nba_connector_translates_seasons_normalizes_and_partitions(tmp_path: Pa
     ) == []
     assert calls == [] and published == []
     assert [event[0] for event in progress] == ["available"] * len(NBA_DEFAULT_DATASETS)
+    # Native source captures use named phases, unlike ESPN's integer codes.
+    from sports_analyst.plugins.nba_segments import segment_game_ids
+
+    native = connector.normalize(pl.DataFrame({"game_id": ["r", "i", "p", "c"],
+        "season_type": ["regular-season", "play-in", "playoffs", "nba-cup"],
+        "game_date": ["2025-01-01", "2025-04-15", "2025-05-01", "2024-12-17"],
+        "home_team_abbreviation": ["BOS"] * 4, "away_team_abbreviation": ["LAL"] * 4}), 2025, "stats_schedules")
+    assert native["source_season_type"].to_list() == ["regular-season", "play-in", "playoffs", "nba-cup"]
+    assert segment_game_ids(native, 2025, "regular_season") == {"r"}
+    assert segment_game_ids(native, 2025, "playoffs") == {"i", "p"}
+    assert segment_game_ids(native, 2025, "play_in") == {"i"}
+    assert native["home_team_abbrev"].to_list() == ["BOS"] * 4
 
 
 

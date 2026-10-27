@@ -1,9 +1,11 @@
 """Bounded acquisition scheduling and safe, structured stage timings."""
 
 import logging
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
 from contextlib import contextmanager
 from time import perf_counter
+
+from sports_analyst.analysis.research.state import ContextPool as ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 

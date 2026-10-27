@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     model: str = "gpt-5.6-luna"
     chat_model: str | None = None
     calculation_interpreter_enabled: bool = True
+    research_rounds: int = Field(default=2, ge=1, le=8)
+    research_package_attempts: int = Field(default=16, ge=1, le=64)
+    research_source_requests: int = Field(default=250, ge=1, le=2000)
+    research_transfer_bytes: int = Field(default=2 * 1024**3, ge=1024, le=16 * 1024**3)
+    research_elapsed_seconds: int = Field(default=600, ge=1, le=3600)
+    research_working_bytes: int = Field(default=512 * 1024**2, ge=1024, le=4 * 1024**3)
     foundry_endpoint: str = ""
     foundry_api_key: SecretStr | None = Field(default=None, repr=False)
     reasoning_effort: str | None = "medium"

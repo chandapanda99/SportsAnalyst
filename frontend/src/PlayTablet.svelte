@@ -2,6 +2,7 @@
     import type {Evidence} from './types';
     import FootballSchematic from './FootballSchematic.svelte';
     import FootballTablet from './FootballTablet.svelte';
+    import {resolveSpecialTeams} from './specialTeamsSchematic';
 
     import {
         buildPlaySchematic,
@@ -13,8 +14,10 @@
     export let play: Evidence;
     export let onclose: () => void;
 
-    $: offenseTeam = play.visualization?.possession_team ?? play.team ?? '';
-    $: defenseTeam = play.visualization?.defensive_team ?? '';
+    $: specialTeams = resolveSpecialTeams(play.visualization ?? {}, play.description ?? '');
+    $: diagramPlay = {...play, visualization: {...play.visualization, special_teams: specialTeams}};
+    $: offenseTeam = specialTeams?.kicking_team ?? play.visualization?.possession_team ?? play.team ?? '';
+    $: defenseTeam = specialTeams?.receiving_team ?? play.visualization?.defensive_team ?? '';
     $: homeTeam = play.visualization?.home_team_abbreviation ?? inferredHomeTeam(play.game_id) ?? offenseTeam;
     $: offensePalette = teamChartPalette(offenseTeam, 'nfl', play.season);
     $: defensePalette = teamChartPalette(defenseTeam, 'nfl', play.season);
@@ -24,7 +27,7 @@
         ? homePalette[1]
         : colorContrastRatio(homePalette[0], '#F4F8FA') >= 4.5 ? '#F4F8FA' : '#07121D';
     $: homeLogo = teamLogoUrl(homeTeam, 'nfl', play.season);
-    $: schematic = buildPlaySchematic(play.visualization);
+    $: schematic = buildPlaySchematic(diagramPlay.visualization);
     $: sourcePackages = play.visualization?.source_packages ?? ['play_by_play'];
     $: offensePlayers = playerRows(play.visualization?.offense_names, play.visualization?.offense_positions);
     $: defensePlayers = playerRows(play.visualization?.defense_names, play.visualization?.defense_positions);
@@ -66,18 +69,18 @@
             {play.visualization?.defensive_score ?? '—'}</span>
         <b>{play.epa?.toFixed(2)} EPA</b>
     </div>
-    <div class="reconstruction-meta">
+    {#if !specialTeams}<div class="reconstruction-meta">
         <div><strong>{schematic.lineupMode === 'recorded' ? 'Recorded participants' : schematic.lineupMode === 'hybrid' ? 'Recorded participants · completed formation' : 'Formation-template lineup'}</strong>
             <span>{schematic.context.formation} · {schematic.context.offensivePersonnel} offense · {schematic.context.defensivePersonnel} defense · {schematic.context.boxCount} in box{schematic.context.boxCountRecorded ? '' : ' (estimated)'} · {schematic.context.passRusherCount} rushers{schematic.context.passRusherCountRecorded ? '' : ' (estimated)'}</span>
         </div>
         <div class="source-badges" aria-label="Sources used by this schematic">
             {#each sourcePackages as source}<span>{sourceLabel(source)}</span>{/each}
         </div>
-    </div>
-    <FootballSchematic {play} {homeTeamName} {homeTeam} {homeLogo} {homePalette} {offensePalette} {defensePalette} {endzoneTextColor} fieldLabel={`Reconstructed play on ${homeTeam}'s home field showing lineup and ball movement`}/>
+    </div>{/if}
+    <FootballSchematic play={diagramPlay} {homeTeamName} {homeTeam} {homeLogo} {homePalette} {offensePalette} {defensePalette} {endzoneTextColor} fieldLabel={`${specialTeams ? 'Special teams diagram' : 'Reconstructed play'} on ${homeTeam}'s home field`}/>
     <div class="play-details">
         <p>{play.description}</p>
-        <dl>
+        {#if !specialTeams}<dl>
             <div>
                 <dt>Formation <i>PBP</i></dt>
                 <dd>{schematic.context.formation}{play.visualization?.no_huddle ? ' · No huddle' : ''}</dd>
@@ -126,8 +129,8 @@
                 <dt>Game impact <i>PBP</i></dt>
                 <dd>{play.epa?.toFixed(2) ?? '—'} EPA{play.visualization?.win_probability_added != null ? ` · ${(play.visualization.win_probability_added * 100).toFixed(1)} WPA` : ''}{play.visualization?.win_probability != null ? ` · ${(play.visualization.win_probability * 100).toFixed(1)}% WP` : ''}</dd>
             </div>
-        </dl>
-        {#if offensePlayers.length || defensePlayers.length}
+        </dl>{/if}
+        {#if !specialTeams && (offensePlayers.length || defensePlayers.length)}
             <div class="on-field">
                 <div class="on-field-heading"><strong>Recorded on-field personnel</strong><span>Identities are recorded; placement uses personnel, formation, box, rush, and coverage constraints</span></div>
                 <div class="lineup-columns">
@@ -140,6 +143,6 @@
                 </div>
             </div>
         {/if}
-        <small>The tablet uses recorded identities and football-context constraints wherever the local packages provide them. Exact player coordinates, individual rusher/blitzer assignments, and ball curves remain inferred because these sources do not provide tracking coordinates or assignment identities.</small>
+        <small>{specialTeams ? 'Special-teams diagrams separate recorded kick distance and return yards. No full formation or blocking assignments are reconstructed.' : 'The tablet uses recorded identities and football-context constraints wherever the local packages provide them. Exact player coordinates, individual rusher/blitzer assignments, and ball curves remain inferred because these sources do not provide tracking coordinates or assignment identities.'}</small>
     </div>
 </FootballTablet>

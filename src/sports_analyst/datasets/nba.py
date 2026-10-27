@@ -26,6 +26,23 @@ NBA_ATTRIBUTION = "Data loaded through SportsDataverse from its published NBA da
 NBA_LICENSE = "See the source release metadata for the selected dataset."
 
 
+def normalize_season_phase(frame):
+    """Recorded native/ESPN season types share one explicit, lossless phase mapping."""
+    columns = set(frame.collect_schema().names()) if isinstance(frame, pl.LazyFrame) else set(frame.columns)
+    source = "season_type" if "season_type" in columns else "season_type_id" if "season_type_id" in columns else None
+    if source is None:
+        return frame
+    raw = pl.col(source).cast(pl.String)
+    label = raw.str.to_lowercase().str.replace_all(r"[ _]", "-")
+    expressions = [label.replace_strict({"1": 1, "2": 2, "3": 3, "preseason": 1,
+        "regular-season": 2, "playoffs": 3, "play-in": 3}, default=None, return_dtype=pl.Int32).alias("season_type")]
+    if "source_season_type" not in columns:
+        expressions.append(raw.alias("source_season_type"))
+    if "notes_headline" not in columns:
+        expressions.append(pl.when(label == "play-in").then(pl.lit("Play-In")).otherwise(pl.lit("")).alias("notes_headline"))
+    return frame.with_columns(expressions)
+
+
 class NBADatasetDefinition(NamedTuple):
     loader: str
     minimum: int
@@ -245,22 +262,25 @@ class SportsDataverseNBAConnector:
             "player_name": ("athlete_display_name", "athlete_name_1", "player_name", "display_name", "full_name", "player"),
             "team_abbreviation": ("team_tricode", "team_abbrev", "team_abbreviation"),
             "game_date": ("game_date", "date", "start_date"),
-            "home_team_abbrev": ("home_team_abbrev", "home_abbreviation"),
-            "away_team_abbrev": ("away_team_abbrev", "away_abbreviation"),
+            "home_team_abbrev": ("home_team_abbrev", "home_abbreviation", "home_team_abbreviation"),
+            "away_team_abbrev": ("away_team_abbrev", "away_abbreviation", "away_team_abbreviation"),
             "coordinate_x": ("coordinate_x", "coordinate_x_raw"),
             "coordinate_y": ("coordinate_y", "coordinate_y_raw"),
         }
         expressions: list[pl.Expr] = [pl.lit(season).cast(pl.Int32).alias("season")]
+        columns = set(frame.collect_schema().names()) if isinstance(frame, pl.LazyFrame) else set(frame.columns)
         for target, candidates in aliases.items():
-            if target in frame.columns:
+            if target in columns:
                 continue
-            source = next((candidate for candidate in candidates if candidate in frame.columns), None)
+            source = next((candidate for candidate in candidates if candidate in columns), None)
             if source:
                 expressions.append(pl.col(source).alias(target))
         frame = frame.with_columns(expressions)
-        if dataset == "play_by_play" and "team_abbreviation" not in frame.columns:
+        frame = normalize_season_phase(frame)
+        columns = set(frame.collect_schema().names()) if isinstance(frame, pl.LazyFrame) else set(frame.columns)
+        if dataset == "play_by_play" and "team_abbreviation" not in columns:
             required = {"team_id", "home_team_id", "away_team_id", "home_team_abbrev", "away_team_abbrev"}
-            if required.issubset(frame.columns):
+            if required.issubset(columns):
                 frame = frame.with_columns(
                     pl.when(pl.col("team_id") == pl.col("home_team_id"))
                     .then(pl.col("home_team_abbrev"))
@@ -269,7 +289,7 @@ class SportsDataverseNBAConnector:
                     .otherwise(None)
                     .alias("team_abbreviation")
                 )
-        id_columns = [column for column in frame.columns if column == "game_id" or column.endswith("_id")]
+        id_columns = [column for column in columns if column == "game_id" or column.endswith("_id")]
         if id_columns:
             frame = frame.with_columns([pl.col(column).cast(pl.String, strict=False) for column in id_columns])
         return frame
@@ -284,7 +304,11 @@ class SportsDataverseNBAConnector:
         return self.manifest_for(target, season, frame, dataset)
 
     def manifest_for(self, path: Path, season: int, frame: pl.DataFrame | None = None, dataset: str = "play_by_play") -> DatasetManifest:
-        frame = frame if frame is not None else pl.read_parquet(path)
+        if frame is None:
+            scan = pl.scan_parquet(path)
+            row_count, columns = scan.select(pl.len()).collect().item(), scan.collect_schema().names()
+        else:
+            row_count, columns = frame.height, frame.columns
         checksum = sha256_file(path)
         stat = path.stat()
         _loader, _minimum, release, available_seasons = NBA_ALL_DATASETS[dataset]
@@ -293,8 +317,8 @@ class SportsDataverseNBAConnector:
             "dataset": dataset,
             "season": season,
             "sha256": checksum,
-            "rows": frame.height,
-            "columns": frame.columns,
+            "rows": row_count,
+            "columns": columns,
         }
         try:
             package_version = importlib.metadata.version("sportsdataverse")
@@ -311,8 +335,8 @@ class SportsDataverseNBAConnector:
                 else "https://py.sportsdataverse.org/docs/nba/"
             ),
             sha256=checksum,
-            row_count=frame.height,
-            columns=frame.columns,
+            row_count=row_count,
+            columns=columns,
             package_version=package_version,
             license=NBA_LICENSE,
             attribution=NBA_ATTRIBUTION,

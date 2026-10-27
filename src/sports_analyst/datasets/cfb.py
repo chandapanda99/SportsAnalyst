@@ -418,6 +418,7 @@ class SportsDataverseCFBConnector:
     def _primary_game_plays(self, game_id, season):
         """Share successful normalized games across teams; retry coverage gaps."""
         from sports_analyst.datasets.cfb_identity import IDENTITY_VERSION
+        from sports_analyst.datasets.cfb_rendering import RENDER_VERSION
 
         game_id = self.validate_id(game_id)
         try:
@@ -427,7 +428,7 @@ class SportsDataverseCFBConnector:
         raw = self.summary(game_id, season)
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
         sources = f"n{int(self.settings.cfb_ncaa_enabled)}c{int(self.settings.cfb_cfbd_enabled)}"
-        key = f"normalized-plays/v4/{sources}/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
+        key = f"normalized-plays/v4/{RENDER_VERSION}/{sources}/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         cached = self.source._cached(key, ttl)
         if cached is not None:
@@ -532,7 +533,7 @@ class SportsDataverseCFBConnector:
         source = self.source.collection(f"{CORE}/events/{game}/competitions/{game}/plays", ttl, maximum=800)
         return self.resolve_secondary([row], source, self.summary(game, season), str(game), season)[0]
 
-    def prepare_recorded(self, season, partition, schedule, callback=None, progress=None):
+    def prepare_recorded(self, season, partition, schedule, callback=None, progress=None, *, feature="analysis"):
         rows, completed = [], 0
         # Future fixtures are not failed downloads and cannot supply play evidence.
         games = completed_games(schedule, flag="completed")["game_id"].unique().sort().to_list()
@@ -540,7 +541,7 @@ class SportsDataverseCFBConnector:
         skipped = scheduled - len(games)
         with self.source.lease(f"recorded:{partition}:{season}", seconds=1800):
             for index, (game, future) in enumerate(bounded_results(
-                    lambda game: self.game_plays(game, season, feature="analysis"), games, self.settings.dataset_sync_concurrency)):
+                    lambda game: self.game_plays(game, season, feature=feature), games, self.settings.dataset_sync_concurrency)):
                 if progress:
                     progress("downloading", "recorded_plays", season, index, len(games),
                              index / max(1, len(games)),

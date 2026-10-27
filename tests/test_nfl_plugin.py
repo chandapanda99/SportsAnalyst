@@ -26,6 +26,27 @@ def manifest(season: int, columns: list[str], dataset: str = "play_by_play") -> 
     )
 
 
+def test_game_evidence_preserves_special_teams_distances_roles_and_outcomes():
+    rows = [
+        {"play_type": "field_goal", "field_goal_result": "made", "yardline_100": 24., "kick_distance": 42., "kicker_player_name": "Kicker"},
+        {"play_type": "punt", "yardline_100": 76., "kick_distance": 60., "return_yards": 7., "punter_player_name": "Punter", "punt_returner_player_name": "Returner"},
+        {"play_type": "kickoff", "yardline_100": 35., "kick_distance": 65., "return_yards": 22., "kicker_player_name": "Kicker", "kickoff_returner_player_name": "Returner"},
+        {"play_type": "kickoff", "yardline_100": 35., "kick_distance": 65., "touchback": 1., "return_yards": 0.},
+        {"play_type": "punt", "yardline_100": 60., "punt_blocked": 1.},
+        {"play_type": "no_play", "field_goal_attempt": 1., "yardline_100": 24., "kick_distance": 42., "desc": "Field goal, NO PLAY"},
+    ]
+    frame = pl.DataFrame([{ "game_id": "2025_01_ARI_NO", "play_id": i + 1, "posteam": "ARI", "defteam": "NO", **row}
+                          for i, row in enumerate(rows)], infer_schema_length=None)
+    plays = NFLPlugin()._representative_plays(frame, "ARI", manifest(2025, frame.columns), "browser", include_all=True)
+    kicks = [play.visualization.special_teams for play in plays]
+    assert len(kicks) == 6 and kicks[0].result == "made" and kicks[0].kick_distance == 42
+    assert kicks[1].kind == "punt" and kicks[1].kicker == "Punter" and kicks[1].return_yards == 7
+    assert kicks[2].kicking_team == "NO" and kicks[2].receiving_team == "ARI"
+    assert kicks[2].start_yards_to_goal == 65 and kicks[2].returner == "Returner"
+    assert kicks[3].touchback and kicks[3].return_yards == 0
+    assert kicks[4].blocked and kicks[4].kick_distance is None and kicks[5].no_play
+
+
 def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> None:
     plugin = NFLPlugin()
     request = AnalysisRequest(

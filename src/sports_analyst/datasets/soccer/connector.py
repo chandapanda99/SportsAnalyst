@@ -8,7 +8,7 @@ import logging
 import re
 from collections import OrderedDict
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from datetime import date
 from pathlib import Path
 from threading import RLock
@@ -16,6 +16,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.analysis.research.state import ContextPool as ThreadPoolExecutor
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.datasets.availability import completed_games, missing_source, unavailable_snapshot
 from sports_analyst.datasets.errors import FixtureDiscoveryError
@@ -77,6 +78,14 @@ class SportsDataverseSoccerConnector:
 
     @staticmethod
     def _request(competition: str, endpoint: str, params: dict[str, str | int]) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            if competition not in SOCCER_COMPETITIONS or endpoint not in {"teams", "scoreboard", "summary"}:
+                raise ValueError("Unsupported budgeted soccer endpoint")
+            return budget_json(f"https://site.api.espn.com/apis/site/v2/sports/soccer/{competition}/{endpoint}?{urlencode(params)}")
         soccer = load_optional_module("sportsdataverse.soccer", "Soccer dataset sync")
         SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer dataset sync").SportsDataverseError
 
@@ -464,14 +473,18 @@ class SportsDataverseSoccerConnector:
             frame = pl.read_parquet(path)
             return self.manifest_for(path, competition, season, dataset, frame)
         source_season = season if SOCCER_COMPETITIONS[competition][1] else season - 1
-        SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer player game logs").SportsDataverseError
-        espn_soccer_player_gamelog = load_optional_module("sportsdataverse.soccer", "Soccer player game logs").espn_soccer_player_gamelog
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
 
-        try:
-            raw = espn_soccer_player_gamelog(league=competition, athlete_id=athlete_id, season=source_season,
-                                           return_parsed=False, timeout=30, num_retries=2)
-        except SportsDataverseError as error:
-            raise OSError(str(error)) from error
+        if ACTIVE_BUDGET.get() is not None:
+            raw = budget_json(f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{competition}/athletes/{athlete_id}/gamelog?season={source_season}")
+        else:
+            SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer player game logs").SportsDataverseError
+            espn_soccer_player_gamelog = load_optional_module("sportsdataverse.soccer", "Soccer player game logs").espn_soccer_player_gamelog
+            try:
+                raw = espn_soccer_player_gamelog(league=competition, athlete_id=athlete_id, season=source_season,
+                                               return_parsed=False, timeout=30, num_retries=2)
+            except SportsDataverseError as error:
+                raise OSError(str(error)) from error
         rows = []
         for season_type in raw.get("seasonTypes") or []:
             for category in season_type.get("categories") or []:
@@ -480,7 +493,8 @@ class SportsDataverseSoccerConnector:
                     game_id = event.get("eventId") or event.get("id") or (event.get("event") or {}).get("id")
                     if not game_id:
                         continue
-                    row = {"game_id": str(game_id), "date": event.get("date")}
+                    row = {"game_id": str(game_id), "date": event.get("date"), "athlete_id": athlete_id,
+                           "season": season, "competition": competition}
                     for index, value in enumerate(event.get("stats") or []):
                         if index >= len(names):
                             continue

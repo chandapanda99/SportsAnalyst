@@ -27,6 +27,7 @@ $: markerOptions = [
 $: if (play.evidence_id) { focusedPlayerId=null; focusedMarkerIndex=null; selectedLabel=''; selectedKey=''; }
 function eventLabel(label: string) {return illustrative ? label+" · illustrative location" : label;}
     function pathColor(kind: string) {
+        if (kind === 'kick') return '#ffd36d';
         if (kind === 'return') return '#ff9d66';
         if (kind === 'after-catch') return offensePalette[1];
         return offensePalette[0];
@@ -80,13 +81,13 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
                     <feGaussianBlur stdDeviation="1.05" result="blur"/>
                     <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/></feMerge>
                 </filter>
-                {#each ['pass', 'carry', 'after-catch', 'return'] as kind}
+                {#each ['pass', 'carry', 'after-catch', 'return', 'kick'] as kind}
                     <marker id={`${markerPrefix}-${kind}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto-start-reverse">
                         <path d="M 0 0 L 10 5 L 0 10 z" fill={pathColor(kind)}/>
                     </marker>
                 {/each}
             </defs>
-            {#if showPlayers}
+            {#if showPlayers && !schematic.specialTeams}
             <rect
                 x={schematic.startX - .25}
                 y={schematic.hashY - OFFENSIVE_LINE_HALF_WIDTH}
@@ -96,11 +97,17 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
                 aria-label={`Reconstructed tackle box containing ${schematic.context.boxCount} defenders`}
             />
             {/if}
-            {#if showFieldPosition}
+            {#if showFieldPosition && (!schematic.specialTeams || schematic.specialTeams.startKnown)}
             <line x1={schematic.startX} x2={schematic.startX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="scrimmage"/>
-            {#if play.visualization?.yards_to_go != null}
+            {#if !schematic.specialTeams && play.visualization?.yards_to_go != null}
                 <line x1={schematic.lineToGainX} x2={schematic.lineToGainX} y1="1.4" y2={FOOTBALL_FIELD_WIDTH - 1.4} class="line-to-gain"/>
             {/if}
+            {/if}
+            {#if schematic.specialTeams && ['field_goal', 'extra_point'].includes(schematic.specialTeams.kind)}
+                <g class="goalposts" role="img" aria-label="Goalpost target at the back of the end zone">
+                    <path d={`M 117.2 ${FOOTBALL_FIELD_WIDTH / 2 - 3.083} H 119.2 V ${FOOTBALL_FIELD_WIDTH / 2 + 3.083} H 117.2`}
+                          fill="none" stroke="#ffd36d" stroke-width=".55"/>
+                </g>
             {/if}
             {#if showMovement}
             {#each schematic.paths as segment}
@@ -119,7 +126,7 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
             {/if}
             {#if showMovement}
             {#each schematic.markers as marker, markerIndex}
-                <g class={`event-marker ${marker.kind}`} transform={`translate(${marker.x} ${marker.y})`}
+                <g class={`event-marker ${marker.kind}`} class:failed-kick={Boolean(schematic.specialTeams && /Missed|Blocked/.test(schematic.specialTeams.result))} transform={`translate(${marker.x} ${marker.y})`}
                    role="button" tabindex="0" aria-label={eventLabel(marker.label)}
                    aria-pressed={selectedKey === `event-${markerIndex}`} class:selected={selectedKey === `event-${markerIndex}`}
                    on:click={() => selectMarker(`event-${markerIndex}`, eventLabel(marker.label))}
@@ -138,15 +145,28 @@ function eventLabel(label: string) {return illustrative ? label+" · illustrativ
             {/if}
         </FootballField>
         </SchematicViewport>
+        {#if schematic.specialTeams}
+            <div class="special-teams-summary" aria-label="Special teams play details">
+                <strong>{schematic.specialTeams.label} · {schematic.specialTeams.result}</strong>
+                <div>
+                    <span>Kick distance: {play.visualization?.special_teams?.kick_distance ?? 'Not recorded'}{play.visualization?.special_teams?.kick_distance != null ? ' yd' : ''}</span>
+                    {#if play.visualization?.special_teams?.return_yards != null}<span>Return: {play.visualization.special_teams.return_yards} yd</span>{/if}
+                    {#if play.visualization?.special_teams?.kicker}<span>{schematic.specialTeams.kind === 'punt' ? 'Punter' : 'Kicker'}: {play.visualization.special_teams.kicker}</span>{/if}
+                    {#if play.visualization?.special_teams?.returner}<span>Returner: {play.visualization.special_teams.returner}</span>{/if}
+                </div>
+                <p>{schematic.specialTeams.note}</p>
+                {#if play.visualization?.special_teams?.source}<small>{play.visualization.special_teams.source}</small>{/if}
+            </div>
+        {/if}
         <div class="field-legend">
-            <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{play.visualization?.possession_team ?? play.team} offense</span>
-            <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{play.visualization?.defensive_team ?? 'Defense'}</span>
-            {#if showPlayers}<span><i class="box-key"></i>Reconstructed box</span>{/if}
-            {#if showMovement}<span><i class="flight-key"></i>{movementLabel || (illustrative ? "Illustrative movement (net yards)" : "Ball flight")}</span>{/if}
+            <span><i class="offense-key" style={`background:${offensePalette[0]};border-color:${offensePalette[1]}`}></i>{schematic.specialTeams ? `${play.visualization?.special_teams?.kicking_team ?? 'Unknown'} kicking team` : `${play.visualization?.possession_team ?? play.team} offense`}</span>
+            <span><i class="defense-key" style={`background:${defensePalette[0]};border-color:${defensePalette[1]}`}></i>{schematic.specialTeams ? `${play.visualization?.special_teams?.receiving_team ?? 'Unknown'} receiving team` : play.visualization?.defensive_team ?? 'Defense'}</span>
+            {#if showPlayers && !schematic.specialTeams}<span><i class="box-key"></i>Reconstructed box</span>{/if}
+            {#if showMovement && schematic.paths.length}<span><i class="flight-key"></i>{schematic.specialTeams ? 'Illustrative kick / return movement' : movementLabel || (illustrative ? "Illustrative movement (net yards)" : "Ball flight")}</span>{/if}
             {#if showPlayers && schematic.players.some(player => player.rushRole === 'rusher')}<span><i class="rush-key"></i>Inferred rusher</span>{/if}
             {#if showPlayers && schematic.players.some(player => player.rushRole === 'blitzer')}<span><i class="blitz-key"></i>Inferred blitzer</span>{/if}
             {#if showMovement && schematic.paths.some(path => path.kind === 'after-catch')}<span><i class="yac-key"></i>After catch</span>{/if}
-            {#if showMovement && schematic.paths.some(path => path.kind === 'return')}<span><i class="return-key"></i>Turnover return</span>{/if}
+            {#if showMovement && schematic.paths.some(path => path.kind === 'return')}<span><i class="return-key"></i>{schematic.specialTeams ? 'Kick return' : 'Turnover return'}</span>{/if}
         </div>
     </div>
 

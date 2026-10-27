@@ -372,6 +372,30 @@ class AggregateEvidence(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class SpecialTeamsContext(BaseModel):
+    kind: Literal["field_goal", "extra_point", "punt", "kickoff"]
+    kicking_team: str | None = None
+    receiving_team: str | None = None
+    kicker: str | None = None
+    returner: str | None = None
+    start_yards_to_goal: float | None = None
+    landing_yards_to_goal: float | None = None
+    end_yards_to_goal: float | None = None
+    kick_distance: float | None = None
+    return_yards: float | None = None
+    result: str | None = None
+    blocked: bool | None = None
+    touchback: bool | None = None
+    fair_catch: bool | None = None
+    out_of_bounds: bool | None = None
+    downed: bool | None = None
+    onside: bool | None = None
+    own_recovery: bool | None = None
+    return_touchdown: bool | None = None
+    no_play: bool | None = None
+    source: str | None = None
+
+
 class PlayVisualization(BaseModel):
     model_config = ConfigDict(frozen=True)
     sport: str = "nfl"
@@ -391,6 +415,7 @@ class PlayVisualization(BaseModel):
     score_differential: float | None = None
     goal_to_go: bool | None = None
     play_type: str | None = None
+    special_teams: SpecialTeamsContext | None = None
     formation: str | None = None
     personnel: str | None = None
     defensive_personnel: str | None = None

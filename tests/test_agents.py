@@ -161,6 +161,7 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         source_url="https://example.com/source", sha256="hash", row_count=1000, columns=[],
         package_version="test", local_path="unused.parquet", coverage={"completed_matches": 4, "expected_matches": 10})
     brief = evidence_brief([primary, counter, missing], [definition], [manifest], {"sport": sport, "subject": {"type": "player"}})
+    brief["question_coverage_reviews"] = [{"review": {"evidence_by_objective": {"0": [primary.evidence_id]}}}]
     captured = {}
 
     def build_agent(**kwargs):
@@ -168,11 +169,17 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         class Agent:
             def invoke(self, _request, config):
                 captured["config"] = config
+                captured["invocations"] = captured.get("invocations", 0) + 1
                 tool_map = {tool.name: tool for tool in kwargs["tools"]}
                 context = json.loads(tool_map["inspect_analysis_context"].invoke({}))
                 assert context["sources"][0]["coverage"]["completed_matches"] == 4
                 assert context["metric_definitions"][0]["limitations"] == ["Not opponent-adjusted"]
                 assert "counter_metric" in context["undefined_metrics"]
+                assert context["aggregate_count"] == 3
+                assert {item["metric"] for item in context["metric_index"]} == {
+                    primary.metric, "counter_metric", "unavailable_metric"}
+                later = json.loads(tool_map["inspect_aggregate_evidence"].invoke({"offset": 2, "limit": 1}))
+                assert len(later) == 1 and later[0]["metric"] == "unavailable_metric"
                 evidence = json.loads(tool_map["inspect_aggregate_evidence"].invoke({}))
                 assert evidence[0]["sample_size"] == 8
                 assert evidence[0]["context"]["baseline_sample"] == 100
@@ -181,7 +188,7 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
                 return {"structured_response": kwargs["response_format"].model_validate({
                     "summary": "The observed rate changed, but coverage and unequal samples limit interpretation.",
                     "claims": [{"claim_type": "measured", "statement": "The rate changed from 0.0 to 0.1.",
-                                "evidence_refs": ["E1"], "confidence": "low"}]})}
+                                "evidence_refs": ["E2" if captured["invocations"] == 1 else "E1"], "confidence": "low"}]})}
         return Agent()
 
     monkeypatch.setattr(deepagents, "create_deep_agent", build_agent)
@@ -194,6 +201,7 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         sport=sport, analysis_domain=domain, analytical_context=brief)
     assert not fallback and model_id == "analysis-model"
     assert draft.claims[0].evidence_ids == [primary.evidence_id]
+    assert captured["invocations"] == 2  # Repair an objective omitted by the first draft.
     assert captured["model"] is model
     for prompt in [captured["system_prompt"], *[item["system_prompt"] for item in captured.get("subagents", [])]]:
         assert specific_rule in prompt

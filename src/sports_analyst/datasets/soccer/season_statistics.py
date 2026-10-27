@@ -27,6 +27,10 @@ class SeasonStatisticsSource:
 
     @staticmethod
     def _request(url: str) -> dict:
+        from sports_analyst.analysis.research.state import ACTIVE_BUDGET, budget_json
+
+        if ACTIVE_BUDGET.get() is not None:
+            return budget_json(url)
         download = load_optional_module("sportsdataverse.dl_utils", "Soccer season-statistics sync").download
         SportsDataverseError = load_optional_module("sportsdataverse.errors", "Soccer season-statistics sync").SportsDataverseError
         try:

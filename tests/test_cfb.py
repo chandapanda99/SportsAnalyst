@@ -882,7 +882,9 @@ def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometr
                      "start": {"yardsToEndzone": 60, "team": {"id": "1"}},
                      "end": {"yardsToEndzone": 45, "team": {"id": "1"}}},
                     {"id": "102", "type": {"text": "Pass Incompletion"}, "text": "Pass incomplete",
-                     "start": {"yardsToEndzone": 60, "team": {"id": "1"}}}]
+                     "start": {"yardsToEndzone": 60, "team": {"id": "1"}}},
+                    {"id": "103", "type": {"text": "Punt"}, "text": "Punt, fair catch", "statYardage": 0,
+                     "start": {"yardsToEndzone": 70, "team": {"id": "1"}}}]
     monkeypatch.setattr(connector.source, "collection", lambda *args, **kwargs: source_plays)
     calls = []
 
@@ -891,7 +893,8 @@ def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometr
         return {"plays": [{"id": "101", "air_yards": 10, "yards_after_catch": 99,
                            "air_yardsToEndzone": 50, "pass_direction": "right", "pass_depth": "short",
                            "qb_hurry": False, "cp": 0.0, "gameSpread": 0.0},
-                          {"id": "102", "air_yards": None, "yards_after_catch": None}]}
+                          {"id": "102", "air_yards": None, "yards_after_catch": None},
+                          {"id": "103", "yds_punted": 50, "yds_punt_return": 0, "punt_fair_catch": True, "punt_blocked": False}]}
 
     monkeypatch.setattr("sports_analyst.datasets.cfb_enrichment.process_summary", clean)
     normalizations = []
@@ -915,6 +918,9 @@ def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometr
     assert "gameSpread" not in context
     assert first["plays"][1].get("air_yards") is None
     assert first["plays"][1].get("yards_after_catch") is None
+    kick_context = json.loads(first["plays"][2]["provider_context_json"])
+    assert kick_context["yds_punted"] == 50 and kick_context["yds_punt_return"] == 0
+    assert kick_context["punt_fair_catch"] is True and kick_context["punt_blocked"] is False
     saved = {"play_id": "101", "participants": [], "epa": .25, "provider_version": "saved-model",
              "source_play_count": 2}
     item = SimpleNamespace(sport="cfb", game_id="20251", season=2025,
@@ -1009,7 +1015,7 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
     assert modeled[2025]["air_yards"].to_list() == [10.0] * 4
     assert modeled[2025]["yards_after_catch"].to_list() == [5.0] * 4
     assert modeled[2025]["pass_direction"].to_list() == ["right"] * 4
-    assert modeled[2025]["render_context_version"].to_list() == [2] * 4
+    assert modeled[2025]["render_context_version"].to_list() == [3] * 4
     saved_rows = [row for play in result.play_evidence if play.season == 2025
                   for row in play.visualization.cfb_statistics["modeled_plays"]]
     assert saved_rows and all(row["air_yards"] == 10 for row in saved_rows)
