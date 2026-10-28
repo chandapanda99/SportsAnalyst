@@ -71,7 +71,7 @@ def requirements(request, first_install):
         required.add("lineups")
     for metric in request.metrics or SOCCER_DEFAULTS.get(request.analysis_domain, SOCCER_DEFAULTS["results"]):
         source = SOCCER_METRICS.get(metric, (None, None))[1]
-        if source in {"team_stats", "lineups", "key_events", "expected_goals"}:
+        if source in {"team_stats", "lineups", "key_events", "expected_goals", "match_analytics", "asa_analytics"}:
             required.add(source)
     return required, optional - required
 
@@ -121,6 +121,8 @@ def project_soccer(app, connector, competition, season, partition, dataset, curr
             "source_url": source.source_url,
             "license": source.license,
             "attribution": source.attribution,
+            "resolution_version": source.resolution_version,
+            "input_manifest_ids": list(dict.fromkeys([source.manifest_id, *source.input_manifest_ids])),
         }
     )
     app.store.save_manifest(manifest)

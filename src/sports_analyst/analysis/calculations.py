@@ -161,6 +161,10 @@ def complete_calculations(settings, question, result, scope, data_access=None):
         fields,filters:[{field,op,value}],measures:[{op,field,name}]}], group_by,filters,
         missing=preserve|matched|strict,interpretation=retrospective|pregame.
         Right fields appear as alias__field. Preaggregate children or use exists to avoid fan-out.
+        For chronological trends use time_bucket={field:'game__date',interval:'month'},
+        project the recorded date through a verified schedule relationship, and group_by=['month'].
+        Additional group_by fields may identify home/away or another meaningful stratum.
+        Keep the same objective across windows so complementary measurements share a chart.
         """
         if not plan or not data_access:
             raise ValueError("Record the analysis plan first")
@@ -208,7 +212,8 @@ def complete_calculations(settings, question, result, scope, data_access=None):
                     row_set_sha256=digest(identity), dataset_manifest_ids=source_ids, tool_execution_id=execution_id,
                     caveats=[payload["definition"], f"Join coverage: {audit}; missing policy: {join_plan['missing']}"],
                     context={"plan_id": plan_id, "window": join_plan["window"], "group": group,
-                             "objective": join_plan["objective"], "model_identities": payload.get("model_identities", []),
+                             "objective": join_plan["objective"], "time_bucket": join_plan.get("time_bucket"),
+                             "model_identities": payload.get("model_identities", []),
                              "measure": measure, "coverage": audit, "qualifying_rows": row["qualifying_rows"],
                              "measurement_definition": payload["measurement_definitions"][measure["name"]],
                              "rate_counters": {key: row.get(measure["name"] + "_" + key)
@@ -251,6 +256,8 @@ def complete_calculations(settings, question, result, scope, data_access=None):
         window: baseline, comparison, or season:YYYY within a full-season range.
         measures: [{op: count|sum|mean|min|max|n_unique, field: recorded_column}].
         filters: [{field: column, op: eq|ne|gt|ge|lt|le|is_not_null, value: literal}].
+        eq/null selects missing values; ne/null or is_not_null selects recorded values.
+        Ordered comparisons require a non-null value.
         Groups <=3, measures <=8, filters <=8. Returns row counts, non-null denominators,
         evidence IDs and provenance. Per-game rates require proper game denominators.
         Optional game_dataset_id must be a same-season schedule. game_fields are
@@ -422,6 +429,12 @@ def complete_calculations(settings, question, result, scope, data_access=None):
                 "Discover schemas with inspect_scoped_datasets; use aggregate_scoped_data to measure what existing evidence does not cover. "
                 "Catalog columns are previews: use inspect_dataset_schema pagination/name search before claiming a field is absent. "
                 "Use discover_relationships, validate_join_plan and execute_joined_aggregate for additional measurements. "
+                "For within-season trends, join the recorded game date and use time_bucket={field:'game__date',interval:'month'}, "
+                "group_by=['month']; retain year and qualifying counts. Do not group by possession/score values to imply chronology. "
+                "Keep the same objective across windows and complementary measures to consolidate charts. "
+                "For soccer inspect supported match_analytics, asa_analytics, match_players and open_events capabilities when relevant. "
+                "Supplement possession with recorded chance creation, conversion and prevention; use only covered samples, "
+                "keep provider/model definitions separate, and cite contrasting metrics as well as supporting ones. "
                 "If a missing package could resolve an objective, queue prepare_analysis_data then end this turn: the worker "
                 "acquires it and resumes you outside the Interpreter. NFL/NBA bulk assets are permitted within host budgets. "
                 "Use only supported capabilities and verified opponent/transfer context; never change the primary sample. "

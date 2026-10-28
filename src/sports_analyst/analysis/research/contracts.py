@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION = "research-3"
+VERSION = "research-6"
 
 
 class StrictPlan(BaseModel):
@@ -93,6 +93,11 @@ class JoinStep(StrictPlan):
     measures: list[Measure] = Field(default_factory=list, max_length=8)
 
 
+class TimeBucket(StrictPlan):
+    field: str
+    interval: Literal["month"] = "month"
+
+
 class JoinPlan(StrictPlan):
     objective: str = Field(min_length=1, max_length=500)
     dataset_id: str
@@ -100,6 +105,7 @@ class JoinPlan(StrictPlan):
     grain: str
     steps: list[JoinStep] = Field(default_factory=list, max_length=4)
     group_by: list[str] = Field(default_factory=list, max_length=3)
+    time_bucket: TimeBucket | None = None
     filters: list[Filter] = Field(default_factory=list, max_length=8)
     measures: list[Measure] = Field(min_length=1, max_length=8)
     missing: Literal["preserve", "matched", "strict"] = "preserve"
@@ -124,6 +130,8 @@ def contract(manifest):
     if sport == "nba":
         team = first(("team_abbreviation", "team_abbrev", "team_tricode", "team_id"))
     player = first(("athlete_id", "player_id", "gsis_id", "player_gsis_id", "pfr_player_id"))
+    if sport == "soccer" and dataset == "match_players":
+        player = first(("provider_player_id",))
     if namespace == "nba_stats":
         player = first(("player_id", "person_id", "nba_player_id"))
     grain, keys, restrictions = "unverified", (), []
@@ -132,9 +140,13 @@ def contract(manifest):
     elif dataset in {"play_by_play", "stats_play_by_play", "recorded_plays", "enriched_plays", "ftn_charting", "participation"}:
         play = first(("play_id", "nflverse_play_id", "id"))
         grain, keys = "play", (game, play) if game and play else ()
-    elif dataset in {"team_stats", "team_boxscores", "stats_team_boxscores", "expected_goals"}:
+    elif dataset in {"team_stats", "team_boxscores", "stats_team_boxscores", "expected_goals", "match_analytics", "asa_analytics"}:
         grain, keys = "team_game", (game, team) if game and team else ()
-    elif dataset in {"player_boxscores", "stats_player_boxscores", "stats_player_game_logs", "player_game_logs", "player_expected_goals"} or (
+        if dataset == "match_analytics":
+            restrictions.append("Corroborated ESPN fixture/team keys; FotMob player IDs are not ESPN identities. "
+                                "Provider model version is undisclosed; do not mix modeled sources.")
+    elif dataset in {"player_boxscores", "stats_player_boxscores", "stats_player_game_logs", "player_game_logs",
+                     "player_expected_goals", "match_players"} or (
             sport == "cfb" and dataset == "player_stats"):
         grain, keys = "player_game", tuple(key for key in (game, team, player) if key)
         if sport == "nba":
@@ -156,6 +168,10 @@ def contract(manifest):
         grain, keys = "shot", tuple(key for key in (game, first(("play_id", "id", "action_number"))) if key)
     elif dataset in {"key_events", "scoring_events"}:
         grain, keys = "recorded_event", tuple(key for key in (game, first(("id",))) if key)
+    elif dataset == "open_events" and sport == "soccer":
+        grain, keys = "recorded_event", tuple(key for key in (game, first(("id",))) if key)
+        restrictions.append("StatsBomb native player identities are not ESPN athletes; "
+                            "full event coverage applies only to matched open-data games")
     elif dataset in {"player_crosswalk", "schedule_crosswalk", "team_crosswalk", "players", "teams", "player_core"}:
         grain = "identity_reference"
         restrictions.append("Identity reference does not establish historical membership")
@@ -166,6 +182,10 @@ def contract(manifest):
         grain = "interval_candidate"
         restrictions.append("Requires verified game, ordering, start/end bounds and provider crosswalk")
     player_namespace = ("pfr" if player == "pfr_player_id" else "gsis" if sport == "nfl" else namespace) if player else None
+    if sport == "soccer" and dataset == "match_players":
+        player_namespace = "fotmob"
+        restrictions.append("Native FotMob player IDs; ESPN athlete comparisons require a verified crosswalk. "
+                            "Require minutes for appearance rates.")
     team_namespace = ("abbreviation" if sport == "nfl" or team in {
         "team_abbreviation", "team_abbrev", "team_tricode"} else namespace + "_team_id") if team else None
     convention = {"nfl": "start_year", "cfb": "start_year", "nba": "end_year"}.get(sport, "competition_specific")
@@ -194,6 +214,9 @@ def relationships(manifests):
             if right.season not in {0, left.season}:
                 continue
             rc = definitions[right.manifest_id]
+            if ("open_events" in {left.dataset, right.dataset} and left.dataset != right.dataset
+                    and lc.grain == rc.grain == "recorded_event"):
+                continue  # Canonical fixtures do not establish a cross-provider event-ID mapping.
             lk, rk, kind, temporal = [], [], "equality", {}
             native_order = lc.namespace == rc.namespace == "nba_stats" and lc.game and rc.game
             if (native_order and right.dataset == "possessions_v3" and "order_index" in left.columns

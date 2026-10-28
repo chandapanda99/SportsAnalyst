@@ -6,7 +6,7 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.2"
+PROMPT_VERSION = "1.4"
 
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
@@ -111,6 +111,22 @@ qualification from one match. Compare goals and xG on the same covered matches, 
 non-penalty xG and xG on target. Goals minus xG is descriptive, not demonstrated finishing skill or a
 forecast. Keep full-season published totals separate from local date-filtered match samples. Possession
 and shots alone cannot establish pressing, buildup, defensive shape or territorial dominance.
+Keep ESPN, FotMob, ASA and StatsBomb model definitions separate; do not fill holes from another provider.
+Report undisclosed model versions and covered-match samples. A missing post-shot value is not zero.
+Open events support action/possession research only in covered matches. xT needs identical recorded model hashes.
+FotMob/StatsBomb player IDs are not ESPN athlete IDs. Provider player-match listings can include unused substitutes;
+require recorded minutes/participation for appearance-based rates. Physical metrics and proprietary ratings retain
+their source definitions; they are not reconstructed from sparse key events.
+Use supplemental coverage actively: inspect installed match analytics, player-match counters and open events
+for measurements relevant to the question. Pair possession with recorded chance creation/conversion and
+defensive prevention where available; a single possession trend does not establish improved control.
+Explain contradictory indicators and link each interpretation to registered measurements and match examples.
+For within-season evolution, calculate calendar-month summaries from recorded match dates, retaining
+season/year, home/away context, qualifying match counts and missing coverage. Compare like-for-like samples.
+Never group by the measured possession/score values to imply a trend. Keep categorical comparisons explicitly
+labelled and separate from chronology. Published season totals cannot be disaggregated into months.
+Request complementary metrics in one coherent objective across windows, with independent chart scales;
+do not produce a separate one-stat chart for every season or duplicate the same chart in prose.
 Do not invent xG, event coordinates, player positions, assists or tactical roles missing from sources.""",
 }
 
@@ -153,11 +169,20 @@ def evidence_brief(
     """Preserve recorded coverage without guessing missing denominators or completeness."""
     used_ids = {identifier for item in aggregate for identifier in item.dataset_manifest_ids}
     used_metrics = {item.metric for item in aggregate}
+    monthly_definitions = {item.context["measure"]["field"]: {
+        "metric_family": "soccer_monthly", "metric": item.context["measure"]["field"],
+        "label": item.context.get("metric_label"), "definition": item.context["definition"],
+        "unit": item.unit, "source_dataset": item.context.get("source_dataset"),
+        "aggregation": item.context.get("aggregation"),
+        "eligibility": "Recorded matches in the calendar month and selected window; use each evidence record's sample and caveats",
+    } for item in aggregate if item.metric == "soccer_monthly" and item.context.get("definition")}
     return {
         "prompt_version": PROMPT_VERSION,
         "scope": scope or {},
         "metric_definitions": [item.model_dump(mode="json") for item in definitions if item.value in used_metrics],
-        "undefined_metrics": sorted(used_metrics - {item.value for item in definitions}),
+        "supplemental_metric_definitions": list(monthly_definitions.values()),
+        "undefined_metrics": sorted(used_metrics - {item.value for item in definitions}
+                                    - ({"soccer_monthly"} if monthly_definitions else set())),
         "sources": [
             {
                 "dataset": item.dataset,

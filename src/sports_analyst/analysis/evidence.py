@@ -34,8 +34,8 @@ class SelectedEvidence:
     selector_version: str = SELECTOR_VERSION
 
 
-def _percentiles(candidates: list[EvidenceCandidate]) -> dict[str, float]:
-    percentiles: dict[str, float] = {}
+def _percentiles(candidates: list[EvidenceCandidate]) -> dict[tuple[str, str], float]:
+    percentiles: dict[tuple[str, str], float] = {}
     for window in ("baseline", "comparison"):
         pool = [candidate for candidate in candidates if candidate.window == window]
         valued = sorted(
@@ -43,7 +43,7 @@ def _percentiles(candidates: list[EvidenceCandidate]) -> dict[str, float]:
             key=lambda candidate: (float(candidate.outcome_value), candidate.key),
         )
         if len(valued) < 2:
-            percentiles.update({candidate.key: 0.5 for candidate in pool})
+            percentiles.update({(candidate.window, candidate.key): 0.5 for candidate in pool})
             continue
         ranks: dict[float, list[int]] = {}
         for index, candidate in enumerate(valued):
@@ -53,7 +53,7 @@ def _percentiles(candidates: list[EvidenceCandidate]) -> dict[str, float]:
             for value, indices in ranks.items()
         }
         percentiles.update({
-            candidate.key: mapped.get(float(candidate.outcome_value), 0.5)
+            (candidate.window, candidate.key): mapped.get(float(candidate.outcome_value), 0.5)
             if candidate.outcome_value is not None else 0.5
             for candidate in pool
         })
@@ -112,19 +112,26 @@ def select_diverse_evidence(candidates: list[EvidenceCandidate], metric_label: s
     """Fill stable evidence roles while preferring different games and contexts."""
     if not candidates:
         return []
-    candidates = list({candidate.key: candidate for candidate in candidates}.values())
+    observations: dict[tuple[str, str], EvidenceCandidate] = {}
+    for candidate in candidates:
+        identity = (candidate.window, candidate.key)
+        if identity in observations and observations[identity] != candidate:
+            raise ValueError(f"Conflicting evidence candidates for {identity}; no arbitrary duplicate selection")
+        observations[identity] = candidate
+    # Also stabilize reductions used to infer direction and percentile ranks.
+    candidates = [observations[key] for key in sorted(observations)]
     percentiles = _percentiles(candidates)
     direction = _observed_direction(candidates) if direction is None else direction
     roles: list[EvidenceRole] = ["typical", "metric_example", "supports_change", "counterexample"]
     if per_window > len(roles):
         roles.extend(["metric_example"] * (per_window - len(roles)))
     selected: list[SelectedEvidence] = []
-    chosen: set[str] = set()
+    chosen: set[tuple[str, str]] = set()
     game_counts: dict[str, int] = {}
     for window in ("baseline", "comparison"):
         pool = [candidate for candidate in candidates if candidate.window == window]
         for role in roles[:per_window]:
-            available = [candidate for candidate in pool if candidate.key not in chosen]
+            available = [candidate for candidate in pool if (candidate.window, candidate.key) not in chosen]
             if not available:
                 break
             diverse = [candidate for candidate in available if game_counts.get(candidate.game_id, 0) < max_per_game]
@@ -132,7 +139,8 @@ def select_diverse_evidence(candidates: list[EvidenceCandidate], metric_label: s
             ranked = sorted(
                 eligible,
                 key=lambda candidate: (
-                    -_slot_score(candidate, role, percentiles[candidate.key], direction, [item.candidate for item in selected]),
+                    -_slot_score(candidate, role, percentiles[(candidate.window, candidate.key)], direction,
+                                 [item.candidate for item in selected]),
                     candidate.key,
                 ),
             )
@@ -146,6 +154,6 @@ def select_diverse_evidence(candidates: list[EvidenceCandidate], metric_label: s
                     candidate_pool_size=len(pool),
                 )
             )
-            chosen.add(winner.key)
+            chosen.add((winner.window, winner.key))
             game_counts[winner.game_id] = game_counts.get(winner.game_id, 0) + 1
     return selected

@@ -130,11 +130,15 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual(soccer_season_label("usa.1", 2025), "2025")
         self._sync([2025])
         first = self.store.manifest_for_season(2025, "team_stats", "soccer", "eng.1")
-        self.assertEqual(first.coverage, {"completed_matches": 1, "expected_matches": 2, "recorded_matches": 1, "failed_requests": 1})
+        counts = ("completed_matches", "expected_matches", "recorded_matches", "failed_requests")
+        self.assertEqual({key: first.coverage[key] for key in counts},
+                         {"completed_matches": 1, "expected_matches": 2, "recorded_matches": 1, "failed_requests": 1})
         self.assertEqual(first.availability, "partial")
         self._sync([2025])
         resumed = self.store.manifest_for_season(2025, "team_stats", "soccer", "eng.1")
-        self.assertEqual(resumed.coverage, {"completed_matches": 2, "expected_matches": 2, "recorded_matches": 2})
+        self.assertEqual({key: resumed.coverage[key] for key in counts[:-1]},
+                         {"completed_matches": 2, "expected_matches": 2, "recorded_matches": 2})
+        self.assertNotIn("failed_requests", resumed.coverage)
         self._sync([2025], "esp.1")
         self.assertEqual(len(self.store.manifests("play_by_play", "soccer")), 2)
         self.assertEqual(self.store.manifest_for_season(2025, "play_by_play", "soccer", "eng.1").competition, "eng.1")
@@ -257,7 +261,12 @@ class SoccerIntegrationTests(unittest.TestCase):
                                subject={"type": "team", "id": "1"}, analysis_domain="attack",
                                metrics=["points_per_match", "win_rate", "shots_per_match", "possession_pct"])
         team_result = plugin.analyze(team, schedules, manifests, extras)
-        self.assertEqual({item.metric for item in team_result.aggregate_evidence}, {"points_per_match", "win_rate", "shots_per_match", "possession_pct"})
+        shuffled = plugin.analyze(team, {year: frame.reverse() for year, frame in schedules.items()}, manifests,
+            {name: {year: frame.reverse() for year, frame in frames.items()} for name, frames in extras.items()})
+        self.assertEqual([play.evidence_id for play in team_result.play_evidence], [play.evidence_id for play in shuffled.play_evidence])
+        self.assertEqual([item.row_set_sha256 for item in team_result.aggregate_evidence],
+                         [item.row_set_sha256 for item in shuffled.aggregate_evidence])
+        self.assertEqual({item.metric for item in team_result.aggregate_evidence if item.metric != "soccer_monthly"}, {"points_per_match", "win_rate", "shots_per_match", "possession_pct"})
         self.assertEqual(next(item.comparison_value for item in team_result.aggregate_evidence if item.metric == "possession_pct"), 0.53)
         self.assertEqual(len(team_result.play_evidence), 4)
         self.assertTrue(any(not play.visualization.soccer_timeline for play in team_result.play_evidence))
@@ -269,7 +278,7 @@ class SoccerIntegrationTests(unittest.TestCase):
                                  subject={"type": "player", "id": "10"}, analysis_domain="usage",
                                  metrics=["appearances", "starts", "goals", "assists"])
         player_result = plugin.analyze(player, schedules, manifests, extras)
-        self.assertEqual({item.metric for item in player_result.aggregate_evidence}, {"appearances", "starts", "goals", "assists"})
+        self.assertEqual({item.metric for item in player_result.aggregate_evidence if item.metric != "soccer_monthly"}, {"appearances", "starts", "goals", "assists"})
         self.assertEqual(next(item.comparison_value for item in player_result.aggregate_evidence if item.metric == "goals"), 1.0)
         date_request = AnalysisRequest(sport="soccer", question="Did Home's results change during the season?",
                                        scope={"team": "1", "competition": "eng.1", "comparison_design": "date_ranges",

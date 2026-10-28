@@ -719,9 +719,9 @@ def summarize_player_usage(frame: pl.DataFrame, window: AnalysisWindow) -> dict[
     if scoped.is_empty():
         return {}
     grouped = scoped.group_by("player_id").agg(
-        pl.first("player_name").alias("player_name"),
-        pl.first("position").alias("position"),
-        pl.first("position_group").alias("position_group"),
+        pl.col("player_name").sort_by(["week", "player_name"]).drop_nulls().first().alias("player_name"),
+        pl.col("position").sort_by(["week", "position"]).drop_nulls().first().alias("position"),
+        pl.col("position_group").sort_by(["week", "position_group"]).drop_nulls().first().alias("position_group"),
         pl.col("targets").sum(),
         pl.col("carries").sum(),
         pl.col("dropbacks").sum(),

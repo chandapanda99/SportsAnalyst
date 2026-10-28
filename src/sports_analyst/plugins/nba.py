@@ -15,6 +15,7 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
+from sports_analyst.analysis.ordering import unique_records
 from sports_analyst.datasets.nba import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available
 from sports_analyst.models import (
     AggregateEvidence,
@@ -592,7 +593,8 @@ def _metric_game_rows(frame: pl.DataFrame, metric: str, subject_type: str) -> li
                 "value": value,
             }
         )
-    return result
+    # Charts enumerate these rows as consecutive games; provider file order is not chronology.
+    return sorted(result, key=lambda row: (row["game_date"] is None, row["game_date"] or "", row["game_id"]))
 
 
 def _difference_interval(baseline: list[float], comparison: list[float]) -> tuple[float | None, float | None]:
@@ -1270,7 +1272,7 @@ class NBAPlugin:
 
         before, after = units(baseline), units(comparison)
         combined: list[dict[str, Any]] = []
-        for group_id in before.keys() | after.keys():
+        for group_id in sorted(before.keys() | after.keys()):
             old, new = before.get(group_id), after.get(group_id)
             current = new or old or {}
             status = "returning" if old and new else "new" if new else "departed"
@@ -1508,9 +1510,10 @@ class NBAPlugin:
                 target_value = next((value for name, value in results if name.upper() == target), None)
                 if target_value is not None and results:
                     higher = METRICS[metric][5] is not False
-                    ordered = sorted(results, key=lambda item: item[1], reverse=higher)
-                    rank = next(index for index, item in enumerate(ordered, 1) if item[0].upper() == target)
-                    benchmark_params = {"metric": metric, "season": season, "rank": rank, "teams": len(ordered)}
+                    # Equal measurements share a competition rank, independent of group order.
+                    rank = 1 + sum(value > target_value if higher else value < target_value for _, value in results)
+                    team_count = len(results)
+                    benchmark_params = {"metric": metric, "season": season, "rank": rank, "teams": team_count}
                     benchmark_id = stable_id("execution", {"tool": "benchmark_against_league", **benchmark_params})
                     evidence.append(
                         AggregateEvidence(
@@ -1519,15 +1522,15 @@ class NBAPlugin:
                             label=f"League rank: {METRICS[metric][0]}",
                             value=rank,
                             comparison_value=target_value,
-                            unit=f"rank of {len(ordered)}",
-                            sample_size=len(ordered),
+                            unit=f"rank of {team_count}",
+                            sample_size=team_count,
                             row_set_sha256=_sha(benchmark_params),
                             dataset_manifest_ids=manifest_ids,
                             tool_execution_id=benchmark_id,
                             context={
                                 "rank": rank,
-                                "teams": len(ordered),
-                                "percentile": round(100 * (len(ordered) - rank) / max(1, len(ordered) - 1), 1),
+                                "teams": team_count,
+                                "percentile": round(100 * (team_count - rank) / max(1, team_count - 1), 1),
                             },
                         )
                     )
@@ -1761,7 +1764,7 @@ class NBAPlugin:
                 scoped = scoped.filter(pl.col("per_mode").cast(pl.String).str.to_lowercase() == preferred)
         keys = [column for column in ("team_abbreviation", "team_id", "group_id", "season_type") if column in scoped.columns]
         if keys:
-            scoped = scoped.unique(subset=keys, keep="first", maintain_order=True)
+            scoped = unique_records(scoped, keys, "NBA lineup aggregate")
         return scoped
 
     @staticmethod
@@ -1869,7 +1872,8 @@ class NBAPlugin:
                 )
                 if period is not None and "period" in possession.columns:
                     possession = possession.filter(_numeric(possession, "period") == period)
-                if possession.height:
+                possession = possession.unique()
+                if possession.height == 1:
                     possession_row = possession.row(0, named=True)
                     possession_number = possession_row.get("possession_number")
                     offense_players = [
@@ -1885,11 +1889,17 @@ class NBAPlugin:
                     source_packages.append("possessions_v3")
             if not offense_players and not lineup_frame.is_empty() and "game_id" in lineup_frame.columns:
                 lineup = lineup_frame.filter(pl.col("game_id").cast(pl.String) == game_id)
+                if period is not None and "period" in lineup.columns:
+                    lineup = lineup.filter(_numeric(lineup, "period") == period)
                 action_column = "action_number" if "action_number" in lineup.columns else "play_id" if "play_id" in lineup.columns else None
                 if action_column:
-                    exact = lineup.filter(_numeric(lineup, action_column) == play_id)
-                    lineup = exact if exact.height else lineup.filter(_numeric(lineup, action_column) <= play_id).tail(1)
-                if lineup.height:
+                    lineup = lineup.with_columns(_numeric(lineup, action_column).alias("_action_order"))
+                    lineup = lineup.filter(pl.col("_action_order") <= play_id)
+                    # Select the latest recorded action, never the last received row.
+                    lineup = lineup.filter(pl.col("_action_order") == pl.col("_action_order").max()).unique()
+                else:
+                    lineup = lineup.head(0)
+                if lineup.height == 1:
                     lineup_row = lineup.row(0, named=True)
                     home_players = [
                         str(lineup_row[column])

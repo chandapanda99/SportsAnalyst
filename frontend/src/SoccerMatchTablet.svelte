@@ -1,4 +1,6 @@
 <script lang="ts">
+  import SoccerAnalytics from './SoccerAnalytics.svelte';
+  import SoccerEvents from './SoccerEvents.svelte';
   import type {Evidence, PlayVisualization} from './types';
   import PitchReference from './PitchReference.svelte';
   import TeamBadge from './TeamBadge.svelte';
@@ -49,9 +51,14 @@
   $: match = play.visualization;
   $: homeAccent = teamChartPalette(match?.home_team_name ?? '', 'soccer', play.season)[0];
   $: awayAccent = teamChartPalette(match?.away_team_name ?? '', 'soccer', play.season)[0];
-  $: events = normalizeEvents(match?.soccer_timeline ?? [])
+  $: normalizedEvents = normalizeEvents(match?.soccer_timeline ?? []);
+  $: hasSourceOrder = normalizedEvents.every(event => event.sequence != null && Number.isFinite(Number(event.sequence)));
+  $: events = normalizedEvents
       .map((event, index) => ({event, index, minute: minuteOf(event.clock), kind: kindOf(event)}))
-      .sort((a, b) => (a.minute ?? Number.POSITIVE_INFINITY) - (b.minute ?? Number.POSITIVE_INFINITY) || a.index - b.index);
+      .sort((a, b) => {
+        if (hasSourceOrder) return Number(a.event.sequence) - Number(b.event.sequence) || a.index - b.index;
+        return (a.minute ?? Number.POSITIVE_INFINITY) - (b.minute ?? Number.POSITIVE_INFINITY) || a.index - b.index;
+      });
   let selectedEventIndex = 0;
   let currentPlayId = play.evidence_id;
   $: if (play.evidence_id !== currentPlayId) {
@@ -87,7 +94,8 @@
     {/if}
     {#if match?.match_notes}<span>{match.match_notes}</span>{/if}
   </div>
-  <PitchReference/>
+  {#if match?.soccer_analytics?.length}<SoccerAnalytics rows={match.soccer_analytics}/>{:else}<PitchReference/>{/if}
+  {#if match?.soccer_actions?.length}<SoccerEvents actions={match.soccer_actions} total={match.soccer_actions_count ?? 0}/>{/if}
   <div class="timeline-heading">
     <div><h4>Match Timeline</h4>
       <p>Select a marker to read the recorded event.</p></div>

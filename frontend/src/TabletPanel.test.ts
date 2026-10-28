@@ -1,4 +1,4 @@
-import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/svelte';
+import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/svelte';
 import {afterEach, expect, it, vi} from 'vitest';
 import TabletPanel from './TabletPanel.svelte';
 import * as loader from './tabletLoader';
@@ -6,6 +6,26 @@ import {api} from './api';
 import type {Evidence} from './types';
 
 afterEach(() => {cleanup(); vi.restoreAllMocks();});
+
+it('keeps recorded soccer event order when display clocks repeat', async () => {
+  const {default: SoccerMatchTablet} = await import('./SoccerMatchTablet.svelte');
+  const play = {sport: 'soccer', evidence_id: 'ordered-match', season: 2025, game_id: 'match',
+    play_id: 0, team: '1', description: 'Match', supporting: true,
+    visualization: {sport: 'soccer', home_team_name: 'Home', away_team_name: 'Away', soccer_timeline: [
+      {sequence: '1', clock: "45+2'", type: 'Goal', text: 'Second source event'},
+      {sequence: '2', clock: "46'", type: 'Goal', text: 'Third source event'},
+      {sequence: '0', clock: "45+2'", type: 'Goal', text: 'First source event'},
+    ]}} as Evidence;
+  render(SoccerMatchTablet, {play, onclose: vi.fn()});
+  const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});
+  const buttons = within(timeline).getAllByRole('button');
+  await fireEvent.click(buttons[0]);
+  expect(screen.getByText('First source event')).toBeTruthy();
+  await fireEvent.click(buttons[1]);
+  expect(screen.getByText('Second source event')).toBeTruthy();
+  await fireEvent.click(buttons[2]);
+  expect(screen.getByText('Third source event')).toBeTruthy();
+});
 
 it.each(['nfl', 'cfb', 'nba', 'soccer'])('shows an interactive placeholder before mounting the %s tablet', async sport => {
   const loaded = await loader.loadTablet(sport);

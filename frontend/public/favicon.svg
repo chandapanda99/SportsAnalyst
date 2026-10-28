@@ -6,7 +6,7 @@
 
   <title id="title">Open Sports Analyst</title>
   <desc id="desc">
-    A balanced sports analytics emblem featuring a football, basketball, rising analytics arrow,
+    A balanced sports analytics emblem featuring a football, basketball, soccer ball, rising analytics arrow,
     bar chart, and open data ring.
   </desc>
 
@@ -83,6 +83,16 @@
       <stop offset="0.5" stop-color="#fff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#fff" stop-opacity="0"/>
     </radialGradient>
+
+    <radialGradient id="soccerBall" cx="30%" cy="24%" r="82%">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="0.65" stop-color="#f1f7f4"/>
+      <stop offset="1" stop-color="#bed4ca"/>
+    </radialGradient>
+
+    <clipPath id="soccerClip">
+      <circle r="48"/>
+    </clipPath>
 
     <linearGradient id="barBlue" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0f4d91"/>
@@ -171,6 +181,23 @@
   <g filter="url(#nodeGlow)">
     <circle cx="408" cy="104" r="19" fill="url(#teal)"/>
     <circle cx="104" cy="408" r="19" fill="url(#teal)"/>
+  </g>
+
+  <!-- Soccer ball: basketball-sized, layered behind both foreground balls -->
+  <g filter="url(#objectShadow)">
+    <g transform="translate(168 232) scale(1.3333333333)">
+      <circle r="48" fill="url(#soccerBall)" stroke="#0b3551" stroke-width="3"/>
+      <g clip-path="url(#soccerClip)" fill="#0b3551" stroke="#0b3551" stroke-linejoin="round">
+        <path d="M0 -20 19 -6 12 17 -12 17 -19 -6Z" stroke-width="2"/>
+        <path d="M-13 -48H13L15 -40 0 -34 -15 -40Z
+                 M43 -28 53 -4 41 2 32 -10 34 -24Z
+                 M42 28 24 47 13 40 20 28 34 24Z
+                 M-42 28 -24 47 -13 40 -20 28 -34 24Z
+                 M-43 -28 -53 -4 -41 2 -32 -10 -34 -24Z" stroke-width="2"/>
+        <path d="M0 -20V-34 M19 -6 32 -10 M12 17 20 28 M-12 17 -20 28 M-19 -6 -32 -10"
+              fill="none" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+    </g>
   </g>
 
   <!-- Football: slightly reduced and shifted for better balance -->

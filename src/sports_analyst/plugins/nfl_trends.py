@@ -59,7 +59,7 @@ class NFLTrendMixin:
                         metric=f"seasonal_{metric}",
                         label=f"{season} · {label}",
                         value=round(value, 4),
-                        unit="rate" if "rate" in metric or metric in {"success_rate", "cpoe"} else "per play",
+                        unit="percentage_points" if metric == "cpoe" else "rate" if "rate" in metric else "per play",
                         sample_size=frame.height,
                         confidence_low=round(low, 4) if low is not None else None,
                         confidence_high=round(high, 4) if high is not None else None,

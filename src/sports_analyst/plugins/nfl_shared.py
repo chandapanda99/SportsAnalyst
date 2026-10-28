@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -544,14 +545,16 @@ def _metric_value(frame: pl.DataFrame, source: str) -> float | None:
     if column not in frame.columns or frame[column].drop_nulls().len() == 0:
         return None
     # noinspection bad-argument-type
-    return float(frame[column].drop_nulls().mean())
+    values = frame[column].drop_nulls().to_list()
+    # This value enters evidence identities: avoid order-sensitive floating accumulation.
+    return math.fsum(values) / len(values)
 
 
 def _game_bootstrap(frame: pl.DataFrame, source: str, seed: int, iterations: int = 500) -> tuple[float | None, float | None]:
     column = f"_{source}"
     if "game_id" not in frame.columns or column not in frame.columns:
         return None, None
-    games = frame.group_by("game_id").agg(pl.col(column).drop_nulls().mean().alias("value")).drop_nulls()
+    games = frame.group_by("game_id").agg(pl.col(column).drop_nulls().mean().alias("value")).drop_nulls().sort("game_id")
     values = games["value"].to_list()
     if len(values) < 3:
         return None, None
@@ -566,7 +569,8 @@ def _game_bootstrap(frame: pl.DataFrame, source: str, seed: int, iterations: int
 def _bootstrap_mean(values: list[float], seed: int, iterations: int = 500) -> tuple[float | None, float | None]:
     if len(values) < 10:
         return None, None
-    population = np.asarray(values, dtype=float)
+    # Resampling indices must refer to the same values regardless of input order.
+    population = np.sort(np.asarray(values, dtype=float))
     rng = np.random.default_rng(seed)
     samples = np.sort(population[rng.integers(0, len(population), size=(iterations, len(population)))].mean(axis=1))
     return samples[round(0.025 * (iterations - 1))], samples[round(0.975 * (iterations - 1))]
@@ -613,8 +617,9 @@ def _decomposition(
             "dimension": split_name,
             "metric": metric,
             "value": str(row[dimension]),
-            "performance": performance,
-            "mix": mix,
+            # Identity precision excludes sub-picounit reduction noise, not source records.
+            "performance": round(performance, 12),
+            "mix": round(mix, 12),
         }
         evidence_id = stable_id("evidence", payload)
         results.append(
@@ -633,7 +638,7 @@ def _decomposition(
                 caveats=["Contributions within a dimension are descriptive and must not be summed across overlapping dimensions."],
             )
         )
-    return sorted(results, key=lambda item: abs(float(item.value or 0)), reverse=True)[:8]
+    return sorted(results, key=lambda item: (-abs(float(item.value or 0)), item.evidence_id))[:8]
 
 
 def _execution_record(

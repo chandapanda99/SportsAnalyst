@@ -1,4 +1,5 @@
 """Major research behaviors: scoped joins, source budgets, replay and agent registration."""
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +33,35 @@ def setup_access(tmp_path, sport, frames, player=False, persistence=None):
         question="Which recorded context explains the change?", scope={"team": "A", "competition": "eng.1" if sport == "soccer" else None,
             "season_type": "ALL", "comparison_design": "full_seasons", "baseline": {"season": 2024}, "comparison": {"season": 2025}})
     return ScopedData(app, request, None, "research-test"), manifests
+
+
+def test_monthly_joined_measurements_use_recorded_dates_and_paired_counters(tmp_path):
+    stats = {"game_id": ["1", "2", "3"], "team_id": ["A"] * 3,
+             "accurate_passes": [1., 90., 5.], "total_passes": [2., 100., 10.]}
+    schedule = {"event_id": ["1", "2", "3"], "home_team_id": ["A"] * 3,
+                "away_team_id": ["B"] * 3, "date": ["2025-01-12", "2025-01-28", "2025-03-02"]}
+    access, sources = setup_access(tmp_path, "soccer", [("team_stats", stats), ("play_by_play", schedule)])
+    relation = next(r for r in access.executor.discover()["relationships"] if r["left_dataset_id"] == "m0")
+    plan = {"objective": "Monthly passing", "dataset_id": "m0", "window": "comparison",
+            "grain": contract(sources[0]).grain,
+            "steps": [{"relationship_id": relation["relationship_id"], "alias": "game", "fields": ["date"]}],
+            "time_bucket": {"field": "game__date", "interval": "month"}, "group_by": ["month"],
+            "measures": [{"op": "rate", "field": "accurate_passes", "denominator": "total_passes", "name": "passing"}]}
+    result = access.executor.execute(access.executor.validate(plan)["plan_id"])
+    assert [r["month"] for r in result["rows"]] == ["2025-01", "2025-03"]
+    assert result["rows"][0]["passing"] == 91 / 102
+    assert result["rows"][0]["passing_non_null"] == 2
+    assert result["qualifying_rows"] == 3
+    plan["time_bucket"]["field"] = "accurate_passes"
+    with pytest.raises(ValueError, match="recorded match/game date"):
+        access.executor.validate(plan)
+    plan["time_bucket"]["field"] = "game__date"
+    schedule["date"][0] = "not-a-date"
+    pl.DataFrame(schedule).write_parquet(sources[1].local_path)
+    sources[1] = sources[1].model_copy(update={"sha256": sha256_file(Path(sources[1].local_path))})
+    access.manifests["m1"] = sources[1]
+    with pytest.raises(ValueError, match="missing/invalid recorded dates"):
+        access.executor.execute(access.executor.validate(plan)["plan_id"])
 
 
 @pytest.mark.parametrize("sport,base,context", [
@@ -71,6 +101,53 @@ def test_joined_measurements_preserve_scope_coverage_and_replay(tmp_path, sport,
     pl.DataFrame(right).head(0).write_parquet(sources[1].local_path)
     with pytest.raises(ValueError, match="checksum"):
         access.executor.execute(validated["plan_id"])
+
+
+@pytest.mark.parametrize("sport,base,context", [
+    ("nfl", "play_by_play", "ftn_charting"), ("cfb", "player_stats", "team_stats"),
+    ("nba", "player_boxscores", "team_boxscores"), ("soccer", "team_stats", "expected_goals"),
+])
+def test_null_coverage_filters_preserve_scoped_and_joined_measurements(tmp_path, sport, base, context):
+    team = "posteam" if sport == "nfl" else "team_abbreviation" if sport == "nba" else "team_id"
+    rows = {"game_id": ["1", "2", "3", "4"], team: ["A", "A", "A", "OTHER"],
+            "yards": [10., None, 30., 999.]}
+    right = {"game_id": ["1", "2", "3"], "coverage": ["recorded", None, "recorded"]}
+    if sport == "nfl":
+        rows["play_id"] = ["p1", "p2", "p3", "p4"]
+        right["play_id"] = ["p1", "p2", "p3"]
+    else:
+        right[team] = ["A"] * 3
+    if sport in {"cfb", "nba"}:
+        rows["athlete_id"] = ["7", "7", "7", "8"]
+    access, sources = setup_access(tmp_path, sport, [(base, rows), (context, right)])
+    relation = next(r for r in access.executor.discover()["relationships"] if r["left_dataset_id"] == "m0")
+    # The warning is an error here: even unused comparisons must never be constructed.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for op, value, count, total in [
+            ("is_not_null", None, 2, 40.), ("eq", None, 1, None), ("ne", None, 2, 40.),
+            ("eq", 10, 1, 10.), ("ne", 10, 1, 30.), ("gt", 10, 1, 30.),
+            ("ge", 10, 2, 40.), ("lt", 30, 1, 10.), ("le", 30, 2, 40.),
+        ]:
+            filters = [{"field": "yards", "op": op, "value": value}]
+            scoped = access.aggregate("m0", "comparison", [], [{"op": "sum", "field": "yards"}], filters)
+            assert scoped["qualifying_rows"] == count and scoped["rows"][0]["m0"] == total
+        for field, op, count, total in [
+            ("ctx__coverage", "is_not_null", 2, 40.), ("ctx__coverage", "eq", 1, None),
+            ("yards", "ne", 2, 40.),
+        ]:
+            plan = {"objective": "Recorded coverage", "dataset_id": "m0", "window": "comparison",
+                "grain": contract(sources[0]).grain,
+                "steps": [{"relationship_id": relation["relationship_id"], "alias": "ctx", "fields": ["coverage"]}],
+                "filters": [{"field": field, "op": op, "value": None}],
+                "measures": [{"op": "sum", "field": "yards", "name": "total_yards"}]}
+            joined = access.executor.execute(access.executor.validate(plan)["plan_id"])
+            assert joined["qualifying_rows"] == count and joined["rows"][0]["total_yards"] == total
+        with pytest.raises(ValueError, match="requires a non-null value"):
+            access.aggregate("m0", "comparison", [], [{"op": "count"}], [{"field": "yards", "op": "gt"}])
+        plan["filters"] = [{"field": "yards", "op": "lt", "value": None}]
+        with pytest.raises(ValueError, match="requires a non-null value"):
+            access.executor.validate(plan)
 
 
 def test_child_fanout_existence_filters_and_preaggregation(tmp_path):

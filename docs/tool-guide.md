@@ -239,6 +239,36 @@ dependency group. Current investigations use synced bulk data and do not make li
 
 ## Soccer
 
+Optional Data Management packages extend the ESPN baseline without replacing it:
+
+- **Match analytics** (`match_analytics`): FotMob team-match counters, xG/xGOT,
+  shot locations, player statistics, formation labels and recorded context.
+- **Match players** (`match_players`): native FotMob player-match counters for
+  team-scoped research. These IDs do not identify selected ESPN athletes without
+  a verified crosswalk; unused substitutes need minutes/participation filters.
+- **ASA analytics** (`asa_analytics`): separately defined MLS/NWSL team-model xG,
+  player-shot-model xG and expected points. Sampled endpoints returned HTTP 500
+  on 2026-10-28; failed acquisition is not proof that the statistics do not exist.
+- **Open events** (`open_events`): matched StatsBomb open-data fixtures, original
+  event context, spatial actions and SportsDataverse SPADL/xT. Open coverage is
+  limited to published matches, not every season or competition. Review the
+  [source license](https://github.com/statsbomb/open-data) for the intended use.
+
+Choose the additional packages in Data Management and sync the selected seasons.
+New predefined team metrics include passing, defensive and set-piece counters,
+paired-counter pass completion, source-specific expected metrics and covered-event
+xT. Other recorded numeric columns are discoverable by the research tools.
+Model versions undisclosed by a provider remain explicitly unknown; different
+sources never fill each other's comparison windows. xT comparisons require
+identical model hashes. Shot markers and action endpoints are recorded events,
+not player tracking. The event visual currently exposes up to 1,000 events per
+match; calculations use the entire acquired sample.
+
+Repeat source-only probes explicitly with
+`python scripts/audit_soccer_sources.py --run-live-sources --include-open-events`.
+Raw captures and audit results go under `build/soccer-source-audit/`; these samples
+do not certify universal historical coverage. The check calls no LLM.
+
 Supported competitions: Premier League, MLS, La Liga, Bundesliga, Serie A,
 Ligue 1, NWSL and UEFA Champions League. Select competition before season and
 subject; competition identities isolate downloaded data.

@@ -814,7 +814,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     value=round(comp_value - base_value, 4),
                     baseline_value=round(base_value, 4),
                     comparison_value=round(comp_value, 4),
-                    unit="rate" if "rate" in metric or metric in {"success_rate", "cpoe"} else "per play",
+                    unit="percentage_points" if metric == "cpoe" else "rate" if "rate" in metric else "per play",
                     sample_size=comparison.height,
                     context={"baseline_sample": baseline.height, "comparison_sample": comparison.height,
                              "sample_definition": "Qualifying play rows; per-metric non-null denominators may differ."},
@@ -921,7 +921,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             }
             opponent_evidence.append(
                 AggregateEvidence(
-                    evidence_id=stable_id("evidence", {**payload, "values": adjusted_values}),
+                    evidence_id=stable_id("evidence", {**payload, "values": [round(value, 4) for value in adjusted_values]}),
                     metric="opponent_adjusted_epa_per_dropback",
                     label="Opponent-adjusted EPA/dropback",
                     value=round(comp_adjusted - base_adjusted, 4),

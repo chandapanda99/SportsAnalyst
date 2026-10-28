@@ -33,3 +33,4 @@ node_modules/
 /docs/audits/
 /docs/research-source-validation.md
 /scripts/validate_research_sources.py
+/docs/references/

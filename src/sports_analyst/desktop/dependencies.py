@@ -6,6 +6,7 @@ def check_runtime_dependencies() -> None:
     for module in (
         "duckdb", "polars", "pyarrow", "vl_convert", "webview", "nflreadpy",
         "sportsdataverse.soccer", "sportsdataverse.nba.nba_loaders", "sportsdataverse.cfb", "sportsdataverse.cfb.cfb_pbp", "sportsdataverse.dl_utils",
+        "kloppy.statsbomb",
     ):
         try:
             importlib.import_module(module)
@@ -20,6 +21,11 @@ def check_runtime_dependencies() -> None:
         assert connection.execute("SELECT 1").fetchone() == (1,)
     assert pl.DataFrame({"value": [1, 2]}).select(pl.col("value").sum()).item() == 3
     assert pa.table({"value": [1, 2]}).num_rows == 2
+    from sportsdataverse.soccer import load_xthreat_model
+
+    actions = pl.DataFrame({"type_name": ["pass"], "result_name": ["success"],
+                            "start_x": [20.], "start_y": [34.], "end_x": [80.], "end_y": [34.]})
+    assert load_xthreat_model().rate(actions).is_not_null().sum() == 1
     # Exercise the bundled Wasm guests as well as wasmtime's native library.
     from quickjs_rs import Context, Runtime
 

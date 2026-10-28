@@ -744,6 +744,15 @@ def test_play_evidence_resumes_partial_sources_and_filters_players_and_nullified
                                  for year, manifest in saved[dataset].items()}
     result = CFBPlugin().analyze(request, datasets, manifests, supplemental, saved)
     assert len(result.play_evidence) == 8
+    recorded = supplemental["recorded_plays"][2025].filter(pl.col("game_id") == "20251").sort("source_order")
+    assert recorded["source_order"].to_list() == [0, 1, 2, 3]
+    assert [identity[-2:] for identity in recorded["play_id"].to_list()] == ["01", "02", "03", "04"]
+    shuffled = CFBPlugin().analyze(request,
+        {year: frame.reverse() for year, frame in datasets.items()}, manifests,
+        {name: {year: frame.reverse() for year, frame in frames.items()} for name, frames in supplemental.items()}, saved)
+    assert [play.evidence_id for play in shuffled.play_evidence] == [play.evidence_id for play in result.play_evidence]
+    assert [item.row_set_sha256 for item in shuffled.aggregate_evidence] == [
+        item.row_set_sha256 for item in result.aggregate_evidence]
     assert {play.evidence_role for play in result.play_evidence} == {"typical", "metric_example", "supports_change", "counterexample"}
     assert all(play.candidate_pool_size == 6 and not str(play.play_id).endswith("04") for play in result.play_evidence)
     assert result.aggregate_evidence[0].baseline_value == .2 and result.aggregate_evidence[0].comparison_value == .4

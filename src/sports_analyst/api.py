@@ -396,14 +396,18 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     @api.get("/api/investigations/{investigation_id}", response_model=InvestigationBundle)
     def investigation(investigation_id: str) -> InvestigationBundle:
         try:
-            return service.store.get_investigation(investigation_id)
+            from sports_analyst.analysis.research.presentation import refresh_chart_presentation
+
+            return refresh_chart_presentation(service.store.get_investigation(investigation_id))
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @api.get("/api/investigations/{investigation_id}/thread", response_model=list[InvestigationBundle])
     def investigation_thread(investigation_id: str) -> list[InvestigationBundle]:
         try:
-            return service.store.investigation_thread(investigation_id)
+            from sports_analyst.analysis.research.presentation import refresh_chart_presentation
+
+            return [refresh_chart_presentation(bundle) for bundle in service.store.investigation_thread(investigation_id)]
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

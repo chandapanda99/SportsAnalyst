@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from sports_analyst.analysis.ordering import unique_records
 from sports_analyst.models import PlayEvidence
 
 
@@ -29,7 +30,7 @@ def game_plays(application, investigation_id, evidence_id):
         frame = frame.with_columns([
             pl.when(pl.col(name).is_finite()).then(pl.col(name)).otherwise(None).alias(name)
             for name, dtype in frame.schema.items() if dtype in {pl.Float32, pl.Float64}])
-        frame = frame.drop_nulls(["game_id", "play_id"]).unique(subset=["game_id", "play_id"], maintain_order=True).sort("play_id")
+        frame = unique_records(frame.drop_nulls(["game_id", "play_id"]), ["game_id", "play_id"], "NFL game play")
         if frame.is_empty():
             return fallback(cited)
         if frame.height > 1000:

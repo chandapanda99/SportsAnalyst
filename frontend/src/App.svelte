@@ -1510,7 +1510,7 @@
   function chartGuidance(specification: Record<string, unknown>) {
     const usermeta = specification.usermeta as { chartKind?: string } | undefined;
     if (usermeta?.chartKind === 'metric-rows') {
-      return 'Each metric uses its own vertical scale; labels show exact values while seasons run left to right.';
+      return ''; // The chart owns its guidance and matching series legend.
     }
     const encoding = specification.encoding as Record<string, unknown> | undefined;
     const x = encoding?.x as Record<string, unknown> | undefined;
@@ -1519,7 +1519,7 @@
       return 'Grouped bars include every season in the selected range.';
     }
     return x?.field === 'season'
-        ? 'One continuous trend across seasons; labeled endpoints mark the baseline and comparison seasons.'
+        ? 'A continuous season-by-season trend; labels mark the first and last seasons.'
         : '';
   }
 
@@ -1812,11 +1812,6 @@
     const encoding = specification.encoding as Record<string, unknown> | undefined;
     const x = encoding?.x as { field?: string } | undefined;
     return x?.field === 'season' || x?.field === 'week';
-  }
-
-  function chartSeriesLabels(specification: Record<string, unknown>) {
-    const labels = (specification.usermeta as { seriesLabels?: unknown[] } | undefined)?.seriesLabels;
-    return Array.isArray(labels) ? labels.map(String) : [];
   }
 
   async function scrollToPageTop() {
@@ -2398,20 +2393,20 @@
       </section>
     {:else if !active && !busy}
       {#snippet subjectCard()}
-            <section class="scope-card" class:cfb-subject-card={activeSport === 'cfb'} aria-labelledby="scope-heading">
-              <div class="scope-heading">
-                <div><span class="eyebrow">01 · Subject</span>
-                  <h3 id="scope-heading" tabindex="-1">{activeSport === 'cfb' ? 'Choose Your Subject' : 'Who do you want to understand?'}</h3></div>
-                <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
-              {#if activeSport === 'cfb'}
-                <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
-                              initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
-                {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
-              {/if}
-              {#if activeSport === 'soccer'}
-                <div class="soccer-competition-bar subject-competition-bar">
-                  <label for="subject-soccer-competition">Competition / League</label>
-                  <span class="soccer-competition-select">
+        <section class="scope-card" class:cfb-subject-card={activeSport === 'cfb'} aria-labelledby="scope-heading">
+          <div class="scope-heading">
+            <div><span class="eyebrow">01 · Subject</span>
+              <h3 id="scope-heading" tabindex="-1">{activeSport === 'cfb' ? 'Choose Your Subject' : 'Who do you want to understand?'}</h3></div>
+            <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
+          {#if activeSport === 'cfb'}
+            <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
+                          initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
+            {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
+          {/if}
+          {#if activeSport === 'soccer'}
+            <div class="soccer-competition-bar subject-competition-bar">
+              <label for="subject-soccer-competition">Competition / League</label>
+              <span class="soccer-competition-select">
                     <select id="subject-soccer-competition" value={selectedCompetition} disabled={busy}
                             on:change={(event) => void selectCompetition(event.currentTarget.value)}>
                       {#each soccerCompetitions as competition}
@@ -2420,114 +2415,116 @@
                     </select>
                     <Icon name="chevron-down" size={17}/>
                   </span>
-                </div>
-              {/if}
-              {#if activeSport === 'cfb' && subjectType === 'player' && !resolvedTeam}
-                <p class="section-help">Choose a school above to browse its players. Full analysis datasets are not required to select your subject.</p>
-              {/if}
-              <div class="scope-controls">
-                {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
-                  <div class="subject-toggle" role="group" aria-label="Analysis subject">
-                    <span>Analyze</span>
-                    <button type="button" class:active={subjectType === 'team'} on:click={() => selectSubjectType('team')}>Team</button>
-                    <button type="button" class:active={subjectType === 'player'} on:click={() => selectSubjectType('player')}>Player</button>
-                  </div>
-                {/if}
-                {#if subjectType === 'player'}
-                  <div class="team-control">
-                    <label for="sport-player">Player</label>
-                    <div class="team-combobox">
-                      <input id="sport-player" role="combobox" bind:value={playerInput} aria-label="Player"
-                             aria-expanded={playerComboboxOpen}
-                             aria-busy={playersLoading} disabled={activeSport === 'cfb' && !resolvedTeam}
-                             aria-controls="sport-player-options"
-                             aria-autocomplete="list"
-                             aria-activedescendant={playerComboboxOpen && filteredPlayers[activePlayerIndex] ? `player-option-${filteredPlayers[activePlayerIndex].player_id}` : undefined}
-                             aria-invalid={Boolean(playerInput && !selectedPlayerId)} autocomplete="off" placeholder="Search Players…"
-                             on:focus={openPlayerCombobox}
-                             on:input={updatePlayerFilter} on:keydown={handlePlayerKeydown} on:blur={() => playerComboboxOpen = false}/>
-                      <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} players`} disabled={activeSport === 'cfb' && !resolvedTeam} tabindex="-1"
-                              on:mousedown|preventDefault={() => playerComboboxOpen = !playerComboboxOpen}>
-                        {#if playersLoading}<span class="button-spinner" aria-hidden="true"></span>{:else}
-                          <Icon name="chevron-down" size={17}/>
-                        {/if}
-                      </button>
-                      {#if playerComboboxOpen}
-                        <div class="team-options" id="sport-player-options" role="listbox" aria-label={`${activeSport.toUpperCase()} players`}>
-                          {#if playersLoading}
-                            <div class="combobox-loading" role="status"><span class="button-spinner" aria-hidden="true"></span>
-                              <span>Loading {activeSport.toUpperCase()} players…</span></div>
-                          {:else if playerLoadError}
-                            <div class="combobox-error"><span>{playerLoadError}</span>
-                              <button type="button" on:mousedown|preventDefault={() => loadPlayers()}>Retry</button>
-                            </div>
-                          {:else}
-                            {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'recorded_game_participants')}
-                              <div class="combobox-loading" role="status">Recorded offensive game participants · not a complete roster.</div>
-                            {/if}
-                            {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'partial_recorded_roster')}
-                              <div class="combobox-loading" role="status">Recorded roster players · season roster coverage is incomplete.</div>
-                            {/if}
-                            {#each filteredPlayers as player, index}
-                              <button id={`player-option-${player.player_id}`} type="button" role="option"
-                                      aria-selected={selectedPlayerId === player.player_id}
-                                      class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
-                                      on:mouseenter={() => activePlayerIndex = index}>
-                                <span><PlayerPortrait id={player.player_id} sport={activeSport} name={player.name}/>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
-                                <b>{player.teams.map(team => playerTeamLabel(team)).join('/')}</b>
-                              </button>
-                            {:else}
-                              <div class="no-team-results">No players match “{playerFilter}”</div>
-                            {/each}
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                    {#if playerInput && !selectedPlayerId && !playersLoading}<small class="validation">Choose a player from the list.</small>{/if}
-                  </div>
-                  {#if selectedPlayer?.teams.length}
-                    <label>Team stint <select bind:value={playerTeamId}>
-                      <option value="">All teams in window</option>
-                      {#each selectedPlayer.teams as playerTeam}
-                        <option value={playerTeam}>{playerTeam}</option>
-                      {/each}
-                    </select></label>
-                  {/if}
-                {:else if activeSport !== 'cfb'}
-                  <div class="team-control">
-                    <label for="sport-team">Team</label>
-                    <div class="team-combobox">
-                      <input id="sport-team" role="combobox" bind:value={teamInput} aria-label={`${activeSport.toUpperCase()} team`}
-                             aria-expanded={teamComboboxOpen}
-                             aria-controls="sport-team-options"
-                             aria-autocomplete="list"
-                             aria-activedescendant={teamComboboxOpen && filteredTeams[activeTeamIndex] ? `team-option-${filteredTeams[activeTeamIndex].value}` : undefined}
-                             aria-invalid={Boolean(teamInput && !resolvedTeam)} autocomplete="off" placeholder="Search Teams…"
-                             on:focus={openTeamCombobox}
-                             on:input={updateTeamFilter} on:keydown={handleTeamKeydown} on:blur={() => teamComboboxOpen = false}/>
-                      <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} teams`} tabindex="-1"
-                              on:mousedown|preventDefault={() => teamComboboxOpen = !teamComboboxOpen}>
-                        <Icon name="chevron-down" size={17}/>
-                      </button>
-                      {#if teamComboboxOpen}
-                        <div class="team-options" id="sport-team-options" role="listbox" aria-label={`${activeSport.toUpperCase()} teams`}>
-                          {#each filteredTeams as option, index}
-                            <button id={`team-option-${option.value}`} type="button" role="option" aria-selected={team === option.value}
-                                    class:active={index === activeTeamIndex} on:mousedown|preventDefault={() => selectTeam(option)}
-                                    on:mouseenter={() => activeTeamIndex = index}>
-                              <span>{option.label}</span><b>{option.value}</b>
-                            </button>
-                          {:else}
-                            <div class="no-team-results">No teams match “{teamFilter}”</div>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-                    {#if teamInput && !resolvedTeam}<small class="validation">Choose a team from the list.</small>{/if}
-                  </div>
-                {/if}
+            </div>
+          {/if}
+          {#if activeSport === 'cfb' && subjectType === 'player' && !resolvedTeam}
+            <p class="section-help">Choose a school above to browse its players. Full analysis datasets are not required to select your subject.</p>
+          {/if}
+          <div class="scope-controls">
+            {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
+              <div class="subject-toggle" role="group" aria-label="Analysis subject">
+                <span>Analyze</span>
+                <button type="button" class:active={subjectType === 'team'} on:click={() => selectSubjectType('team')}>Team</button>
+                <button type="button" class:active={subjectType === 'player'} on:click={() => selectSubjectType('player')}>Player</button>
               </div>
-            </section>
+            {/if}
+            {#if subjectType === 'player'}
+              <div class="team-control">
+                <label for="sport-player">Player</label>
+                <div class="team-combobox">
+                  <input id="sport-player" role="combobox" bind:value={playerInput} aria-label="Player"
+                         aria-expanded={playerComboboxOpen}
+                         aria-busy={playersLoading} disabled={activeSport === 'cfb' && !resolvedTeam}
+                         aria-controls="sport-player-options"
+                         aria-autocomplete="list"
+                         aria-activedescendant={playerComboboxOpen && filteredPlayers[activePlayerIndex] ? `player-option-${filteredPlayers[activePlayerIndex].player_id}` : undefined}
+                         aria-invalid={Boolean(playerInput && !selectedPlayerId)} autocomplete="off" placeholder="Search Players…"
+                         on:focus={openPlayerCombobox}
+                         on:input={updatePlayerFilter} on:keydown={handlePlayerKeydown} on:blur={() => playerComboboxOpen = false}/>
+                  <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} players`}
+                          disabled={activeSport === 'cfb' && !resolvedTeam} tabindex="-1"
+                          on:mousedown|preventDefault={() => playerComboboxOpen = !playerComboboxOpen}>
+                    {#if playersLoading}<span class="button-spinner" aria-hidden="true"></span>{:else}
+                      <Icon name="chevron-down" size={17}/>
+                    {/if}
+                  </button>
+                  {#if playerComboboxOpen}
+                    <div class="team-options" id="sport-player-options" role="listbox" aria-label={`${activeSport.toUpperCase()} players`}>
+                      {#if playersLoading}
+                        <div class="combobox-loading" role="status"><span class="button-spinner" aria-hidden="true"></span>
+                          <span>Loading {activeSport.toUpperCase()} players…</span></div>
+                      {:else if playerLoadError}
+                        <div class="combobox-error"><span>{playerLoadError}</span>
+                          <button type="button" on:mousedown|preventDefault={() => loadPlayers()}>Retry</button>
+                        </div>
+                      {:else}
+                        {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'recorded_game_participants')}
+                          <div class="combobox-loading" role="status">Recorded offensive game participants · not a complete roster.</div>
+                        {/if}
+                        {#if activeSport === 'cfb' && players.some(player => player.discovery_source === 'partial_recorded_roster')}
+                          <div class="combobox-loading" role="status">Recorded roster players · season roster coverage is incomplete.</div>
+                        {/if}
+                        {#each filteredPlayers as player, index}
+                          <button id={`player-option-${player.player_id}`} type="button" role="option"
+                                  aria-selected={selectedPlayerId === player.player_id}
+                                  class:active={index === activePlayerIndex} on:mousedown|preventDefault={() => selectPlayer(player)}
+                                  on:mouseenter={() => activePlayerIndex = index}>
+                            <span><PlayerPortrait id={player.player_id} sport={activeSport}
+                                                  name={player.name}/>{player.name}{player.positions.length ? ` · ${player.positions.join('/')}` : ''}</span>
+                            <b>{player.teams.map(team => playerTeamLabel(team)).join('/')}</b>
+                          </button>
+                        {:else}
+                          <div class="no-team-results">No players match “{playerFilter}”</div>
+                        {/each}
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+                {#if playerInput && !selectedPlayerId && !playersLoading}<small class="validation">Choose a player from the list.</small>{/if}
+              </div>
+              {#if selectedPlayer?.teams.length}
+                <label>Team stint <select bind:value={playerTeamId}>
+                  <option value="">All teams in window</option>
+                  {#each selectedPlayer.teams as playerTeam}
+                    <option value={playerTeam}>{playerTeam}</option>
+                  {/each}
+                </select></label>
+              {/if}
+            {:else if activeSport !== 'cfb'}
+              <div class="team-control">
+                <label for="sport-team">Team</label>
+                <div class="team-combobox">
+                  <input id="sport-team" role="combobox" bind:value={teamInput} aria-label={`${activeSport.toUpperCase()} team`}
+                         aria-expanded={teamComboboxOpen}
+                         aria-controls="sport-team-options"
+                         aria-autocomplete="list"
+                         aria-activedescendant={teamComboboxOpen && filteredTeams[activeTeamIndex] ? `team-option-${filteredTeams[activeTeamIndex].value}` : undefined}
+                         aria-invalid={Boolean(teamInput && !resolvedTeam)} autocomplete="off" placeholder="Search Teams…"
+                         on:focus={openTeamCombobox}
+                         on:input={updateTeamFilter} on:keydown={handleTeamKeydown} on:blur={() => teamComboboxOpen = false}/>
+                  <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} teams`} tabindex="-1"
+                          on:mousedown|preventDefault={() => teamComboboxOpen = !teamComboboxOpen}>
+                    <Icon name="chevron-down" size={17}/>
+                  </button>
+                  {#if teamComboboxOpen}
+                    <div class="team-options" id="sport-team-options" role="listbox" aria-label={`${activeSport.toUpperCase()} teams`}>
+                      {#each filteredTeams as option, index}
+                        <button id={`team-option-${option.value}`} type="button" role="option" aria-selected={team === option.value}
+                                class:active={index === activeTeamIndex} on:mousedown|preventDefault={() => selectTeam(option)}
+                                on:mouseenter={() => activeTeamIndex = index}>
+                          <span>{option.label}</span><b>{option.value}</b>
+                        </button>
+                      {:else}
+                        <div class="no-team-results">No teams match “{teamFilter}”</div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                {#if teamInput && !resolvedTeam}<small class="validation">Choose a team from the list.</small>{/if}
+              </div>
+            {/if}
+          </div>
+        </section>
       {/snippet}
       <section class="ask-panel">
         <div class="intro-grid">
@@ -2588,7 +2585,8 @@
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
-              <span>{#if activeSport === 'cfb'}<span class="eyebrow">02 · Data</span>{/if}<strong>{dataReady && !sourceGaps.length ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{activeSport === 'cfb' ? 'Downloads follow your subject selection above. Missing investigation data prepares automatically.' : analysisOptions?.automatic_preparation ? 'Missing investigation data prepares automatically; explicit downloads remain available.' : dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
+              <span>{#if activeSport === 'cfb'}<span class="eyebrow">02 · Data</span>{/if}
+                <strong>{dataReady && !sourceGaps.length ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{activeSport === 'cfb' ? 'Downloads follow your subject selection above. Missing investigation data prepares automatically.' : analysisOptions?.automatic_preparation ? 'Missing investigation data prepares automatically; explicit downloads remain available.' : dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
               </i></b></summary>
@@ -2615,9 +2613,13 @@
               </div>
               {#if activeSport === 'cfb'}
                 <div class="cfb-data-scope" aria-live="polite">
-                  <div><strong>{resolvedTeam ? `Selected School · ${cfbTeams.find(option => option.value === resolvedTeam)?.label ?? resolvedTeam}` : 'Choose a School First'}</strong>
-                    <p>{resolvedTeam ? 'The main download prepares only this school for your selected seasons and sources, including its nonconference games.' : 'Select a school in Choose Your Subject above to scope your download. Browsing a conference does not sync its teams.'}</p></div>
-                  {#if !resolvedTeam}<button type="button" on:click={() => focusSection('scope-heading')}>Choose a School</button>{/if}
+                  <div>
+                    <strong>{resolvedTeam ? `Selected School · ${cfbTeams.find(option => option.value === resolvedTeam)?.label ?? resolvedTeam}` : 'Choose a School First'}</strong>
+                    <p>{resolvedTeam ? 'The main download prepares only this school for your selected seasons and sources, including its nonconference games.' : 'Select a school in Choose Your Subject above to scope your download. Browsing a conference does not sync its teams.'}</p>
+                  </div>
+                  {#if !resolvedTeam}
+                    <button type="button" on:click={() => focusSection('scope-heading')}>Choose a School</button>
+                  {/if}
                 </div>
               {/if}
               {#if activeSport === 'soccer'}
@@ -2652,7 +2654,10 @@
                 {#if syncComplete}
                   <div class="sync-success" role="status"><strong>Download finished</strong>
                     <p>Your data library has been refreshed. Check any missing sources below before running.</p>
-                    <button type="button" on:click={() => { dataManagerOpen = false; void focusSection(activeSport === 'cfb' ? 'comparison-heading' : 'scope-heading'); }}>Continue building analysis</button>
+                    <button type="button"
+                            on:click={() => { dataManagerOpen = false; void focusSection(activeSport === 'cfb' ? 'comparison-heading' : 'scope-heading'); }}>Continue
+                      building analysis
+                    </button>
                   </div>
                 {/if}
                 {#if sourceGaps.length}
@@ -2708,16 +2713,22 @@
                   <p class="current-season-note">2026 is still in progress. Analyses use games in your latest downloaded snapshot; refresh it as nflverse publishes
                     new results. For like-for-like comparisons, select matching week ranges.</p>
                 {/if}
-                <button class="download-data-button" disabled={!syncSeasons.length || !syncDatasets.length || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))} on:click={syncData}>
+                <button class="download-data-button"
+                        disabled={!syncSeasons.length || !syncDatasets.length || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
+                        on:click={syncData}>
                   {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length}
                   sources for {syncSeasons.length} seasons
                   <Icon name="database-import" size={20}/>
                 </button>
                 {#if activeSport === 'cfb'}
                   <div class="cfb-conference-download">
-                    <p><strong>Optional · Entire Conference</strong><span>{cfbConference && !cfbLoading ? `${cfbConferenceLabel} · ${cfbTeams.length} schools. Uses the seasons and sources selected above; this is a larger download.` : 'Choose a conference above to enable a broader download. This is not required for a team or player investigation.'}</span></p>
-                    <button type="button" disabled={!cfbConference || !cfbTeams.length || cfbLoading || Boolean(cfbError) || !syncSeasons.length || !syncDatasets.length}
-                            on:click={() => void syncCFBConference()}>Download Entire Conference</button>
+                    <p><strong>Optional · Entire
+                      Conference</strong><span>{cfbConference && !cfbLoading ? `${cfbConferenceLabel} · ${cfbTeams.length} schools. Uses the seasons and sources selected above; this is a larger download.` : 'Choose a conference above to enable a broader download. This is not required for a team or player investigation.'}</span>
+                    </p>
+                    <button type="button"
+                            disabled={!cfbConference || !cfbTeams.length || cfbLoading || Boolean(cfbError) || !syncSeasons.length || !syncDatasets.length}
+                            on:click={() => void syncCFBConference()}>Download Entire Conference
+                    </button>
                   </div>
                 {/if}
               {/if}
@@ -3035,7 +3046,10 @@
             <h3>Analysis brief</h3>
             <dl>
               <dt>Subject</dt>
-              <dd>{#if subjectType === 'player' && selectedPlayer}<PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>{/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : teamInput || 'Choose a team'}</dd>
+              <dd>
+                {#if subjectType === 'player' && selectedPlayer}
+                  <PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>
+                {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : teamInput || 'Choose a team'}</dd>
               <dt>Periods</dt>
               <dd>{periodBrief}</dd>
               <dt>Focus</dt>
@@ -3097,7 +3111,10 @@
         <div class="report-summary">
           <span class="eyebrow">Final Read · {active.fallback_used ? 'Deterministic' : active.model_id}</span>
           <h2>The answer</h2>
-          {#if active.run.subject?.type === 'player'}<PlayerPortrait id={active.run.subject.id} sport={active.run.sport ?? 'nfl'} name={investigationSubject(active, playerNamesById)} historical={active.run.sport === 'cfb'}/>{/if}
+          {#if active.run.subject?.type === 'player'}
+            <PlayerPortrait id={active.run.subject.id} sport={active.run.sport ?? 'nfl'} name={investigationSubject(active, playerNamesById)}
+                            historical={active.run.sport === 'cfb'}/>
+          {/if}
           <p>{active.summary}</p>
           <div class="report-meta" aria-label="Investigation scope">
             <span>{investigationSubject(active, playerNamesById)}</span>
@@ -3172,16 +3189,6 @@
             <article class:chart-trend={isTrendChart(chart.specification)}
                      class:chart-metric-group={isMetricRowChart(chart.specification)}><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
-              {#if chartSeriesLabels(chart.specification).length}
-                <div class="chart-series-key" aria-label="Comparison windows">
-                  {#each chartSeriesLabels(chart.specification) as label, index}
-                    <span class:comparison-series={index === chartSeriesLabels(chart.specification).length - 1}>
-                      <i aria-hidden="true"></i><small>{index === 0 ? 'Reference period' : index === chartSeriesLabels(chart.specification).length - 1 ? 'Comparison' : 'Season'}</small>
-                      <strong>{label}</strong>
-                    </span>
-                  {/each}
-                </div>
-              {/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
                      sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season}/>
             </article>

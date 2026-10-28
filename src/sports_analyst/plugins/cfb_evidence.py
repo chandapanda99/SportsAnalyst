@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 
 from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
-from sports_analyst.datasets.cfb_rendering import with_render_context, is_nullified
+from sports_analyst.analysis.ordering import unique_records
+from sports_analyst.datasets.cfb_rendering import is_nullified, with_render_context
 from sports_analyst.models import PlayEvidence, PlayVisualization, stable_id
 
 
@@ -19,6 +20,8 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
         if frame is None or manifest is None or frame.is_empty():
             continue
         modeled = supplemental.get("enriched_plays", {}).get(year)
+        if modeled is not None and not modeled.is_empty():
+            modeled = unique_records(modeled, ["game_id", "play_id"], "CFB modeled play")
         modeled_rows = {(row["game_id"], str(row["play_id"])): row for row in modeled.to_dicts()} if modeled is not None else {}
         games = {row["game_id"]: row for row in schedule.to_dicts()}
         for recorded in frame.to_dicts():

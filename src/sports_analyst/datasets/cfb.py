@@ -428,7 +428,7 @@ class SportsDataverseCFBConnector:
         raw = self.summary(game_id, season)
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
         sources = f"n{int(self.settings.cfb_ncaa_enabled)}c{int(self.settings.cfb_cfbd_enabled)}"
-        key = f"normalized-plays/v4/{RENDER_VERSION}/{sources}/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
+        key = f"normalized-plays/v5/{RENDER_VERSION}/{sources}/{IDENTITY_VERSION}/{provider}/{season}/{game_id}/{digest}.json"
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         cached = self.source._cached(key, ttl)
         if cached is not None:
@@ -461,7 +461,8 @@ class SportsDataverseCFBConnector:
         ttl = 3600 if season >= datetime.now(UTC).year else 365 * 86400
         source = self.source.collection(f"{CORE}/events/{game_id}/competitions/{game_id}/plays", ttl, maximum=800)
         directory, game_roster = game_directory(self.source, game_id, season, raw, source, ttl)
-        rows = [recorded_play(play, raw, directory) for play in source]
+        # Retain the provider collection order across later Parquet/group operations.
+        rows = [{**recorded_play(play, raw, directory), "source_order": index} for index, play in enumerate(source)]
         if not rows:
             raise ValueError("No recorded detailed plays are available; this is not proof of an empty game")
         if len({row["id"] for row in rows if row["id"]}) != len(rows):
@@ -739,7 +740,7 @@ class SportsDataverseCFBConnector:
                     register_input(source_manifest.model_copy(update={"local_path": str(local.resolve())}))
             # Completion order must not change checksums for identical source
             # data, otherwise parallel refreshes cause unnecessary reuploads.
-            order = [field for field in ("game_id", "team_id", "athlete_id", "play_id", "quarter", "clock", "text")
+            order = [field for field in ("game_id", "source_order", "team_id", "athlete_id", "play_id", "quarter", "clock", "text")
                      if field in data.columns]
             if order:
                 data = data.sort(order)

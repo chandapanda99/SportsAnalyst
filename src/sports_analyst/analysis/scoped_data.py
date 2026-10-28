@@ -13,6 +13,8 @@ from pathlib import Path
 import polars as pl
 
 from sports_analyst.analysis.calculations import digest
+from sports_analyst.analysis.research.contracts import Filter
+from sports_analyst.analysis.research.executor import predicate as research_predicate
 from sports_analyst.models import AnalysisWindow
 
 
@@ -223,13 +225,8 @@ class ScopedData:
                                  "Subject/season filters are already enforced by the host; do not invent a team alias.")
             if field in original_columns:
                 required.add(field)
-            col = pl.col(field)
-            if op == "is_not_null":
-                extra_predicate &= col.is_not_null()
-            else:
-                # Values are literals; never evaluated as expressions or paths.
-                extra_predicate &= {"eq": col == value, "ne": col != value, "gt": col > value,
-                              "ge": col >= value, "lt": col < value, "le": col <= value}[op]
+            # Share literal/null semantics with validated joined calculations.
+            extra_predicate &= research_predicate([Filter(field=field, op=op, value=value)], columns)
         expressions, definitions = [], []
         for index, measure in enumerate(measures):
             field, op = measure.get("field", ""), measure["op"]

@@ -509,6 +509,10 @@ class PlayVisualization(BaseModel):
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
     soccer_timeline: list[dict[str, str | bool]] = Field(default_factory=list)
+    soccer_analytics: list[dict[str, Any]] = Field(default_factory=list)
+    soccer_analytics_manifest_ids: list[str] = Field(default_factory=list)
+    soccer_actions: list[dict[str, Any]] = Field(default_factory=list)
+    soccer_actions_count: int = 0
     cfb_statistics: dict[str, Any] = Field(default_factory=dict)
     cfb_scoring_events: list[dict[str, Any]] = Field(default_factory=list)
     competition_stage: str | None = None

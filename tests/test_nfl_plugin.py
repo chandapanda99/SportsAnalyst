@@ -59,11 +59,14 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     }
     manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
     first = plugin.analyze(request, frames, manifests)
-    second = plugin.analyze(request, frames, manifests)
+    second = plugin.analyze(request, {year: frame.sample(fraction=1, shuffle=True, seed=37)
+                                      for year, frame in frames.items()}, manifests)
     epa = next(item for item in first.aggregate_evidence if item.metric == "epa_per_dropback")
     assert epa.value == -0.1
     assert epa.sample_size == 160
     assert [item.evidence_id for item in first.aggregate_evidence] == [item.evidence_id for item in second.aggregate_evidence]
+    assert [(item.value, item.confidence_low, item.confidence_high) for item in first.aggregate_evidence] == [
+        (item.value, item.confidence_low, item.confidence_high) for item in second.aggregate_evidence]
     assert len(first.play_evidence) == 8
     assert {item.window for item in first.play_evidence} == {"baseline", "comparison"}
     assert {item.evidence_role for item in first.play_evidence} == {
@@ -83,11 +86,11 @@ def test_efficiency_diagnosis_is_deterministic_and_evidence_bound(pbp_pair) -> N
     assert first.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
     assert first.charts[0].specification["vconcat"]
     assert first.charts[0].specification["usermeta"]["seriesLabels"]
-    assert first.charts[0].specification["vconcat"][0]["height"] == 72
-    assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["axis"]["labels"] is False
+    assert first.charts[0].specification["vconcat"][0]["height"] == 120
+    assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["axis"]["labels"] is True
     assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["x"]["field"] == "window"
     assert first.charts[0].specification["vconcat"][0]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".2f"
-    assert first.charts[0].specification["vconcat"][1]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".0%"
+    assert first.charts[0].specification["vconcat"][1]["layer"][0]["encoding"]["y"]["axis"]["format"] == ".1%"
     weekly = [item for item in first.aggregate_evidence if item.metric == "weekly_epa_per_dropback"]
     assert weekly and all(item.confidence_low is not None and item.confidence_high is not None for item in weekly)
     assert any(item.metric == "weekly_moving_average_epa_per_dropback" for item in first.aggregate_evidence)

@@ -796,7 +796,8 @@ class NFLPlayerAnalysisMixin:
                     value=round(comp_value - base_value, 4),
                     baseline_value=round(base_value, 4),
                     comparison_value=round(comp_value, 4),
-                    unit="per game" if source == "plays_per_game" else "rate or per play",
+                    unit=("per game" if source == "plays_per_game" else "percentage_points" if source == "cpoe"
+                          else "rate" if metric.endswith("_rate") else "per play"),
                     sample_size=comparison.height,
                     context={"baseline_sample": baseline.height, "comparison_sample": comparison.height,
                              "sample_definition": "Attributed play rows; per-metric non-null denominators may differ."},

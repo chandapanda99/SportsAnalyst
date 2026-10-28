@@ -3,6 +3,12 @@ from sports_analyst.analysis.research.contracts import VERSION, contract
 
 # Exact recorded counter pairs, not arbitrary arithmetic supplied by a model.
 RATE_PAIRS = {
+    ("accurate_passes", "total_passes"): ("pass_completion_rate", "proportion"),
+    ("accurate_crosses", "accurate_crosses_attempts"): ("cross_completion_rate", "proportion"),
+    ("accurate_long_balls", "accurate_long_balls_attempts"): ("long_ball_completion_rate", "proportion"),
+    ("ground_duels_won", "ground_duels_won_attempts"): ("ground_duel_win_rate", "proportion"),
+    ("aerials_won", "aerials_won_attempts"): ("aerial_duel_win_rate", "proportion"),
+    ("dribbles_succeeded", "dribbles_succeeded_attempts"): ("dribble_success_rate", "proportion"),
     ("completions", "attempts"): ("completion_rate", "proportion"),
     ("passing_completions", "passing_attempts"): ("completion_rate", "proportion"),
     ("passing_yards", "passing_attempts"): ("passing_yards_per_attempt", "yards/attempt"),
@@ -53,10 +59,13 @@ def definitions(plan, manifests, relationships):
         if m.op == "rate":
             definition, unit = rate_definition(m)
         result[m.name] = {"registry_version": VERSION, "sport": source.sport, "competition": source.competition,
-                          "namespace": c.namespace, "provider": source.provider_id,
+                          "namespace": c.namespace,
+                          "provider": ({"match_analytics": "fotmob", "match_players": "fotmob",
+                                        "asa_analytics": "asa", "open_events": "statsbomb"}.get(source.dataset, source.provider_id)),
                           "dataset": c.dataset, "field": field, "op": m.op,
                           "definition": definition, "unit": unit, "grain": plan.grain,
                           "processing_version": source.processing_version,
+                          "resolution_version": source.resolution_version,
                           "package_version": source.package_version,
                           "population": {"filters": [f.model_dump(mode="json") for f in plan.filters],
                               "missing": plan.missing, "steps": [{"dataset": manifests[aliases[s.alias]].dataset

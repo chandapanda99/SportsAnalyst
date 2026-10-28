@@ -1,4 +1,5 @@
 import {branding} from './sportsBranding';
+import {chartComparisonKind, chartSeriesLabels} from './chartRows';
 export type TeamChartPalette = readonly [primary: string, secondary: string];
 
 // Reference: NFL Colors (Community), Figma node 44:26.
@@ -89,12 +90,13 @@ const NFL_ESPN_LOGO_IDS: Record<string, string> = {LA: 'lar', WAS: 'wsh'};
 const NBA_ESPN_LOGO_IDS: Record<string, string> = {GSW: 'gs', NOP: 'no', NYK: 'ny', SAS: 'sa', UTA: 'utah'};
 export const DEFAULT_CHART_PALETTE: TeamChartPalette = ['#6F9FD1', '#78DCCA'];
 export const CHART_SURFACE_COLOR = '#091521';
-const CHART_CONTRAST_TARGET = 3;
+const CHART_CONTRAST_TARGET = 4.5;
 const CHART_OUTLINE_COLOR = '#DBE8EE';
-const CHART_LABEL_COLOR = '#A8B7C1';
+const CHART_LABEL_COLOR = '#C5D4DF';
 const CHART_GRID_COLOR = '#31506A';
 const METRIC_PLOT_HEIGHT = 130;
 const METRIC_CHART_SPACING = 32;
+const CHART_FONT = 'Manrope, Inter, ui-sans-serif, system-ui, sans-serif';
 
 export function teamChartPalette(team: string, sport = 'nfl', season?: number, fallback: TeamChartPalette = DEFAULT_CHART_PALETTE): TeamChartPalette {
     const supplied = branding(team, sport.toLowerCase(), season).colors;
@@ -151,13 +153,6 @@ function mixWithWhite(hex: string, amount: number): string {
     return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
-function mixColors(first: string, second: string, amount: number): string {
-    const start = rgb(first);
-    const end = rgb(second);
-    const channels = start.map((channel, index) => Math.round(channel + (end[index] - channel) * amount));
-    return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
-}
-
 function accessibleChartColor(color: string): string {
     if (colorContrastRatio(color, CHART_SURFACE_COLOR) >= CHART_CONTRAST_TARGET) return color;
     for (let amount = 0.08; amount <= 0.8; amount += 0.04) {
@@ -174,10 +169,20 @@ export function teamChartDisplayPalette(team: string, sport = 'nfl', season?: nu
 
 export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl', season?: number): string[] {
     const [primary, secondary] = teamChartDisplayPalette(team, sport, season);
-    if (count <= 2) return [primary, secondary];
-    return Array.from({length: count}, (_, index) =>
-        accessibleChartColor(mixColors(primary, secondary, index / (count - 1)))
-    );
+    const colors: string[] = [];
+    for (const color of [primary, secondary, '#A9C9F4', '#DBB3E7', '#B4D8B5', '#E8C69F', '#79D5DD', '#F3A8B4']) {
+        // Interpolating brand colors created muddy, nearly identical middle seasons.
+        if (colors.every(existing => Math.hypot(...rgb(existing).map((channel, i) => channel - rgb(color)[i])) > 70)) colors.push(color);
+    }
+    return Array.from({length: Math.max(2, count)}, (_, i) => colors[i % colors.length]);
+}
+
+export function chartSeriesStyles(spec: Record<string, unknown>, team: string, sport = 'nfl', season?: number) {
+    const labels = chartSeriesLabels(spec);
+    const grouped = chartComparisonKind(spec) === 'grouped-observations';
+    const colors = teamChartSeriesPalette(team, labels.length, sport, season);
+    const shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'triangle-down'];
+    return labels.map((label, i) => ({label, color: colors[grouped ? 0 : i], shape: shapes[grouped ? 0 : i % shapes.length]}));
 }
 
 function polishAxis(channel: string, definition: Record<string, unknown>): Record<string, unknown> {
@@ -218,14 +223,19 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     const themed = structuredClone(specification);
     const usermeta = themed.usermeta as Record<string, unknown> | undefined;
     if (usermeta?.chartKind === 'metric-rows') {
-        const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values ?? [];
-        const seriesField = typeof usermeta.seriesField === 'string' ? usermeta.seriesField : undefined;
-        const seriesCount = seriesField ? new Set(values.map((value) => value[seriesField])).size : 2;
-        const palette = teamChartSeriesPalette(team, Math.max(2, seriesCount), sport, season);
+        const seriesField = typeof usermeta.colorField === 'string' ? usermeta.colorField : typeof usermeta.seriesField === 'string' ? usermeta.seriesField : undefined;
+        const seriesStyles = chartSeriesStyles(specification, team, sport, season);
+        const domain = seriesStyles.map(series => series.label);
+        const palette = seriesStyles.map(series => series.color);
 
         const polishNestedSpec = (node: Record<string, unknown>) => {
+            // Also repair older saved specifications without modifying their evidence.
+            const nodeValues = (node.data as {values?: Array<Record<string, unknown>>} | undefined)?.values;
+            nodeValues?.forEach(row => {
+                if (typeof row.display_value === 'string') row.display_value = row.display_value.replace(/^\+/, '');
+            });
             const height = node.height;
-            if (height && typeof height === 'object' && !Array.isArray(height) && 'step' in height) {
+            if (typeof height === 'number' || height && typeof height === 'object' && !Array.isArray(height) && 'step' in height) {
                 node.height = METRIC_PLOT_HEIGHT;
             }
             const nestedEncoding = node.encoding as Record<string, unknown> | undefined;
@@ -257,19 +267,29 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             }
             const mark = node.mark as Record<string, unknown> | undefined;
             if (mark?.type === 'text') {
-                node.mark = {...mark, align: 'center', dx: 0, dy: -10};
+                node.mark = {...mark, align: 'center', dx: 0, dy: -12, fontSize: 12};
+                if (nestedEncoding) nestedEncoding.color = {value: '#EDF5FA'};
+            }
+            if (mark?.type === 'point' && mark.opacity !== 0.001) {
+                node.mark = {...mark, opacity: 1, stroke: CHART_SURFACE_COLOR, strokeWidth: 1.5};
+                if (nestedEncoding) nestedEncoding.shape = {field: seriesField, type: 'nominal',
+                    scale: {domain, range: seriesStyles.map(series => series.shape)}, legend: null};
             }
             for (const channel of ['x', 'y']) {
                 const definition = nestedEncoding?.[channel];
                 if (definition && typeof definition === 'object') {
-                    nestedEncoding![channel] = polishAxis(channel, definition as Record<string, unknown>);
+                    const def = definition as Record<string, unknown>;
+                    const axis = def.axis as Record<string, unknown> | undefined;
+                    if (def.field === seriesField && axis !== null) def.axis = {...axis, labels: true};
+                    if (def.field === 'value' && axis?.format === '.0%') def.axis = {...axis, format: '.1%'};
+                    nestedEncoding![channel] = polishAxis(channel, def);
                 }
             }
             const nestedColor = nestedEncoding?.color as Record<string, unknown> | undefined;
             if (nestedColor?.field) {
                 nestedEncoding!.color = {
                     ...nestedColor,
-                    scale: {...((nestedColor.scale as Record<string, unknown> | undefined) ?? {}), range: palette},
+                    scale: {...((nestedColor.scale as Record<string, unknown> | undefined) ?? {}), domain, range: palette},
                     legend: nestedColor.legend === null ? null : {
                         ...((nestedColor.legend as Record<string, unknown> | undefined) ?? {}),
                         title: null,
@@ -305,13 +325,13 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             background: 'transparent',
             config: {
                 ...((themed.config as Record<string, unknown> | undefined) ?? {}),
-                font: 'Manrope',
+                font: CHART_FONT,
                 view: {stroke: null},
-                axis: {labelFont: 'Manrope', labelFontWeight: 500, titleFont: 'Manrope', titleFontWeight: 600},
-                header: {labelFont: 'Manrope', labelColor: CHART_LABEL_COLOR, labelFontWeight: 600},
-                legend: {labelFont: 'Manrope', labelFontWeight: 500, titleFont: 'Manrope', titleFontWeight: 600},
-                text: {font: 'Manrope', fontWeight: 500},
-                title: {font: 'Manrope', fontWeight: 600}
+                axis: {labelFont: CHART_FONT, labelFontWeight: 500, titleFont: CHART_FONT, titleFontWeight: 600},
+                header: {labelFont: CHART_FONT, labelColor: CHART_LABEL_COLOR, labelFontWeight: 600},
+                legend: {labelFont: CHART_FONT, labelFontWeight: 500, titleFont: CHART_FONT, titleFontWeight: 600},
+                text: {font: CHART_FONT, fontWeight: 500},
+                title: {font: CHART_FONT, fontWeight: 600, color: '#EDF5FA'}
             }
         };
     }
@@ -326,14 +346,15 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     if (color) {
         const colorField = color.field;
         const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values ?? [];
-        const seriesCount = typeof colorField === 'string'
-            ? new Set(values.map((value) => value[colorField])).size
-            : 0;
+        const existingScale = color.scale as {domain?: unknown[]} | undefined;
+        const domain = existingScale?.domain ?? (typeof colorField === 'string'
+            ? [...new Set(values.map(value => value[colorField]))].sort((a, b) => String(a).localeCompare(String(b), undefined, {numeric:true})) : []);
         encoding!.color = {
             ...color,
             scale: {
                 ...((color.scale as Record<string, unknown> | undefined) ?? {}),
-                range: teamChartSeriesPalette(team, Math.max(2, seriesCount), sport, season)
+                domain,
+                range: teamChartSeriesPalette(team, Math.max(2, domain.length), sport, season)
             },
             legend: {
                 ...((color.legend as Record<string, unknown> | undefined) ?? {}),
@@ -365,22 +386,22 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
         background: 'transparent',
         config: {
             ...((themed.config as Record<string, unknown> | undefined) ?? {}),
-            font: 'Manrope',
+            font: CHART_FONT,
             view: {stroke: null},
             axis: {
-                labelFont: 'Manrope',
+                labelFont: CHART_FONT,
                 labelFontWeight: 500,
-                titleFont: 'Manrope',
+                titleFont: CHART_FONT,
                 titleFontWeight: 600
             },
             legend: {
-                labelFont: 'Manrope',
+                labelFont: CHART_FONT,
                 labelFontWeight: 500,
-                titleFont: 'Manrope',
+                titleFont: CHART_FONT,
                 titleFontWeight: 600
             },
-            text: {font: 'Manrope', fontWeight: 500},
-            title: {font: 'Manrope', fontWeight: 600}
+            text: {font: CHART_FONT, fontWeight: 500},
+            title: {font: CHART_FONT, fontWeight: 600, color: '#EDF5FA'}
         }
     };
 
@@ -426,12 +447,13 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     if (xField === 'season' && typeof yField === 'string' && values && values.length > 1) {
         const ordered = [...values].sort((left, right) => Number(left.season) - Number(right.season));
         const endpoints = [ordered[0], ordered.at(-1)!];
-        const endpointColors = [...teamChartDisplayPalette(team, sport, season)];
+        const colorScale = (encoding.color as {scale: {domain: unknown[]; range: string[]}}).scale;
         endpoints.forEach((endpoint, index) => {
+            const endpointColor = colorScale.range[Math.max(0, colorScale.domain.indexOf(endpoint[color.field as string]))];
             const value = Number(endpoint[yField]);
             const endpointData = {
                 ...endpoint,
-                endpointLabel: `${endpoint.season} · ${value >= 0 ? '+' : ''}${value.toFixed(3)}`
+                endpointLabel: `${endpoint.season} · ${value.toFixed(3)}`
             };
             const endpointEncoding = {
                 x: encoding.x,
@@ -442,7 +464,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
                 {
                     data: {values: [endpointData]},
                     mark: {
-                        type: 'point', filled: true, size: 120, color: endpointColors[index],
+                        type: 'point', filled: true, size: 120, color: endpointColor,
                         stroke: CHART_OUTLINE_COLOR, strokeWidth: 1.2
                     },
                     encoding: endpointEncoding
@@ -451,7 +473,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
                     data: {values: [endpointData]},
                     mark: {
                         type: 'text', align: index === 0 ? 'left' : 'right', baseline: 'bottom',
-                        dx: index === 0 ? 9 : -9, dy: -8, fontSize: 12, fontWeight: 600, color: endpointColors[index]
+                        dx: index === 0 ? 9 : -9, dy: -8, fontSize: 12, fontWeight: 600, color: '#EDF5FA'
                     },
                     encoding: {...endpointEncoding, text: {field: 'endpointLabel', type: 'nominal'}}
                 }

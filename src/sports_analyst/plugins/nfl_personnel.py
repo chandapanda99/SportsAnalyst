@@ -213,8 +213,8 @@ class NFLPersonnelMixin:
                     "metric": metric,
                     "player_id": player_id,
                     "windows": parameters["windows"],
-                    "baseline": base_value,
-                    "comparison": comp_value,
+                    "baseline": round(base_value, 12),
+                    "comparison": round(comp_value, 12),
                 }
                 evidence.append(
                     AggregateEvidence(
@@ -411,7 +411,7 @@ class NFLPersonnelMixin:
                     frame.filter(pl.col(player_name).is_not_null())
                     .with_columns(key.alias(join_column), pl.col(player_name).cast(pl.Utf8).alias("player_name"))
                     .group_by(join_column)
-                    .agg(pl.first("player_name"), pl.len().alias("targets"), pl.col("_epa").mean().alias("epa"))
+                    .agg(pl.col("player_name").min(), pl.len().alias("targets"), pl.col("_epa").mean().alias("epa"))
                 )
 
             base = usage(baseline, baseline_id, baseline_name)

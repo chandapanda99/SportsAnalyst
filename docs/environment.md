@@ -7,6 +7,13 @@ variables. Hosting deployment files are intentionally not part of the current se
 
 ## What you need
 
+For open soccer events and SPADL/xT in a development or hosted installation,
+install the optional extra with `uv sync --extra soccer-events --inexact`
+(retain any other extras used by your deployment). The desktop extra includes
+these dependencies, and the packaging smoke check loads the bundled xT model.
+This adds event-reading libraries, not a hosted service or model API. Source
+availability and data-use terms still apply independently of library installation.
+
 - **Azure Foundry:** `MODEL_PROVIDER=azure_foundry`, `MODEL`, `FOUNDRY_ENDPOINT`,
   and `FOUNDRY_API_KEY` (or an explicitly configured supported identity).
   Model calls can still incur provider charges.

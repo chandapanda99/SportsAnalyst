@@ -10,6 +10,7 @@ from time import perf_counter
 
 import polars as pl
 
+from sports_analyst.analysis.ordering import canonical_records, unique_records
 from sports_analyst.datasets.cfb import CFB_DATASETS
 from sports_analyst.datasets.cfb_rendering import is_nullified
 from sports_analyst.models import (
@@ -27,8 +28,8 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
-from sports_analyst.plugins.cfb_evidence import select_plays
 from sports_analyst.plugins.cfb_context import CONTEXT_LABELS, CONTEXT_METRICS, context_frame, context_values
+from sports_analyst.plugins.cfb_evidence import select_plays
 from sports_analyst.presentation.charts import metric_row_comparison_spec
 
 # label, subject, domain, numerator, denominator (None means per game), unit
@@ -303,8 +304,8 @@ class CFBPlugin:
                 values.drop_nulls(field)
                 .with_columns(pl.col(field).cast(pl.Float64))
                 .filter(pl.col(field).is_finite())
-                .unique(subset=["game_id", "play_id"])
             )
+            values = unique_records(values, ["game_id", "play_id"], "CFB modeled observation")
             if values.is_empty():
                 return None, 0
             result = (values[field] > 0).mean() if reducer == "success" else values[field].mean() if reducer == "mean" else values[field].sum()
@@ -325,7 +326,7 @@ class CFBPlugin:
         required = [numerator] + ([denominator] if denominator not in {None, "total", "games"} else [])
         if not set(required) <= set(selected.columns):
             return None, 0
-        selected = selected.drop_nulls(required).unique(subset=["game_id", identifier])
+        selected = unique_records(selected.drop_nulls(required), ["game_id", identifier], "CFB game statistic")
         if denominator not in {None, "total", "games"}:
             selected = selected.filter(pl.col(denominator) > 0)
         if selected.is_empty():
@@ -381,7 +382,7 @@ class CFBPlugin:
             if before is None or after is None:
                 gaps.append(metric)
                 continue
-            rows_hash = sha({name: schedules[name].to_dicts() for name, _ in windows})
+            rows_hash = sha({name: canonical_records(schedules[name]) for name, _ in windows})
             aggregates.append(
                 AggregateEvidence(
                     evidence_id=stable_id("evidence", {**parameters, "metric": metric, "rows": rows_hash}),
@@ -395,7 +396,7 @@ class CFBPlugin:
                     row_set_sha256=sha(
                         {
                             "schedules": rows_hash,
-                            "source_rows": [data.to_dicts() for data in frames],
+                            "source_rows": [canonical_records(data) for data in frames],
                         }
                     ),
                     dataset_manifest_ids=ids,
@@ -450,15 +451,15 @@ class CFBPlugin:
                 covered = enriched.filter(pl.col("game_id").is_in(schedules[name]["game_id"].to_list()) & pl.col("scrimmage"))
                 covered = covered.drop_nulls("epa").with_columns(pl.col("epa").cast(pl.Float64)).filter(pl.col("epa").is_finite())
                 leaderboard = (
-                    covered.unique(subset=["game_id", "play_id"])
+                    unique_records(covered, ["game_id", "play_id"], "CFB leaderboard play")
                     .group_by("team_id")
                     .agg(pl.col("epa").mean().alias("epa_per_play"), pl.len().alias("plays"), pl.col("game_id").n_unique().alias("games"))
-                    .sort("epa_per_play", descending=True)
+                    .sort(["epa_per_play", "team_id"], descending=[True, False])
                     .to_dicts()
                 )
                 for team_row in leaderboard:
                     team_row["team_name"] = school_names.get(team_row["team_id"])
-            for row in schedules[name].sort("date").head(3).to_dicts():
+            for row in schedules[name].sort(["date", "game_id"], nulls_last=True).head(3).to_dicts():
                 game = row["game_id"]
                 game_stats = stats.filter(pl.col("game_id") == game).to_dicts() if "game_id" in stats.columns else []
                 events = scoring.filter(pl.col("game_id") == game).to_dicts() if "game_id" in scoring.columns else []

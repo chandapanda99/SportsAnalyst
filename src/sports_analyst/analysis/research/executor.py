@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import operator
 import re
 from copy import copy
 from pathlib import Path
@@ -36,9 +37,19 @@ def predicate(filters, columns):
         if item.field not in columns:
             raise ValueError(f"Unknown field {item.field!r}; supported columns: {sorted(columns)}")
         col, value = pl.col(item.field), item.value
-        result &= {"eq": col == value, "ne": col != value, "gt": col > value,
-                   "ge": col >= value, "lt": col < value, "le": col <= value,
-                   "is_not_null": col.is_not_null()}[item.op]
+        if item.op == "is_not_null":
+            expression = col.is_not_null()
+        elif value is None:
+            if item.op == "eq":
+                expression = col.is_null()
+            elif item.op == "ne":
+                expression = col.is_not_null()
+            else:
+                raise ValueError(f"Filter field={item.field!r}, op={item.op!r} requires a non-null value; "
+                                 "use eq/null for missing values or is_not_null for recorded values")
+        else:
+            expression = getattr(operator, item.op)(col, value)
+        result &= expression
     return result
 
 
@@ -267,6 +278,13 @@ class JoinExecutor:
                 names = list(set(names) | set(relation.right_keys))
                 columns.update(f"{step.alias}__{name}" for name in names)
             inputs[right.manifest_id] = right.sha256
+        if plan.time_bucket:
+            date_field = plan.time_bucket.field
+            if date_field not in columns or date_field.rsplit("__", 1)[-1] not in {"date", "game_date", "gameday", "start_date"}:
+                raise ValueError("Monthly grouping requires a projected recorded match/game date field")
+            if "month" in columns or "month" not in plan.group_by:
+                raise ValueError("Use derived group_by=['month', ...]; month must not shadow a source column")
+            columns.add("month")
         if not set(plan.group_by) <= columns:
             raise ValueError(f"Unsupported grouping fields; allowed: {sorted(columns)}")
         predicate(plan.filters, columns)
@@ -306,6 +324,8 @@ class JoinExecutor:
         if period is None or period.season not in request.scope.included_seasons or manifest.season != period.season:
             raise ValueError("Window/dataset season outside investigation")
         subject = request.subject
+        if subject and subject.type == "player" and c.player_namespace == "fotmob":
+            raise ValueError("FotMob player scope requires a verified ESPN athlete crosswalk; name/numeric-ID guesses are not allowed")
         identifier = str(subject.id if subject else request.scope.team)
         identity = self.identity_spec(manifest)
         if subject and subject.type == "player" and identity:
@@ -441,6 +461,9 @@ class JoinExecutor:
         graph = {r.relationship_id: r for r in self.graph()}
         base = manifests[plan.dataset_id]
         fields = set(plan.group_by) | {f.field for f in plan.filters} | measure_fields(plan.measures)
+        if plan.time_bucket:
+            fields.discard("month")
+            fields.add(plan.time_bucket.field)
         fields = {f for f in fields if "__" not in f}
         for step in plan.steps:
             relation = graph[step.relationship_id]
@@ -454,7 +477,7 @@ class JoinExecutor:
         if contract(base).game:
             fields.add(contract(base).game)
         query = self.base(base, fields, plan.window)
-        base_filters = [f for f in plan.filters if "__" not in f.field]
+        base_filters = [f for f in plan.filters if "__" not in f.field and not (plan.time_bucket and f.field == "month")]
         if base_filters:
             query = query.filter(predicate(base_filters, fields))
         # Slice by game when possible, avoiding partial results for a large season.
@@ -600,7 +623,13 @@ class JoinExecutor:
                     eligible &= pl.col(marker).fill_null(False)
                     for f in step.fields:
                         eligible &= pl.col(f"{step.alias}__{f}").is_not_null()
-            frame = frame.filter(eligible & predicate(plan.filters, frame.columns))
+            frame = frame.filter(eligible)
+            if plan.time_bucket:
+                frame = frame.with_columns(pl.col(plan.time_bucket.field).cast(pl.String).str.slice(0, 10)
+                    .str.to_date("%Y-%m-%d", strict=False).dt.strftime("%Y-%m").alias("month"))
+                if frame["month"].null_count():
+                    raise ValueError("Monthly measurement has missing/invalid recorded dates; repair date coverage before aggregating")
+            frame = frame.filter(predicate(plan.filters, frame.columns))
             retained = sorted({*plan.group_by, *measure_fields(plan.measures), "_observation"})
             frame = frame.select(retained)
             working_bytes += frame.estimated_size()

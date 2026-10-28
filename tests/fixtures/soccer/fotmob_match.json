@@ -1,0 +1,1067 @@
+{
+  "general": {
+    "matchId": "4813647",
+    "leagueId": 47,
+    "parentLeagueId": 47,
+    "coverageLevel": "xG",
+    "matchTimeUTCDate": "2026-03-01T14:00:00.000Z",
+    "finished": true
+  },
+  "header": {
+    "teams": [
+      {
+        "name": "Brighton & Hove Albion",
+        "id": 10204,
+        "score": 2
+      },
+      {
+        "name": "Nottingham Forest",
+        "id": 10203,
+        "score": 1
+      }
+    ],
+    "status": {
+      "finished": true,
+      "started": true,
+      "cancelled": false,
+      "awarded": false
+    }
+  },
+  "content": {
+    "stats": {
+      "Periods": {
+        "All": {
+          "stats": [
+            {
+              "title": "Top stats",
+              "stats": [
+                {
+                  "key": "BallPossesion",
+                  "rawStats": [
+                    {
+                      "value": 54
+                    },
+                    {
+                      "value": 46
+                    }
+                  ]
+                },
+                {
+                  "key": "expected_goals",
+                  "rawStats": [
+                    {
+                      "value": 1.32
+                    },
+                    {
+                      "value": 0.79
+                    }
+                  ]
+                },
+                {
+                  "key": "total_shots",
+                  "rawStats": [
+                    {
+                      "value": 14
+                    },
+                    {
+                      "value": 13
+                    }
+                  ]
+                },
+                {
+                  "key": "ShotsOnTarget",
+                  "rawStats": [
+                    {
+                      "value": 7
+                    },
+                    {
+                      "value": 4
+                    }
+                  ]
+                },
+                {
+                  "key": "touches_opp_box",
+                  "rawStats": [
+                    {
+                      "value": 28
+                    },
+                    {
+                      "value": 17
+                    }
+                  ]
+                },
+                {
+                  "key": "big_chance",
+                  "rawStats": [
+                    {
+                      "value": 2
+                    },
+                    {
+                      "value": 1
+                    }
+                  ]
+                },
+                {
+                  "key": "big_chance_missed_title",
+                  "rawStats": [
+                    {
+                      "value": 2
+                    },
+                    {
+                      "value": 1
+                    }
+                  ]
+                },
+                {
+                  "key": "accurate_passes",
+                  "rawStats": [
+                    {
+                      "value": 453,
+                      "total": 522
+                    },
+                    {
+                      "value": 380,
+                      "total": 444
+                    }
+                  ]
+                },
+                {
+                  "key": "yellow_cards",
+                  "rawStats": [
+                    {
+                      "value": 3
+                    },
+                    {
+                      "value": 1
+                    }
+                  ]
+                },
+                {
+                  "key": "corners",
+                  "rawStats": [
+                    {
+                      "value": 4
+                    },
+                    {
+                      "value": 4
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Shots",
+              "stats": [
+                {
+                  "key": "total_shots",
+                  "rawStats": [
+                    {
+                      "value": 14
+                    },
+                    {
+                      "value": 13
+                    }
+                  ]
+                },
+                {
+                  "key": "ShotsOffTarget",
+                  "rawStats": [
+                    {
+                      "value": 5
+                    },
+                    {
+                      "value": 3
+                    }
+                  ]
+                },
+                {
+                  "key": "ShotsOnTarget",
+                  "rawStats": [
+                    {
+                      "value": 7
+                    },
+                    {
+                      "value": 4
+                    }
+                  ]
+                },
+                {
+                  "key": "blocked_shots",
+                  "rawStats": [
+                    {
+                      "value": 2
+                    },
+                    {
+                      "value": 6
+                    }
+                  ]
+                },
+                {
+                  "key": "shots_woodwork",
+                  "rawStats": [
+                    {
+                      "value": 0
+                    },
+                    {
+                      "value": 0
+                    }
+                  ]
+                },
+                {
+                  "key": "shots_inside_box",
+                  "rawStats": [
+                    {
+                      "value": 7
+                    },
+                    {
+                      "value": 7
+                    }
+                  ]
+                },
+                {
+                  "key": "shots_outside_box",
+                  "rawStats": [
+                    {
+                      "value": 7
+                    },
+                    {
+                      "value": 6
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Expected goals (xG)",
+              "stats": [
+                {
+                  "key": "expected_goals",
+                  "rawStats": [
+                    {
+                      "value": 1.32
+                    },
+                    {
+                      "value": 0.79
+                    }
+                  ]
+                },
+                {
+                  "key": "expected_goals_open_play",
+                  "rawStats": [
+                    {
+                      "value": 1.28
+                    },
+                    {
+                      "value": 0.72
+                    }
+                  ]
+                },
+                {
+                  "key": "expected_goals_set_play",
+                  "rawStats": [
+                    {
+                      "value": 0.04
+                    },
+                    {
+                      "value": 0.08
+                    }
+                  ]
+                },
+                {
+                  "key": "expected_goals_non_penalty",
+                  "rawStats": [
+                    {
+                      "value": 1.32
+                    },
+                    {
+                      "value": 0.79
+                    }
+                  ]
+                },
+                {
+                  "key": "expected_goals_on_target",
+                  "rawStats": [
+                    {
+                      "value": 1.18
+                    },
+                    {
+                      "value": 0.58
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Physical performance",
+              "stats": [
+                {
+                  "key": "physical_metrics_distance_covered",
+                  "rawStats": [
+                    {
+                      "value": 119127
+                    },
+                    {
+                      "value": 113835
+                    }
+                  ]
+                },
+                {
+                  "key": "physical_metrics_running",
+                  "rawStats": [
+                    {
+                      "value": 26291
+                    },
+                    {
+                      "value": 22377
+                    }
+                  ]
+                },
+                {
+                  "key": "physical_metrics_sprinting",
+                  "rawStats": [
+                    {
+                      "value": 2042
+                    },
+                    {
+                      "value": 1793
+                    }
+                  ]
+                },
+                {
+                  "key": "physical_metrics_number_of_sprints",
+                  "rawStats": [
+                    {
+                      "value": 99
+                    },
+                    {
+                      "value": 88
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Passes",
+              "stats": [
+                {
+                  "key": "passes",
+                  "rawStats": [
+                    {
+                      "value": 522
+                    },
+                    {
+                      "value": 444
+                    }
+                  ]
+                },
+                {
+                  "key": "accurate_passes",
+                  "rawStats": [
+                    {
+                      "value": 453,
+                      "total": 522
+                    },
+                    {
+                      "value": 380,
+                      "total": 444
+                    }
+                  ]
+                },
+                {
+                  "key": "own_half_passes",
+                  "rawStats": [
+                    {
+                      "value": 267
+                    },
+                    {
+                      "value": 224
+                    }
+                  ]
+                },
+                {
+                  "key": "opposition_half_passes",
+                  "rawStats": [
+                    {
+                      "value": 186
+                    },
+                    {
+                      "value": 156
+                    }
+                  ]
+                },
+                {
+                  "key": "long_balls_accurate",
+                  "rawStats": [
+                    {
+                      "value": 25,
+                      "total": 53
+                    },
+                    {
+                      "value": 29,
+                      "total": 50
+                    }
+                  ]
+                },
+                {
+                  "key": "accurate_crosses",
+                  "rawStats": [
+                    {
+                      "value": 6,
+                      "total": 11
+                    },
+                    {
+                      "value": 4,
+                      "total": 17
+                    }
+                  ]
+                },
+                {
+                  "key": "player_throws",
+                  "rawStats": [
+                    {
+                      "value": 15
+                    },
+                    {
+                      "value": 14
+                    }
+                  ]
+                },
+                {
+                  "key": "touches_opp_box",
+                  "rawStats": [
+                    {
+                      "value": 28
+                    },
+                    {
+                      "value": 17
+                    }
+                  ]
+                },
+                {
+                  "key": "Offsides",
+                  "rawStats": [
+                    {
+                      "value": 0
+                    },
+                    {
+                      "value": 4
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Defence",
+              "stats": [
+                {
+                  "key": "matchstats.headers.tackles",
+                  "rawStats": [
+                    {
+                      "value": 17
+                    },
+                    {
+                      "value": 9
+                    }
+                  ]
+                },
+                {
+                  "key": "interceptions",
+                  "rawStats": [
+                    {
+                      "value": 6
+                    },
+                    {
+                      "value": 8
+                    }
+                  ]
+                },
+                {
+                  "key": "shot_blocks",
+                  "rawStats": [
+                    {
+                      "value": 6
+                    },
+                    {
+                      "value": 2
+                    }
+                  ]
+                },
+                {
+                  "key": "clearances",
+                  "rawStats": [
+                    {
+                      "value": 20
+                    },
+                    {
+                      "value": 15
+                    }
+                  ]
+                },
+                {
+                  "key": "keeper_saves",
+                  "rawStats": [
+                    {
+                      "value": 3
+                    },
+                    {
+                      "value": 5
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Duels",
+              "stats": [
+                {
+                  "key": "duel_won",
+                  "rawStats": [
+                    {
+                      "value": 48
+                    },
+                    {
+                      "value": 41
+                    }
+                  ]
+                },
+                {
+                  "key": "ground_duels_won",
+                  "rawStats": [
+                    {
+                      "value": 31,
+                      "total": 62
+                    },
+                    {
+                      "value": 31,
+                      "total": 62
+                    }
+                  ]
+                },
+                {
+                  "key": "aerials_won",
+                  "rawStats": [
+                    {
+                      "value": 17,
+                      "total": 27
+                    },
+                    {
+                      "value": 10,
+                      "total": 27
+                    }
+                  ]
+                },
+                {
+                  "key": "dribbles_succeeded",
+                  "rawStats": [
+                    {
+                      "value": 2,
+                      "total": 6
+                    },
+                    {
+                      "value": 11,
+                      "total": 19
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Discipline",
+              "stats": [
+                {
+                  "key": "yellow_cards",
+                  "rawStats": [
+                    {
+                      "value": 3
+                    },
+                    {
+                      "value": 1
+                    }
+                  ]
+                },
+                {
+                  "key": "red_cards",
+                  "rawStats": [
+                    {
+                      "value": 0
+                    },
+                    {
+                      "value": 0
+                    }
+                  ]
+                },
+                {
+                  "key": "fouls",
+                  "rawStats": [
+                    {
+                      "value": 12
+                    },
+                    {
+                      "value": 13
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "shotmap": {
+      "shots": [
+        {
+          "id": 2906054275,
+          "eventType": "AttemptSaved",
+          "teamId": 10203,
+          "playerId": 1215652,
+          "playerName": "Omari Hutchinson",
+          "x": 92.5,
+          "y": 16.011974523299997,
+          "min": 2,
+          "minAdded": null,
+          "isBlocked": false,
+          "isOnTarget": true,
+          "blockedX": 104.051724138,
+          "blockedY": 31.559999999999995,
+          "goalCrossedY": 34.22875,
+          "goalCrossedZ": 0.20547368320000003,
+          "expectedGoals": 0.019383255392313004,
+          "expectedGoalsOnTarget": 0.017292864620685577,
+          "shotType": "LeftFoot",
+          "situation": "FromCorner",
+          "period": "FirstHalf",
+          "isOwnGoal": false,
+          "onGoalShot": {
+            "x": 0.9394841269841275,
+            "y": 0.05435811724867726,
+            "zoomRatio": 1
+          },
+          "isSavedOffLine": false,
+          "isFromInsideBox": true,
+          "keeperId": 1131987,
+          "firstName": "Omari",
+          "lastName": "Hutchinson",
+          "fullName": "Omari Hutchinson",
+          "teamColor": "#C8102E"
+        },
+        {
+          "id": 2906056057,
+          "eventType": "AttemptSaved",
+          "teamId": 10204,
+          "playerId": 862608,
+          "playerName": "Kaoru Mitoma",
+          "x": 87.6411764704,
+          "y": 45.542165601099995,
+          "min": 3,
+          "minAdded": null,
+          "isBlocked": false,
+          "isOnTarget": true,
+          "blockedX": 102.8189655174,
+          "blockedY": 36.21125,
+          "goalCrossedY": 34.38125,
+          "goalCrossedZ": 0.1219999994,
+          "expectedGoals": 0.03214987739920616,
+          "expectedGoalsOnTarget": 0.01619695872068405,
+          "shotType": "RightFoot",
+          "situation": "RegularPlay",
+          "period": "FirstHalf",
+          "isOwnGoal": false,
+          "onGoalShot": {
+            "x": 0.8991402116402113,
+            "y": 0.032275132116402115,
+            "zoomRatio": 1
+          },
+          "isSavedOffLine": false,
+          "isFromInsideBox": false,
+          "keeperId": 181069,
+          "firstName": "Kaoru",
+          "lastName": "Mitoma",
+          "fullName": "Kaoru Mitoma",
+          "teamColor": "#0850A0"
+        },
+        {
+          "id": 2906058715,
+          "eventType": "Goal",
+          "teamId": 10204,
+          "playerId": 1354561,
+          "playerName": "Diego Gomez",
+          "x": 92.8,
+          "y": 15.661656051799998,
+          "min": 6,
+          "minAdded": null,
+          "isBlocked": false,
+          "isOnTarget": true,
+          "blockedX": null,
+          "blockedY": null,
+          "goalCrossedY": 36.97375,
+          "goalCrossedZ": 1.2585263096000001,
+          "expectedGoals": 0.02647620253264904,
+          "expectedGoalsOnTarget": 0.09728556871414185,
+          "shotType": "RightFoot",
+          "situation": "RegularPlay",
+          "period": "FirstHalf",
+          "isOwnGoal": false,
+          "onGoalShot": {
+            "x": 0.21329365079365015,
+            "y": 0.3329434681481482,
+            "zoomRatio": 1
+          },
+          "isSavedOffLine": false,
+          "isFromInsideBox": true,
+          "keeperId": 181069,
+          "firstName": "Diego",
+          "lastName": "Gomez",
+          "fullName": "Diego Gomez",
+          "teamColor": "#0850A0"
+        }
+      ]
+    },
+    "playerStats": {
+      "38807": {
+        "name": "James Milner",
+        "id": 38807,
+        "optaId": "15157",
+        "teamId": 10204,
+        "teamName": "Brighton and Hove Albion",
+        "isGoalkeeper": false,
+        "stats": [
+          {
+            "title": "Top stats",
+            "key": "top_stats",
+            "stats": {
+              "FotMob rating": {
+                "key": "rating_title",
+                "stat": {
+                  "value": 6.92,
+                  "type": "double"
+                }
+              },
+              "Minutes played": {
+                "key": "minutes_played",
+                "stat": {
+                  "value": 86,
+                  "type": "integer"
+                }
+              },
+              "Goals": {
+                "key": "goals",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              },
+              "Assists": {
+                "key": "assists",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              },
+              "Expected assists (xA)": {
+                "key": "expected_assists",
+                "stat": {
+                  "value": 0.03,
+                  "type": "double"
+                }
+              },
+              "xG + xA": {
+                "key": "xg_and_xa",
+                "stat": {
+                  "value": 0.03,
+                  "type": "double"
+                }
+              },
+              "Top speed": {
+                "key": "physical_metrics_topspeed",
+                "stat": {
+                  "value": 31.399999618530273,
+                  "type": "speed"
+                }
+              },
+              "Distance covered": {
+                "key": "physical_metrics_distance_covered",
+                "stat": {
+                  "value": 11656,
+                  "type": "distance"
+                }
+              },
+              "Accurate passes": {
+                "key": "accurate_passes",
+                "stat": {
+                  "value": 50,
+                  "total": 56,
+                  "type": "fractionWithPercentage"
+                }
+              },
+              "Chances created": {
+                "key": "chances_created",
+                "stat": {
+                  "value": 1,
+                  "type": "integer"
+                }
+              },
+              "Shotmap": {
+                "key": null,
+                "stat": {
+                  "value": 0,
+                  "type": "boolean"
+                }
+              },
+              "Fantasy points": {
+                "key": "fantasy_points",
+                "stat": {
+                  "value": 2,
+                  "type": "fantasyPoints"
+                }
+              },
+              "Defensive actions": {
+                "key": "defensive_actions",
+                "stat": {
+                  "value": 7,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "title": "Attack",
+            "key": "attack",
+            "stats": {
+              "Touches": {
+                "key": "touches",
+                "stat": {
+                  "value": 64,
+                  "type": "integer"
+                }
+              },
+              "Touches in opposition box": {
+                "key": "touches_opp_box",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              },
+              "Passes into final third": {
+                "key": "passes_into_final_third",
+                "stat": {
+                  "value": 7,
+                  "type": "integer"
+                }
+              },
+              "Line breaking passes": {
+                "key": "line_breaking_passes",
+                "stat": {
+                  "value": 5,
+                  "type": "integer"
+                }
+              },
+              "Accurate crosses": {
+                "key": "accurate_crosses",
+                "stat": {
+                  "value": 0,
+                  "total": 2,
+                  "type": "fractionWithPercentage"
+                }
+              },
+              "Accurate long balls": {
+                "key": "long_balls_accurate",
+                "stat": {
+                  "value": 2,
+                  "total": 4,
+                  "type": "fractionWithPercentage"
+                }
+              },
+              "Dispossessed": {
+                "key": "dispossessed",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "title": "Defense",
+            "key": "defense",
+            "stats": {
+              "Defensive actions": {
+                "key": "defensive_actions",
+                "stat": {
+                  "value": 7,
+                  "type": "integer"
+                }
+              },
+              "Tackles": {
+                "key": "matchstats.headers.tackles",
+                "stat": {
+                  "value": 1,
+                  "type": "integer"
+                }
+              },
+              "Blocks": {
+                "key": "shot_blocks",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              },
+              "Clearances": {
+                "key": "clearances",
+                "stat": {
+                  "value": 1,
+                  "type": "integer"
+                }
+              },
+              "Interceptions": {
+                "key": "interceptions",
+                "stat": {
+                  "value": 0,
+                  "type": "integer"
+                }
+              },
+              "Recoveries": {
+                "key": "recoveries",
+                "stat": {
+                  "value": 5,
+                  "type": "integer"
+                }
+              },
+              "Dribbled past": {
+                "key": "dribbled_past",
+                "stat": {
+                  "value": 2,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "title": "Duels",
+            "key": "duels",
+            "stats": {
+              "Ground duels won": {
+                "key": "ground_duels_won",
+                "stat": {
+                  "value": 1,
+                  "total": 4,
+                  "type": "fractionWithPercentage"
+                }
+              },
+              "Aerial duels won": {
+                "key": "aerials_won",
+                "stat": {
+                  "value": 0,
+                  "total": 2,
+                  "type": "fractionWithPercentage"
+                }
+              },
+              "Was fouled": {
+                "key": "was_fouled",
+                "stat": {
+                  "type": "integer"
+                }
+              },
+              "Fouls committed": {
+                "key": "fouls",
+                "stat": {
+                  "value": 1,
+                  "type": "integer"
+                }
+              },
+              "Duels won": {
+                "key": "duel_won",
+                "stat": {
+                  "value": 1,
+                  "type": "integer"
+                },
+                "hideInPopupCard": true
+              },
+              "Duels lost": {
+                "key": "duel_lost",
+                "stat": {
+                  "value": 5,
+                  "type": "integer"
+                },
+                "hideInPopupCard": true
+              }
+            }
+          },
+          {
+            "title": "Physical metrics",
+            "key": "physical_metrics",
+            "stats": {
+              "Top speed": {
+                "key": "physical_metrics_topspeed",
+                "stat": {
+                  "value": 31.399999618530273,
+                  "type": "speed"
+                }
+              },
+              "Distance covered": {
+                "key": "physical_metrics_distance_covered",
+                "stat": {
+                  "value": 11656,
+                  "type": "distance"
+                }
+              },
+              "Running": {
+                "key": "physical_metrics_running",
+                "stat": {
+                  "value": 2877,
+                  "total": 11656,
+                  "type": "distanceWithPercentage"
+                }
+              },
+              "Sprinting": {
+                "key": "physical_metrics_sprinting",
+                "stat": {
+                  "value": 149,
+                  "total": 11656,
+                  "type": "distanceWithPercentage"
+                }
+              },
+              "Number of sprints": {
+                "key": "physical_metrics_number_of_sprints",
+                "stat": {
+                  "value": 8,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        ],
+        "shotmap": [],
+        "shirtNumber": "20",
+        "positionId": 64,
+        "usualPosition": 2
+      },
+      "107917": {
+        "name": "Jason Steele",
+        "id": 107917,
+        "optaId": "49262",
+        "teamId": 10204,
+        "teamName": "Brighton and Hove Albion",
+        "isGoalkeeper": true,
+        "stats": [],
+        "shotmap": [],
+        "shirtNumber": "23",
+        "usualPosition": 0
+      }
+    },
+    "lineup": {
+      "homeTeam": {
+        "formation": "4-2-3-1"
+      },
+      "awayTeam": {
+        "formation": "4-2-3-1"
+      }
+    },
+    "momentum": null
+  },
+  "_capture": {
+    "source": "SportsDataverse fotmob_match_details",
+    "source_match_id": "4813647",
+    "captured": "2026-10-28",
+    "sample": "Shot and player lists excerpted; not full match event coverage."
+  }
+}

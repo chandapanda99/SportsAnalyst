@@ -21,7 +21,8 @@ def packages(sport):
     from sports_analyst.datasets.nfl import SUPPORTED_DATASETS
 
     return {"nfl": list(SUPPORTED_DATASETS), "nba": list(NBA_ALL_DATASETS), "cfb": CFB_DATASETS,
-            "soccer": ["play_by_play", "team_stats", "lineups", "key_events", "expected_goals",
+            "soccer": ["play_by_play", "team_stats", "lineups", "key_events", "expected_goals", "match_analytics", "asa_analytics",
+                       "open_events", "match_players",
                        "player_game_logs", "player_expected_goals", "season_statistics"]}[sport]
 
 
@@ -32,7 +33,8 @@ def dependencies(sport, dataset, player=False):
     if sport == "soccer":
         if dataset in {"player_expected_goals", "season_statistics"}:
             return ["play_by_play", "lineups"]
-        if dataset in {"team_stats", "lineups", "key_events", "expected_goals"}:
+        if dataset in {"team_stats", "lineups", "key_events", "expected_goals", "match_analytics",
+                       "asa_analytics", "open_events", "match_players"}:
             return ["play_by_play"]
     if sport == "nba" and dataset not in {"schedules", "stats_schedules", "player_crosswalk", "schedule_crosswalk", "team_crosswalk"}:
         return (["stats_schedules", "player_crosswalk"] if player else ["stats_schedules"]) if dataset.startswith("stats_") else ["schedules"]
@@ -55,11 +57,31 @@ def inventory(sport, access=None):
             from sports_analyst.datasets.nfl import DIRECT_PARQUET_PATHS
 
             supported = dataset in DIRECT_PARQUET_PATHS or dataset.startswith("nextgen_") or dataset in {"schedules", "players", "teams"}
+        if sport == "soccer" and dataset == "asa_analytics" and access:
+            supported = access.request.scope.competition in {"usa.1", "usa.nwsl"}
         result.append({"dataset": dataset, "grain": c.grain, "namespace": c.namespace,
                        "installed_manifest_ids": [m.manifest_id for m in installed],
                        "acquisition": "supported_adapter" if supported else "installed_only_no_verified_download",
                        "dependencies": dependencies(sport, dataset, bool(access and access.request.subject and access.request.subject.type == "player")),
                        "verification": "declared; verify source coverage and schema before measurement"})
+        if sport == "soccer" and dataset in {"match_analytics", "asa_analytics", "open_events", "match_players"}:
+            from sports_analyst.datasets.soccer.statistics import MATCH_METRICS
+
+            described = {
+                "match_analytics": "FotMob team-match counters, xG/xGOT, shots, passing, defense, set pieces and recorded physical context",
+                "asa_analytics": "ASA MLS/NWSL per-game team-model xG, player-shot-model xG and expected points; source availability unverified",
+                "match_players": "Native FotMob player-match stats; identity crosswalk required for a selected ESPN athlete",
+                "open_events": "Matched StatsBomb open games: event sequences, action coordinates, pass/shot/duel qualifiers and versioned xT",
+            }
+            fields = sorted({field for metric in MATCH_METRICS.values() if metric[1] == dataset
+                             for field in (metric[3], metric[4]) if field})
+            if dataset == "open_events":
+                fields = ["event_type", "provider_player_id", "player_name", "minute", "possession", "under_pressure",
+                          "start_x", "start_y", "end_x", "end_y", "pass_length", "pass_recipient_name", "xg", "xt", "xt_model_sha256"]
+            elif dataset == "match_players":
+                fields = ["provider_player_id", "name", "minutes_played", "expected_goals", "expected_assists", "interceptions"]
+            result[-1].update({"description": described[dataset], "possible_fields": fields,
+                               "coverage_verified": False, "identity_note": "Canonical fixture/team IDs only; never join native athletes by name"})
     return result
 
 

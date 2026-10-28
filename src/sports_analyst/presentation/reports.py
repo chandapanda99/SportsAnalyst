@@ -111,6 +111,35 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
         scale = color.get("scale") if isinstance(color.get("scale"), dict) else {}
         color["scale"] = {**scale, "range": [palette.display_primary, palette.display_secondary]}
 
+    meta = themed.get("usermeta", {})
+    if meta.get("chartKind") == "metric-rows":
+        domain = meta.get("colorLabels", meta.get("seriesLabels", []))
+        colors = [palette.display_primary, palette.display_secondary, "#A9C9F4", "#DBB3E7", "#B4D8B5", "#E8C69F"]
+        grouped = meta.get("comparisonKind") == "grouped-observations"
+        color_range = [colors[0 if grouped else i % len(colors)] for i in range(len(domain))]
+        shapes = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"]
+        for plot_index, plot in enumerate(themed.get("vconcat", [])):
+            plot["width"] = 640
+            plot["height"] = 130
+            plot.get("title", {}).update(color="#EDF5FA")
+            for layer in plot.get("layer", []):
+                mark = layer.get("mark", {})
+                encoding = layer.get("encoding", {})
+                color = encoding.get("color", {})
+                if color.get("field"):
+                    color["scale"] = {"domain": domain, "range": color_range}
+                if mark.get("type") == "point" and mark.get("opacity") != .001:
+                    mark["opacity"] = 1
+                    encoding["shape"] = {"field": meta.get("colorField", meta["seriesField"]), "type": "nominal", "legend": None,
+                        "scale": {"domain": domain, "range": [shapes[0 if grouped else i % len(shapes)] for i in range(len(domain))]}}
+                    if not grouped and plot_index == 0:
+                        color["legend"] = {"title": "Seasons" if meta.get("comparisonKind") == "season-trend" else "Periods", "orient": "top"}
+                if mark.get("type") == "text":
+                    encoding["color"] = {"value": "#EDF5FA"}
+                    if len(plot.get("data", {}).get("values", [])) > 8:
+                        mark["opacity"] = 0
+        themed["spacing"] = 32
+
     config = themed.get("config") if isinstance(themed.get("config"), dict) else {}
     themed["background"] = "transparent"
     themed["config"] = {
@@ -125,6 +154,7 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
             "tickColor": "#3B5068",
         },
         "legend": {"labelColor": "#C7D3E0", "titleColor": "#E7EDF6"},
+        "title": {"color": "#EDF5FA"},
     }
     return themed
 
@@ -144,6 +174,9 @@ def _chart_svg(specification: dict, team: str, sport: str = "nfl") -> str:
 
 
 def render_html(bundle: InvestigationBundle) -> str:
+    from sports_analyst.analysis.research.presentation import refresh_chart_presentation
+
+    bundle = refresh_chart_presentation(bundle)
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
     subject = bundle.run.subject.id if bundle.run.subject else scope.team
