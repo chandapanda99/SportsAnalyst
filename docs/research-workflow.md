@@ -1,9 +1,91 @@
-# Evidence-gathering research
+# Analysis and evidence workflow
 
-The calculation planner uses MODEL, not CHAT_MODEL, to discover gaps, queue
-acquisition, validate join plans, register measurements and finish its objective
-review. Existing deterministic sport metrics remain preferred. No hosted sandbox,
-new service, arbitrary SQL, shell, URLs or model-specified paths are exposed.
+The current prompt contract version is recorded in synthesis trace metadata. Shared
+rules, sport/domain guidance and reviewer requirements live in
+`src/sports_analyst/analysis/instructions.py`; agent construction is in
+`src/sports_analyst/analysis/agents.py`.
+
+Every coordinator/specialist receives the same analytical contract. The coordinator
+also receives reviewer checks, including direct follow-ups without specialists.
+`inspect_analysis_context` supplies selected subject/windows, current timestamp,
+registered metric definitions and the acquisition dates/coverage of evidence sources.
+Unknown definitions or completeness remain unknown. Context is not itself a citation.
+Comparison evidence includes both sample counts where the analytics provide them;
+play-row counts must not be mistaken for a metric's non-null denominator.
+
+`MODEL` performs planning, calculations, specialist review and evidence synthesis. `CHAT_MODEL`, when configured, edits only the
+validated draft's wording and must preserve numbers, denominators, qualifications,
+sport terminology and measured-versus-interpretive status.
+
+## Question planning and calculation
+
+The planner records the question's objectives, existing evidence, required data
+and calculations, then maps every objective to evidence IDs or an explicit gap.
+Planner and writer use a paginated metric-family index; a short initial payload
+is not treated as the entire evidence registry. Existing deterministic metrics
+remain preferred.
+
+Scoped aggregation accepts recorded columns, up to three grouping fields, eight
+measures and eight literal filters. Count, sum, mean, min, max and distinct
+non-null count retain their denominators. Entirely missing sums remain null.
+Full-season investigations may query intermediate years with `season:YYYY`;
+other designs retain their selected windows. Unknown attribution and unverifiable
+season/segment restrictions are rejected rather than broadening scope.
+
+Existing sport metrics and raw scoped rows can have different eligibility rules;
+the planner must specify qualifying filters. Invalid operations return actionable
+field/operator errors. Objective reviews enter the writer's analytical context;
+unresolved objectives become caveats. The writer must cite evidence for covered
+objectives, with one repair attempt before deterministic fallback when citation
+coverage fails. These checks do not establish semantic entailment.
+
+### NFL phase accounting
+
+NFL overall-offense EPA runs include a deterministic exclusive accounting
+breakdown before narrative generation. Turnovers (interceptions or lost fumbles)
+take precedence, then sacks, pass-coded plays, run-coded plays, and other plays.
+Scrambles stay run-coded. Each category's EPA sum is divided by the entire
+window's qualifying-play count. The difference between windows is a contribution
+to the overall EPA/play change, not within-category efficiency or a causal effect.
+The sum must reconcile at full precision. Missing classification fields or values
+produce a disclosed gap, not invented zeroes. Unequal window samples are allowed.
+
+## Interpreter execution
+
+The shared optional calculation stage uses MODEL (never CHAT_MODEL), LangChain's
+agent loop, and CodeInterpreterMiddleware. It can inspect bounded existing evidence
+and compose basic arithmetic over known evidence IDs. Registration independently
+recalculates the expression in a small AST evaluator; it never executes Python eval.
+Arithmetic validation does not prove compatible samples, units, statistical
+meaning, or causation. These remain explicit caveats for the narrative reviewer.
+No raw SQL, paths, network, package installation or dynamic subagents are exposed.
+
+Limits: 32 MiB JavaScript heap, 3-second eval timeout, 16 bridged calls per eval,
+32 graph recursion steps per planning round, eight accepted derived arithmetic records, and 24 registration
+attempts. These are not a global LLM wall-time or billing cap. Code and tool
+receipts from a completed stage are saved in ToolExecutionRecord before the
+citation ledger is built. Independently validated measurements survive later stage failures.
+Failures save a separate failed-stage audit containing the error type, plan,
+review, tool receipts and retained evidence IDs. Raw provider exception text is not
+persisted in this audit. Existing evidence remains usable, but the report summary
+and caveats explicitly identify partial analysis due to execution failure, rather
+than claiming the source data are absent. Missing model configuration skips
+composition. CALCULATION_INTERPRETER_ENABLED=false
+disables optional composition, not tested NFL accounting.
+
+### Runtime dependencies
+
+Run `uv sync` with your usual extras. The lockfile includes langchain-quickjs,
+quickjs-rs and wasmtime. The beta middleware and dependency versions are locked for
+reproducibility. PyInstaller collects the QuickJS Wasm resources and runtime DLLs;
+the frozen smoke test actually executes JavaScript. Rebuild installers to include
+these dependencies. This does not resolve Windows certificate/policy trust, and
+the installer still needs a signed build and a clean-machine smoke test.
+
+The implementation is local and needs no sandbox service. Run the offline feature
+tests in tests/test_calculations.py. A live MODEL end-to-end run remains a separate
+verification step; offline tests use a scripted model but execute the real QuickJS
+middleware and host-tool bridge.
 
 ## Discovery and contracts
 
@@ -155,9 +237,100 @@ The four-sport feature flow covers two comparison windows, queued acquisition,
 registered measurements, charts, citation resolution, worker-replacement recovery
 and follow-up reuse without modifying parent evidence. Opponent-context tests
 verify unrelated and future games are excluded and incomplete downloads resume.
-An opt-in live-source check on 2026-10-27 acquired isolated 2025 snapshots and
-executed direct-key measurements for all four sports, including native NBA Stats
-boxes and selected-game opponent context for CFB/soccer. See
-[the live-source acceptance results](research-source-validation.md). This does not
-certify other seasons, competitions, crosswalks, or unrecorded lineup intervals.
-Live-model and frozen-installer verification remain separate from these checks.
+
+## Verification
+
+### Model evaluation
+
+The retained high-level tests exercise actual tool and prompt construction for NFL
+receiving, NBA defense and soccer scoring, with unequal samples, incomplete coverage,
+missing values, counter-signals and unsupported tactical questions. Calls are mocked:
+these are wiring/contract regressions, not proof of model factual accuracy.
+
+For live model evaluation, replay these cases with captured evidence and the configured
+analysis model, reviewing initial and follow-up outputs separately. Model calls incur
+provider usage and are not part of the default test suite. Use these acceptance criteria:
+
+| Scenario                                     | Required behavior                                                                               |
+|----------------------------------------------|-------------------------------------------------------------------------------------------------|
+| NFL receiving improvement with fewer targets | Separate workload and efficiency; do not infer separation from yards/target.                    |
+| NBA lineup improvement                       | State unit/sample context; do not credit an individual or infer assignments from lineup rating. |
+| Soccer goals rise while xG falls             | Preserve contradictory signals; compare covered matches and avoid finishing-skill forecasts.    |
+| Missing metric                               | Explicitly unavailable, never zero or estimated.                                                |
+| Unequal samples or partial coverage          | Identify the relevant restriction without declaring causal/statistical certainty.               |
+| Endpoint-only range                          | Do not invent intermediate-season results or a continuous trend.                                |
+| Conversational rewrite                       | Preserve conclusions and material restrictions; add no new facts or mechanisms.                 |
+
+Score each response for numerical fidelity, citation entailment, scope/coverage fidelity,
+sport terminology, causal restraint and directness. Any invented number, unsupported
+tactical assertion, or source/window mismatch fails the case. Record prompt version,
+model/version, source snapshot and reviewer rationale when comparing runs in LangSmith.
+
+Citation schema validation checks that references exist; it does not establish semantic
+entailment. Reviewer prompts and structured output do not replace independent evaluation.
+
+### Sampled source acceptance (2026-10-27)
+
+This source-only check made no model calls. Generated captures, manifests,
+checksums and results are local artifacts under
+`data/research-source-validation-20261027/`, not bundled documentation. The isolated
+catalog does not replace the primary library. The following are sampled results,
+not guarantees for other seasons or competitions.
+
+| Selected source sample                                                       | Base records | Matched records |     Non-null measured values |
+|------------------------------------------------------------------------------|-------------:|----------------:|-----------------------------:|
+| NFL, Chicago, 2025 plays with FTN charting                                   |        1,637 |           1,602 |             1,602 EPA values |
+| NBA, Boston, 2024–25 ESPN player/team boxes                                  |        1,272 |           1,272 |            977 points values |
+| NBA, Boston, 2024–25 NBA Stats player/team boxes                             |        1,272 |           1,272 | 1,272 recorded points values |
+| CFB, Iowa State, 2025 player/team game statistics                            |          127 |             127 |       15 passing-yard values |
+| Premier League, Arsenal, 2024–25 team statistics with pre-aggregated lineups |           38 |              38 |               38 shot totals |
+
+Every join preserved its base observation grain. Missing context and non-null
+measurement coverage remain distinct. All audited primary snapshot keys were
+unique and non-null. These are listed box-score records, not necessarily player
+appearances. The ESPN/native NBA sources returned the same 10,697 team points,
+but differed in null versus recorded-zero player entries. Their denominators must
+not be interchanged for appearance-based averages; check minutes/participation.
+
+Selected-opponent acquisition also passed against the real catalog: CFB retained
+9 player-game records for one opponent's game; soccer retained 2 matches for one
+opponent. It reused already acquired summaries without fetching either opponent's
+entire season. The full primary samples remained unchanged.
+
+The ESPN Core xG probe covered only Premier League events `704380` and `704656`.
+All four team statistics responses supplied conventional goals/shots but no
+expected-goals fields recognized by the source parser. The raw responses are
+retained under the isolated soccer Core-statistics cache. This is a two-fixture
+result, not evidence that historical xG is absent everywhere.
+
+Replay the source-only check explicitly:
+
+```powershell
+.venv\Scripts\python.exe scripts/validate_research_sources.py --run-live-sources --output data/research-source-validation-20261027
+```
+
+It honors `DATASET_SYNC_CONCURRENCY`, persists acquisition budgets, and reuses
+successful snapshots. A fresh output directory performs fresh acquisition. Each
+sport's transfer cap is at most 512 MiB and the configured request/time limits
+remain in force. It never enables a new provider or uses model credentials.
+
+This run does not validate live-model reasoning, additional historical seasons,
+all FBS/FCS conferences, every soccer competition, cross-provider athlete/game
+crosswalks, lineup intervals, pregame publication timing, or the frozen installer.
+
+### Optional sandbox access check
+
+The app does not implement a hosted Python fallback. LangSmith credentials alone
+do not enable one. For a separate, opt-in service-access check, configure private
+`LANGSMITH_API_KEY`, `LANGSMITH_ENDPOINT` and (if needed)
+`LANGSMITH_WORKSPACE_ID`, then run:
+
+```powershell
+.venv\Scripts\python.exe scripts/check_langsmith_sandbox.py
+```
+
+The script creates a temporary sandbox, checks synthetic arithmetic and attempts
+cleanup; it uploads no sports data and calls no LLM. Confirm current access,
+pricing, effective network policy and deletion in your workspace before use.
+Service access does not establish safe custom execution or enable an app feature.
+See the [Sandbox SDK documentation](https://docs.langchain.com/langsmith/sandbox-sdk).

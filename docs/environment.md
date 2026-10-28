@@ -48,20 +48,117 @@ Do not expose an unauthenticated development server to the public internet.
 ## Windows signing
 
 `WINDOWS_SIGNING_*` belongs to installer builds, not analysis or dataset syncing.
-The PowerShell build/sign scripts read process environment variables, not `.env`.
-Existing private signing settings may be retained for reference, but must be exported
-to the build process when used. Never distribute private signing material.
+The PowerShell scripts read process environment variables, not `.env`. Export
+signing values to the build process and never distribute private signing material.
+See the [desktop build guide](desktop.md#build-the-installer).
 
-## Retired hosting configuration
+## Provider examples
 
-No Oracle, Google deployment, Redis, Neon, or external storage credentials are needed
-for the local/desktop setup. Optional storage/job compatibility code remains internal;
-no deployment is enabled by the template.
+The application supports Azure Foundry and Ollama. Provider settings remain in the backend and are never sent to the browser or analysis tools.
 
-Removed private hosting settings and the original environment were archived locally
-under `build/retired-cloud-backups/` before removing the extra env files. That archive
-contains secrets: protect it like `.env`, do not share it, and keep a secure copy
-elsewhere if you need it long-term because build outputs are disposable. It is ignored
-by Git and excluded from Docker contexts. Tracked deployment files can also be
-recovered from Git history. Removing local deployment files does not stop or delete
-already-provisioned provider resources; those must be reviewed separately.
+### Azure Foundry
+
+Azure Foundry is the default provider and uses the OpenAI-compatible `/openai/v1/` endpoint with the Responses API.
+
+```dotenv
+MODEL_PROVIDER=azure_foundry
+MODEL=gpt-5.6-luna
+FOUNDRY_ENDPOINT=https://YOUR-RESOURCE.openai.azure.com/openai/v1/
+FOUNDRY_API_KEY=
+REASONING_EFFORT=medium
+```
+
+If `FOUNDRY_API_KEY` is empty, authentication uses `DefaultAzureCredential`. For local development, sign in with a supported Azure developer credential such as Azure CLI
+before starting the API.
+
+### Ollama
+
+```dotenv
+MODEL_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3:8b
+```
+
+The selected Ollama model must support the structured output and tool-calling behavior needed by the agent workflow.
+
+Check the active configuration with:
+
+```powershell
+uv run sports-analyst providers check
+```
+
+If provider construction or model synthesis fails, the completed deterministic evidence remains available and the saved report is marked as a fallback.
+
+### LangSmith tracing
+
+LangSmith tracing is opt-in. Add the following to `.env` to trace the deterministic pipeline and Deep Agent activity:
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=open-sports-analyst-local
+# LANGSMITH_WORKSPACE_ID=
+```
+
+Each investigation is a root trace with child spans for planning, data loading, deterministic analysis, synthesis, and persistence. Follow-ups use the original investigation
+ID as their `thread_id`, while retaining their own `investigation_id`. Trace metadata contains scope identifiers and counts, not raw datasets or credentials. Tracing is
+fail-open: configuration or delivery failures are logged but do not fail an investigation.
+
+## Settings reference
+
+All settings use the following environment variables and may be placed in `.env`.
+
+|              Variable              |              Default              | Purpose                                                         |
+|:----------------------------------:|:---------------------------------:|-----------------------------------------------------------------|
+|             `DATA_DIR`             |   Platform user-data directory    | Local catalog, Parquet, and investigation root                  |
+|          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`                    |
+|              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                             |
+|            `CHAT_MODEL`            |               Empty               | Optional summary/follow-up wording model; falls back to `MODEL` |
+|         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                          |
+|         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential`           |
+|         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                                      |
+|         `OLLAMA_BASE_URL`          |     `http://127.0.0.1:11434`      | Ollama server                                                   |
+|           `OLLAMA_MODEL`           |            `qwen3:8b`             | Ollama model                                                    |
+|          `SQL_ROW_LIMIT`           |              `10000`              | Maximum constrained-SQL result rows                             |
+|   `EVENT_STREAM_TIMEOUT_SECONDS`   |               `120`               | SSE inactivity timeout before frontend recovery                 |
+|         `DATASET_CACHE_MB`         |               `384`               | In-memory analytical dataset cache; `0` disables it             |
+| `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |              `false`              | Recalculate SHA-256 whenever a manifest is loaded               |
+|   `INVESTIGATION_HISTORY_LIMIT`    |               `50`                | Default compact history page size                               |
+|            `LOG_LEVEL`             |              `INFO`               | Backend logging level                                           |
+|        `LANGSMITH_TRACING`         |              `false`              | Enable LangSmith tracing                                        |
+|        `LANGSMITH_ENDPOINT`        | `https://api.smith.langchain.com` | LangSmith API endpoint                                          |
+|        `LANGSMITH_API_KEY`         |               Empty               | LangSmith API key                                               |
+|        `LANGSMITH_PROJECT`         |    `open-sports-analyst-local`    | Destination LangSmith project                                   |
+|      `LANGSMITH_WORKSPACE_ID`      |               Empty               | Optional workspace for scoped API keys                          |
+
+Set `LOG_LEVEL=DEBUG` for lightweight diagnostics. Logs include IDs, lifecycle stages, timings, result counts, model/fallback outcomes, citation repair, and event timeouts.
+They intentionally exclude prompts, questions, evidence contents, SQL text, managed paths, credentials, and raw model responses.
+
+## Mobile development testing
+
+The web workbench reflows for narrow screens. NFL/college-football fields and NBA courts offer an expanded view with zoom buttons, touch pan/pinch, a play-focus shortcut, and a full-view reset. Tap a marker or use the player/event picker for persistent details; recorded, projected, and inferred labels are preserved. Escape closes the expanded view and restores focus.
+
+On phones, mixed-metric comparisons show exact values and first-to-last numeric differences before the optional chart. Rate differences use percentage points, not relative percentage changes. Metric filters and expanded charts remain available. College-football comparison tables scroll inside their own labeled region.
+
+For mobile QA, check 320px and 390px portrait layouts, landscape, the on-screen keyboard, marker selection, expand/zoom/reset, and report navigation. Desktop browser emulation is useful but does not replace Android Chrome and iPhone Safari checks, especially for pinch gestures, safe areas, and keyboard behavior.
+
+### Testing over cellular with ngrok
+
+Use `ngrok.yml.example` as the template for a private `ngrok.local.yml` (the local file is excluded from Git and Docker build contexts). Replace the authtoken with your ngrok dashboard authtoken and replace the entire password placeholder with a long, unique password. The browser username is `mobile`. Do not put model-provider credentials in this file. If you need a particular endpoint URL, uncomment `url` and use the exact HTTPS dev domain assigned in your ngrok dashboard.
+
+From the repository root, build the frontend and start the API:
+
+```cmd
+npm --prefix frontend run build
+uv run sports-analyst serve
+```
+
+Confirm `http://127.0.0.1:8767` opens the built app, then in a separate terminal:
+
+```cmd
+ngrok config check --config .\ngrok.local.yml
+ngrok start sports-analyst --config .\ngrok.local.yml
+```
+
+Open the HTTPS forwarding address on your phone over cellular and authenticate as `mobile` with your chosen password. Both the frontend and `/api` use this single protected endpoint; Vite is not needed. Keep the API and tunnel running while testing; Ctrl+C stops the tunnel. Anyone with the browser credentials has access to the local app's data and operations, including model-backed requests, so do not share them. ngrok transports your requests through its service; use test data where possible. Do not commit the local configuration or copy it into deployment/installer artifacts.
