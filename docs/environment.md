@@ -18,10 +18,28 @@ availability and data-use terms still apply independently of library installatio
   and `FOUNDRY_API_KEY` (or an explicitly configured supported identity).
   Model calls can still incur provider charges.
 - **Message formatting:** optionally set `CHAT_MODEL` for summaries and follow-up
-  wording only. Omit it to reuse `MODEL`. `REASONING_EFFORT` controls supported
-  model reasoning configuration.
+  wording only. Omit it to reuse `MODEL`. `REASONING_EFFORT` controls analysis
+  reasoning; `CHAT_REASONING_EFFORT` independently controls the Azure Foundry
+  wording model when `CHAT_MODEL` is set. Omit it or leave it blank to use that
+  model's default. Use an effort supported by the selected deployment; Ollama
+  does not currently apply these reasoning settings.
 - **Ollama instead:** set `MODEL_PROVIDER=ollama`, `OLLAMA_BASE_URL` and
   `OLLAMA_MODEL`. Foundry credentials are unnecessary for that provider.
+- **Soccer enrichment:** `SOCCER_UNDERSTAT_ENABLED=true` enables optional Understat
+  team-match xG, native player-match statistics and shot locations through the
+  locked SoccerData parser for the five configured European domestic leagues.
+  Source availability is verified during acquisition. xG models stay separate;
+  ESPN player comparisons require a verified identity mapping. Understat downloads
+  run in workers with bounded HTTP transport; no browser is launched. Disable the
+  flag to keep existing data readable while preventing new Understat acquisition.
+- **WhoScored event recaps:** enabled by default; select
+  `whoscored_events` in soccer Data Management for a configured European domestic
+  league. The worker uses bounded, cached HTTP acquisition with SoccerData's
+  parser, without launching Chrome. Source blocks (including HTTP 403) are
+  reported as unavailable enrichment; static event cards and commentary zones
+  continue to work. Coverage is not guaranteed. Only uniquely corroborated
+  events enrich the selected ESPN timeline event; source streams remain separate.
+  Set `SOCCER_WHOSCORED_ENABLED=false` only to disable new acquisition.
 - **Data location:** omit `DATA_DIR` for the standard per-user folder, or choose a
   path deliberately. Changing it does not migrate datasets or investigation history.
 - **Performance:** `DATASET_CACHE_MB` and `DATASET_SYNC_CONCURRENCY` control cache
@@ -122,6 +140,7 @@ All settings use the following environment variables and may be placed in `.env`
 |          `MODEL_PROVIDER`          |          `azure_foundry`          | Active provider: `azure_foundry` or `ollama`                    |
 |              `MODEL`               |          `gpt-5.6-luna`           | Azure Foundry model/deployment name                             |
 |            `CHAT_MODEL`            |               Empty               | Optional summary/follow-up wording model; falls back to `MODEL` |
+|      `CHAT_REASONING_EFFORT`       |               Empty               | Azure wording model reasoning; blank uses its default, independently of analysis |
 |         `FOUNDRY_ENDPOINT`         |               Empty               | HTTPS endpoint ending in `/openai/v1/`                          |
 |         `FOUNDRY_API_KEY`          |               Empty               | Optional API key; empty uses `DefaultAzureCredential`           |
 |         `REASONING_EFFORT`         |             `medium`              | Provider reasoning setting                                      |

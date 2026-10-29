@@ -39,6 +39,7 @@ a = Analysis(
         "nflreadpy",
         "sportsdataverse.nba.nba_loaders",
         "sportsdataverse.soccer",
+        "soccerdata.understat",
         "kloppy.statsbomb",
         "sportsdataverse.dl_utils",
         "sportsdataverse.errors",

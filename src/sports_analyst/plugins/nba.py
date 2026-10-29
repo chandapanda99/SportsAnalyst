@@ -1186,6 +1186,8 @@ class NBAPlugin:
         ]
         if request.analysis_domain in {"lineups", "impact"} and "lineups" not in supplemental:
             caveats.append("Lineup analysis was unavailable because the NBA Stats lineup package was not synced.")
+        if any(item.partition_key for item in all_manifests):
+            caveats.append("League ranks require a full-league download and are omitted for team-scoped data.")
         return NBAAnalysisResult(aggregate, plays, charts, executions, caveats)
 
     @staticmethod
@@ -1494,7 +1496,7 @@ class NBAPlugin:
                     dataset_manifest_ids=manifest_ids,
                 )
             )
-        if subject_type == "team":
+        if subject_type == "team" and not any(item.partition_key for item in manifests):
             season = request.scope.comparison.season
             league = supplemental.get("team_boxscores", {}).get(season, pl.DataFrame())
             schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())

@@ -33,7 +33,8 @@ export function comparisonRows(spec: Record<string, unknown>) {
     const percentage = ['percentage', 'rate', 'proportion'].includes(first.unit ?? '') && entries.every(row => Math.abs(row.value) <= 1);
     const change = (last.value - first.value) * (percentage ? 100 : 1);
     return {metric, entries: entries.map(row => ({series: String(row[field]), value: (row.display_value ?? String(row.value)).replace(/^\+/, ''),
-      context: typeof row.context_label === 'string' && row.context_label !== 'Not recorded' ? row.context_label : '',
+      context: typeof row.context_label === 'string' && row.context_label !== 'Not recorded' && row.context_label !== String(row[field])
+        ? row.context_label : '',
       sample: typeof row.sample_size === 'number' ? row.sample_size : undefined})),
       change: entries.length > 1 && !['grouped-observations', 'monthly-trend'].includes(chartComparisonKind(spec))
         ? `${change > 0 ? '+' : ''}${Number(change.toFixed(3))}${percentage || ['percent_points', 'percentage_points'].includes(first.unit ?? '') ? ' pp' : first.unit ? ` ${first.unit}` : ''}` : null};

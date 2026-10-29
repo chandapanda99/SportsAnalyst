@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     model_provider: str = "azure_foundry"
     model: str = "gpt-5.6-luna"
     chat_model: str | None = None
+    chat_reasoning_effort: str | None = None
+    soccer_understat_enabled: bool = True
+    soccer_whoscored_enabled: bool = True
     calculation_interpreter_enabled: bool = True
+    calculation_model_call_limit: int = Field(default=24, ge=4, le=64)
     research_rounds: int = Field(default=2, ge=1, le=8)
     research_package_attempts: int = Field(default=16, ge=1, le=64)
     research_source_requests: int = Field(default=250, ge=1, le=2000)
@@ -69,6 +73,13 @@ class Settings(BaseSettings):
     langsmith_api_key: SecretStr | None = Field(default=None, repr=False)
     langsmith_project: str = "open-sports-analyst-local"
     langsmith_workspace_id: str = ""
+
+    @field_validator("chat_reasoning_effort", mode="before")
+    @classmethod
+    def normalize_chat_reasoning(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip().lower() or None
 
     @field_validator("model_provider", "log_level", "persistence_backend", "job_backend", mode="before")
     @classmethod

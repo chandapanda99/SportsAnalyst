@@ -1,12 +1,17 @@
 """Offline native-provider check, used only by the frozen build smoke test."""
 import importlib
+import os
 
 
 def check_runtime_dependencies() -> None:
+    from sports_analyst.config import Settings
+
+    os.environ.setdefault("SOCCERDATA_DIR", str(Settings().data_dir / "raw" / "soccer" / "soccerdata"))
     for module in (
         "duckdb", "polars", "pyarrow", "vl_convert", "webview", "nflreadpy",
         "sportsdataverse.soccer", "sportsdataverse.nba.nba_loaders", "sportsdataverse.cfb", "sportsdataverse.cfb.cfb_pbp", "sportsdataverse.dl_utils",
         "kloppy.statsbomb",
+        "soccerdata.understat",
     ):
         try:
             importlib.import_module(module)

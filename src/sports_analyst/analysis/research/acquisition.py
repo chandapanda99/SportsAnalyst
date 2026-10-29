@@ -23,6 +23,7 @@ def packages(sport):
     return {"nfl": list(SUPPORTED_DATASETS), "nba": list(NBA_ALL_DATASETS), "cfb": CFB_DATASETS,
             "soccer": ["play_by_play", "team_stats", "lineups", "key_events", "expected_goals", "match_analytics", "asa_analytics",
                        "open_events", "match_players",
+                       "understat_team_matches", "understat_player_matches", "understat_shots",
                        "player_game_logs", "player_expected_goals", "season_statistics"]}[sport]
 
 
@@ -31,6 +32,8 @@ def dependencies(sport, dataset, player=False):
     if sport == "cfb" and dataset != "schedules":
         return ["schedules"]
     if sport == "soccer":
+        if dataset.startswith("understat_"):
+            return ["play_by_play"]
         if dataset in {"player_expected_goals", "season_statistics"}:
             return ["play_by_play", "lineups"]
         if dataset in {"team_stats", "lineups", "key_events", "expected_goals", "match_analytics",
@@ -59,11 +62,20 @@ def inventory(sport, access=None):
             supported = dataset in DIRECT_PARQUET_PATHS or dataset.startswith("nextgen_") or dataset in {"schedules", "players", "teams"}
         if sport == "soccer" and dataset == "asa_analytics" and access:
             supported = access.request.scope.competition in {"usa.1", "usa.nwsl"}
+        if sport == "soccer" and dataset.startswith("understat_") and access:
+            from sports_analyst.datasets.soccer.understat import LEAGUES
+
+            supported = (access.request.scope.competition in LEAGUES and access.app.settings.soccer_understat_enabled)
         result.append({"dataset": dataset, "grain": c.grain, "namespace": c.namespace,
                        "installed_manifest_ids": [m.manifest_id for m in installed],
                        "acquisition": "supported_adapter" if supported else "installed_only_no_verified_download",
                        "dependencies": dependencies(sport, dataset, bool(access and access.request.subject and access.request.subject.type == "player")),
                        "verification": "declared; verify source coverage and schema before measurement"})
+        if dataset.startswith("understat_"):
+            result[-1].update(provider="understat", acquisition_package="soccerdata:1.9.0",
+                possible_fields=["expected_goals", "provider_player_id", "xg_chain", "xg_buildup", "minute", "x", "y"],
+                description="Understat xG, native player-match counters or shot events. No xGOT; ESPN athlete mapping required.",
+                coverage_verified=False)
         if sport == "soccer" and dataset in {"match_analytics", "asa_analytics", "open_events", "match_players"}:
             from sports_analyst.datasets.soccer.statistics import MATCH_METRICS
 

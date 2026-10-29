@@ -1,8 +1,8 @@
 <script lang="ts">
+  import {tick} from 'svelte';
   import SoccerAnalytics from './SoccerAnalytics.svelte';
-  import SoccerEvents from './SoccerEvents.svelte';
+  import SoccerPitchRecap from './SoccerPitchRecap.svelte';
   import type {Evidence, PlayVisualization} from './types';
-  import PitchReference from './PitchReference.svelte';
   import TeamBadge from './TeamBadge.svelte';
   import {teamLogoUrl, teamChartPalette} from './teamPalettes';
 
@@ -59,13 +59,23 @@
         if (hasSourceOrder) return Number(a.event.sequence) - Number(b.event.sequence) || a.index - b.index;
         return (a.minute ?? Number.POSITIVE_INFINITY) - (b.minute ?? Number.POSITIVE_INFINITY) || a.index - b.index;
       });
-  let selectedEventIndex = 0;
+  let selectedEventIndex: number | null = null;
   let currentPlayId = play.evidence_id;
+  let selectionRevision = 0;
+  let recapAnchor: HTMLDivElement;
   $: if (play.evidence_id !== currentPlayId) {
     currentPlayId = play.evidence_id;
-    selectedEventIndex = 0;
+    selectedEventIndex = null;
   }
-  $: selectedEvent = events[selectedEventIndex] ?? events[0];
+  $: selectedEvent = events.find(item => item.index === selectedEventIndex) ?? events[0];
+  $: recapTimeline = events.map(item => ({...item.event, timeline_key: String(item.index),
+    team_name: item.event.side === 'home' ? match?.home_team_name : item.event.side === 'away' ? match?.away_team_name : undefined}));
+  async function selectTimelineEvent(index: number) {
+    selectedEventIndex = index;
+    selectionRevision += 1;
+    await tick();
+    recapAnchor?.scrollIntoView?.({block: 'start', behavior: 'smooth'});
+  }
 </script>
 
 <section class="soccer-match-tablet" aria-label="Soccer match evidence" style={`--home-team-accent:${homeAccent};--away-team-accent:${awayAccent}`}>
@@ -94,11 +104,9 @@
     {/if}
     {#if match?.match_notes}<span>{match.match_notes}</span>{/if}
   </div>
-  {#if match?.soccer_analytics?.length}<SoccerAnalytics rows={match.soccer_analytics}/>{:else}<PitchReference/>{/if}
-  {#if match?.soccer_actions?.length}<SoccerEvents actions={match.soccer_actions} total={match.soccer_actions_count ?? 0}/>{/if}
   <div class="timeline-heading">
     <div><h4>Match Timeline</h4>
-      <p>Select a marker to read the recorded event.</p></div>
+      <p>Select a marker to view that event's pitch recap.</p></div>
     <span>{events.length} recorded {events.length === 1 ? 'event' : 'events'}</span>
   </div>
   {#if events.length}
@@ -118,7 +126,7 @@
                   class:red-card={item.kind === 'card' && item.event.type.toLowerCase().includes('red')}
                   aria-pressed={selectedEvent?.index === item.index}
                   aria-label={(item.event.clock || 'Unknown minute') + ' ' + (item.event.type || 'Event') + ' — ' + (item.event.side === 'home' ? (match?.home_team_name ?? 'Home') : item.event.side === 'away' ? (match?.away_team_name ?? 'Away') : 'Team not recorded')}
-                  on:click={() => selectedEventIndex = index}>
+                  on:click={() => selectTimelineEvent(item.index)}>
             <span class="event-symbol" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 {#if item.kind === 'goal'}
@@ -164,6 +172,16 @@
     <p class="soccer-match-empty">{match?.source_packages?.includes('key_events')
         ? 'NO KEY EVENTS recorded in this match summary.'
         : 'A detailed event timeline is UNAVAILABLE from the synced match data.'}</p>
+  {/if}
+  <div class="timeline-recap" bind:this={recapAnchor}>
+    <SoccerPitchRecap actions={match?.soccer_actions ?? []} analytics={match?.soccer_analytics ?? []}
+      timeline={recapTimeline} focusTimelineKey={selectedEvent ? String(selectedEvent.index) : ''}
+      focusRevision={selectionRevision} total={match?.soccer_actions_count ?? 0} matchKey={play.evidence_id}/>
+  </div>
+  {#if match?.soccer_analytics?.length}
+    <details class="additional-statistics"><summary>Additional recorded match statistics</summary>
+      <SoccerAnalytics rows={match.soccer_analytics} showShots={false}/>
+    </details>
   {/if}
   <small class="source-note">Events and scores reflect the recorded ESPN match feed. Event spacing is for readability, not proportional to elapsed time. No player
     positions or ball locations are inferred.</small>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 import unittest
 from itertools import count
 from pathlib import Path
@@ -20,7 +21,7 @@ from sports_analyst.config import Settings
 from sports_analyst.datasets.soccer.connector import SportsDataverseSoccerConnector, soccer_season_label
 from sports_analyst.datasets.soccer.expected_goals import ExpectedGoalsSource, coverage
 from sports_analyst.datasets.soccer.season_statistics import SeasonStatisticsSource
-from sports_analyst.models import AnalysisRequest
+from sports_analyst.models import AnalysisRequest, PlayEvidence, PlayVisualization
 from sports_analyst.plugins.soccer import SoccerPlugin
 from sports_analyst.storage.local import LocalStore
 
@@ -46,6 +47,48 @@ def _summary(game: str, with_events: bool = True) -> dict:
 
 
 class SoccerIntegrationTests(unittest.TestCase):
+    def test_native_timeline_locations_and_saved_evidence_recap(self) -> None:
+        payload = _summary("123")
+        goal = payload["keyEvents"][0]
+        goal["period"] = {"number": 1}
+        payload["commentary"] = [{"play": {"id": goal["id"], "team": {"id": "1"},
+            "period": {"number": 1}, "fieldPositionX": .25, "fieldPositionY": .6}}]
+        parsed = self.connector._parse_summary(payload, "key_events").to_dicts()[0]
+        self.assertEqual((parsed["field_position_x"], parsed["field_position_y"]), (.25, .6))
+        self.assertEqual(parsed["provider"], "espn")
+        # Same-minute events, conflicting identities, and duplicate references
+        # cannot supply spatial context for the selected native event.
+        for replacement in (
+            [{"play": {**payload["commentary"][0]["play"], "id": "other"}}],
+            [{"play": {**payload["commentary"][0]["play"], "team": {"id": "2"}}}],
+            payload["commentary"] * 2,
+            [{"play": {**payload["commentary"][0]["play"], "fieldPositionX": 0, "fieldPositionY": 0}}],
+        ):
+            result = self.connector._parse_summary({**payload, "commentary": replacement}, "key_events").to_dicts()[0]
+            self.assertIsNone(result["field_position_x"])
+        legacy = {"clock": parsed["clock"], "type": parsed["type"], "text": parsed["text"],
+                  "sequence": "0", "side": "home"}
+        location = self.connector.data_dir / "eng.1" / "2025" / "events" / "123.json"
+        location.parent.mkdir(parents=True, exist_ok=True)
+        location.write_text(json.dumps(payload), encoding="utf-8")
+        evidence = PlayEvidence(evidence_id="recap", sport="soccer", season=2025, game_id="123", play_id=0,
+            team="1", description="Recorded goal", dataset_manifest_id="test",
+            visualization=PlayVisualization(soccer_timeline=[legacy]))
+        bundle = SimpleNamespace(play_evidence=[evidence], aggregate_evidence=[],
+            run=SimpleNamespace(scope=SimpleNamespace(competition="eng.1")))
+        app = AnalystApplication.__new__(AnalystApplication)
+        app.connectors = {"soccer": self.connector}
+        app.store = Mock(get_investigation=Mock(return_value=bundle))
+        with patch.object(self.connector, "_request", side_effect=AssertionError("No network during recap")):
+            for returned in (app.evidence("saved", "recap"), app.evidence_many("saved", ["recap"])[0]):
+                event = returned.visualization.soccer_timeline[0]
+                self.assertEqual(event["id"], goal["id"])
+                self.assertEqual(event["field_position_x"], .25)
+                self.assertEqual(event["athlete_name"], "Alex Forward")
+            self.assertEqual(evidence.visualization.soccer_timeline, [legacy])
+            location.write_text(json.dumps({**payload, "header": {"id": "456"}}), encoding="utf-8")
+            self.assertEqual(app.evidence("saved", "recap").visualization.soccer_timeline, [legacy])
+
     def test_current_season_refresh_policy_across_sports(self) -> None:
         from datetime import UTC, datetime
 
@@ -62,7 +105,7 @@ class SoccerIntegrationTests(unittest.TestCase):
                 connector.sync.return_value = []
                 store = Mock()
                 store.manifests.return_value = [
-                    SimpleNamespace(dataset="play_by_play", season=season, coverage={})
+                    SimpleNamespace(dataset="play_by_play", season=season, coverage={}, partition_key=None)
                     for season in (current - 1, current)]
                 application = SimpleNamespace(connectors={sport: connector}, store=store, events=Mock())
                 with patch("sports_analyst.application.sync.datetime") as clock:
@@ -266,7 +309,9 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertEqual([play.evidence_id for play in team_result.play_evidence], [play.evidence_id for play in shuffled.play_evidence])
         self.assertEqual([item.row_set_sha256 for item in team_result.aggregate_evidence],
                          [item.row_set_sha256 for item in shuffled.aggregate_evidence])
-        self.assertEqual({item.metric for item in team_result.aggregate_evidence if item.metric != "soccer_monthly"}, {"points_per_match", "win_rate", "shots_per_match", "possession_pct"})
+        self.assertEqual({item.metric for item in team_result.aggregate_evidence
+                          if item.metric != "soccer_monthly" and not item.metric.startswith("seasonal_")},
+                         {"points_per_match", "win_rate", "shots_per_match", "possession_pct"})
         self.assertEqual(next(item.comparison_value for item in team_result.aggregate_evidence if item.metric == "possession_pct"), 0.53)
         self.assertEqual(len(team_result.play_evidence), 4)
         self.assertTrue(any(not play.visualization.soccer_timeline for play in team_result.play_evidence))
@@ -278,7 +323,9 @@ class SoccerIntegrationTests(unittest.TestCase):
                                  subject={"type": "player", "id": "10"}, analysis_domain="usage",
                                  metrics=["appearances", "starts", "goals", "assists"])
         player_result = plugin.analyze(player, schedules, manifests, extras)
-        self.assertEqual({item.metric for item in player_result.aggregate_evidence if item.metric != "soccer_monthly"}, {"appearances", "starts", "goals", "assists"})
+        self.assertEqual({item.metric for item in player_result.aggregate_evidence
+                          if item.metric != "soccer_monthly" and not item.metric.startswith("seasonal_")},
+                         {"appearances", "starts", "goals", "assists"})
         self.assertEqual(next(item.comparison_value for item in player_result.aggregate_evidence if item.metric == "goals"), 1.0)
         date_request = AnalysisRequest(sport="soccer", question="Did Home's results change during the season?",
                                        scope={"team": "1", "competition": "eng.1", "comparison_design": "date_ranges",
@@ -289,6 +336,65 @@ class SoccerIntegrationTests(unittest.TestCase):
         date_result = plugin.analyze(date_request, schedules, manifests, extras)
         self.assertEqual(date_result.aggregate_evidence[0].baseline_value, 3.0)
         self.assertEqual(date_result.aggregate_evidence[0].comparison_value, 1.0)
+        self.assertFalse(any(item.metric.startswith("seasonal_") for item in date_result.aggregate_evidence))
+
+    def test_inclusive_season_range_reaches_report_charts_months_and_match_evidence(self) -> None:
+        def summary(competition, season, game):
+            payload = _summary(game)
+            payload["boxscore"]["teams"][0]["statistics"][2]["displayValue"] = {
+                2024: "55%", 2025: "20%", 2026: "60%"}[season]
+            return payload
+
+        self.connector._summary = summary
+        self._sync([2024, 2025, 2026])
+        app = AnalystApplication(self.settings)
+        app.connectors["soccer"] = self.connector
+        request = AnalysisRequest(sport="soccer", question="How did Home's control evolve from 2023-24 to 2025-26?",
+            subject={"type": "team", "id": "1"}, analysis_domain="control", metrics=["possession_pct"],
+            scope={"team": "1", "competition": "eng.1", "comparison_design": "full_seasons",
+                   "baseline": {"season": 2024}, "comparison": {"season": 2026}})
+        result = app.investigate(request)
+        endpoint = next(item for item in result.aggregate_evidence if item.metric == "possession_pct")
+        self.assertEqual(endpoint.value, .05)
+        seasonal = [item for item in result.aggregate_evidence if item.metric == "seasonal_possession_pct"]
+        self.assertEqual([(item.context["season"], item.value) for item in seasonal], [(2024, .55), (2025, .2), (2026, .6)])
+        self.assertTrue(any(seasonal[1].evidence_id in claim.evidence_ids for claim in result.claims))
+        self.assertEqual({item.context["season"] for item in result.aggregate_evidence if item.metric == "soccer_monthly"},
+                         {2024, 2025, 2026})
+        self.assertEqual({item.season for item in result.play_evidence}, {2024, 2025, 2026})
+        self.assertEqual(result.charts[0].specification["usermeta"]["seriesLabels"], ["2023–24", "2024–25", "2025–26"])
+        self.assertEqual([row["value"] for row in result.charts[0].specification["data"]["values"] if row["metric"] == "Possession"], [.55, .2, .6])
+        scorecard = result.charts[0].specification["usermeta"]
+        self.assertEqual(scorecard["displayMode"], "matrix")
+        goals = next(row for row in scorecard["comparisonSummary"] if row["metric"] == "Goals for per match")
+        self.assertTrue(all(cell["entries"] for cell in goals["cells"]))
+        scored = next(row for row in scorecard["comparisonSummary"] if row["metric"] == "Goals scored")
+        self.assertEqual([cell["entries"][0]["value"] for cell in scored["cells"]], ["3", "3", "3"])
+        self.assertEqual(scorecard["comparisonSummary"][0]["metric"], "Completed matches")
+        monthly = next(chart for chart in result.charts if chart.specification.get("usermeta", {}).get("comparisonKind") == "monthly-trend")
+        self.assertEqual(monthly.specification["usermeta"]["colorLabels"], ["2023–24", "2024–25", "2025–26"])
+        self.assertTrue(any(row["month"] == "2024-09" for row in monthly.specification["data"]["values"]))
+
+        player_request = request.model_copy(update={
+            "subject": request.subject.model_copy(update={"type": "player", "id": "10", "team_id": "1"}),
+            "analysis_domain": "scoring", "metrics": ["goals"]})
+        player_result = app.investigate(player_request)
+        self.assertEqual({item.context["season"] for item in player_result.aggregate_evidence if item.metric == "seasonal_goals"},
+                         {2024, 2025, 2026})
+
+        # A missing optional middle-year metric must not hide other middle-year evidence.
+        manifests = {year: self.store.manifest_for_season(year, "play_by_play", "soccer", "eng.1") for year in (2024, 2025, 2026)}
+        schedules = {year: self.connector.load(manifest) for year, manifest in manifests.items()}
+        extras = {"team_stats": {year: self.connector.load(self.store.manifest_for_season(year, "team_stats", "soccer", "eng.1"))
+                                 for year in manifests}}
+        extras["team_stats"][2025] = extras["team_stats"][2025].with_columns(pl.lit(None).alias("possession_pct"))
+        partial = SoccerPlugin().analyze(request, schedules, manifests, extras)
+        self.assertEqual(len([item for item in partial.aggregate_evidence if item.metric == "seasonal_possession_pct"]), 2)
+        self.assertTrue(any("2024–25" in note and "gap" in note for note in partial.caveats))
+        plot = partial.charts[0].specification["vconcat"][0]
+        self.assertFalse(any(layer["mark"]["type"] == "line" for layer in plot["layer"]))
+        self.assertEqual(plot["layer"][0]["encoding"]["x"]["scale"]["domain"], ["2023–24", "2024–25", "2025–26"])
+        self.assertTrue(any(item.metric == "soccer_monthly" and item.context["season"] == 2025 for item in partial.aggregate_evidence))
 
     def test_api_league_sync_options_investigation_and_match_evidence(self) -> None:
         app = AnalystApplication(self.settings)

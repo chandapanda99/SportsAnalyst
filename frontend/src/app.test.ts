@@ -474,6 +474,25 @@ describe('Open Sports Analyst workbench', () => {
     expect(JSON.parse(String(syncCall?.[1]?.body))).toEqual({seasons: [2026], datasets: ['play_by_play']});
   });
 
+  it('sends the chosen conference with explicit downloads even when league data is already local', async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/download-catalog?')) return new Response(JSON.stringify({
+        teams:[{value:'KC',label:'Kansas City Chiefs'}], conferences:[{value:'nfl:afc',label:'AFC'}], divisions:[]
+      }));
+      return defaultFetch(input, init);
+    });
+    render(App);
+    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
+    await fireEvent.change(screen.getByLabelText('Download By'), {target:{value:'conference'}});
+    await waitFor(() => expect(screen.getByRole('option',{name:'AFC'})).toBeTruthy());
+    await fireEvent.change(screen.getByLabelText('Download Conference'), {target:{value:'nfl:afc'}});
+    await fireEvent.click(screen.getByRole('button', {name:/Download 1 sources for 2 seasons · AFC/}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))).toBe(true));
+    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({seasons:[2025,2024],datasets:['play_by_play'],conference_id:'nfl:afc'});
+  });
+
   it('switches sports, supports NBA players, and restores the NFL draft', async () => {
     render(App);
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
@@ -820,7 +839,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
     expect(document.querySelector('.recent-subject-name')?.textContent).toBe('Home FC');
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
-    expect(await screen.findByText('Alex scores')).toBeTruthy();
+    expect((await screen.findAllByText('Alex scores')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();
     const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});
     expect(within(timeline).queryByRole('button', {name: /Kickoff/})).toBeNull();
@@ -830,12 +849,12 @@ describe('Open Sports Analyst workbench', () => {
     expect(within(substitution).getByText('Off: Alex')).toBeTruthy();
     expect(substitution.querySelector('svg')).toBeTruthy();
     await fireEvent.click(substitution);
-    expect(screen.getByText('Substitution, Home FC. Robin replaces Alex.')).toBeTruthy();
+    expect(screen.getAllByText('Substitution, Home FC. Robin replaces Alex.').length).toBeGreaterThan(0);
     expect(within(timeline).getByRole('button', {name: "42' Goal — Home FC"}).closest('li')?.classList.contains('home')).toBe(true);
     const awayEvent = within(timeline).getByRole('button', {name: "60' Yellow Card — Away FC"});
     expect(awayEvent.closest('li')?.classList.contains('away')).toBe(true);
     await fireEvent.click(awayEvent);
-    expect(await screen.findByText('Morgan cautioned')).toBeTruthy();
+    expect((await screen.findAllByText('Morgan cautioned')).length).toBeGreaterThan(0);
     expect(within(timeline).getByRole('button', {name: "90+2' VAR Review — Team not recorded"}).closest('li')?.classList.contains('neutral')).toBe(true);
   });
 });

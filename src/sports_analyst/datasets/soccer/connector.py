@@ -41,7 +41,8 @@ SOCCER_COMPETITIONS = {
     "usa.nwsl": ("NWSL", True),
     "uefa.champions": ("UEFA Champions League", False),
 }
-SOCCER_DATASETS = ("play_by_play", "team_stats", "lineups", "key_events", "match_analytics", "asa_analytics", "open_events", "match_players")
+SOCCER_DATASETS = ("play_by_play", "team_stats", "lineups", "key_events", "match_analytics", "asa_analytics", "open_events", "match_players",
+                   "understat_team_matches", "understat_player_matches", "understat_shots", "whoscored_events")
 SOCCER_DEFAULT_DATASETS = ["play_by_play", "team_stats", "lineups", "key_events"]
 
 
@@ -186,6 +187,8 @@ class SportsDataverseSoccerConnector:
                                  "position": (player.get("position") or {}).get("abbreviation"),
                                  "starter": player.get("starter")})
         elif section == "key_events":
+            from sports_analyst.datasets.soccer.recap import native_context
+
             roster = {str(player.get("athlete", {}).get("id") or ""): player
                       for entry in payload.get("rosters") or [] for player in entry.get("roster") or []}
             for sequence, event in enumerate(payload.get("keyEvents") or []):
@@ -211,6 +214,7 @@ class SportsDataverseSoccerConnector:
                     if replacement:
                         incoming, outgoing = replacement.group(1).strip(), replacement.group(2).strip()
                 rows.append({"id": str(event.get("id") or ""), "event_sequence": sequence,
+                             **native_context(event, payload.get("commentary") or []),
                              "type": (event.get("type") or {}).get("text"),
                              "text": event.get("text"), "clock": (event.get("clock") or {}).get("displayValue"),
                              "team_id": str((event.get("team") or {}).get("id") or ""),
@@ -219,7 +223,7 @@ class SportsDataverseSoccerConnector:
                                  or (event.get("period") or {}).get("number") == 5),
                              "athlete_id": str(athlete.get("id") or ""), "athlete_name": athlete.get("displayName"),
                              "player_in": incoming or "", "player_out": outgoing or ""})
-        return pl.DataFrame(rows) if rows else pl.DataFrame()
+        return pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
 
     def _scoreboard(self, competition: str, season: int,
                     progress: Callable[[int, int], None] | None = None) -> pl.DataFrame:
@@ -375,8 +379,28 @@ class SportsDataverseSoccerConnector:
             ]))
             frames: dict[str, pl.DataFrame] = {"play_by_play": schedule}
             analytics_coverages = {}
+            understat = {}
+            if "whoscored_events" in pending:
+                from sports_analyst.datasets.soccer.whoscored import WhoScoredSource
+
+                understat["whoscored_events"] = WhoScoredSource(self).publish(competition, season, final,
+                    team_id=team_id, refresh=season in (refresh_seasons or set()),
+                    progress=lambda done, total: detail("whoscored_events", .2 + .75 * done / max(total, 1),
+                        f"WhoScored spatial events · {done} of {total} fixtures checked", done == total))
+            understat_pending = [d for d in pending if d.startswith("understat_")]
+            if understat_pending:
+                from sports_analyst.datasets.soccer.understat import UnderstatSource
+
+                understat.update({m.dataset: m for m in UnderstatSource(self).publish(
+                    competition, season, final, understat_pending, team_id=team_id,
+                    refresh=season in (refresh_seasons or set()),
+                    progress=lambda done, total: detail(understat_pending[0], .2 + .75 * done / max(total, 1),
+                        f"Understat xG and shots · {done} of {total} matched fixtures checked", done == total))})
             for dataset in pending:
                 if dataset == "play_by_play":
+                    continue
+                if dataset in understat:
+                    frames[dataset] = pl.DataFrame()
                     continue
                 if dataset in {"match_analytics", "asa_analytics", "open_events", "match_players"}:
                     from sports_analyst.datasets.soccer.enrichment import SoccerEnrichment
@@ -433,6 +457,13 @@ class SportsDataverseSoccerConnector:
             for dataset in pending:
                 frame = frames[dataset]
                 completed += 1
+                if dataset in understat:
+                    produced.append(understat[dataset])
+                    if manifest_callback:
+                        manifest_callback(understat[dataset])
+                    if progress_callback:
+                        progress_callback("downloaded", dataset, season, completed, len(work))
+                    continue
                 if dataset in {"match_analytics", "asa_analytics", "open_events", "match_players"}:
                     analytics_coverage = analytics_coverages[dataset]
                     provider = ("fotmob" if dataset in {"match_analytics", "match_players"} else

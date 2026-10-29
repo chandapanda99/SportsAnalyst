@@ -141,8 +141,8 @@ def test_current_nfl_season_is_refreshed_while_past_seasons_are_reused() -> None
     connector.sync.return_value = []
     store = MagicMock()
     store.manifests.return_value = [
-        SimpleNamespace(dataset="play_by_play", season=2025),
-        SimpleNamespace(dataset="play_by_play", season=2026),
+        SimpleNamespace(dataset="play_by_play", season=2025, partition_key=None),
+        SimpleNamespace(dataset="play_by_play", season=2026, partition_key=None),
     ]
     application = SimpleNamespace(connectors={"nfl": connector}, store=store, events=MagicMock())
 

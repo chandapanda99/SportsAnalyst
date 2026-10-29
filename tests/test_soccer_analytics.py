@@ -29,6 +29,40 @@ def fixture(source):
             "home_score": home["score"], "away_score": away["score"], "season": 2026, "competition": "eng.1"}
 
 
+def test_fotmob_shots_match_exact_timeline_and_hydrate_old_report(source, tmp_path):
+    from sports_analyst.datasets.soccer.shot_recap import hydrate_shots, match_shots
+    from sports_analyst.models import PlayVisualization
+    from sports_analyst.storage.local import LocalStore
+    settings = Settings(data_dir=tmp_path, _env_file=None)
+    connector = SportsDataverseSoccerConnector(settings)
+    store = LocalStore(settings)
+    rows = normalize_fotmob(source, fixture(source), "eng.1")
+    frame = pl.from_dicts(rows, infer_schema_length=None)
+    path = tmp_path / "analytics.parquet"
+    frame.write_parquet(path)
+    manifest = connector.manifest_for(path, "eng.1", 2026, "match_analytics", frame, 1, 1, 1)
+    store.save_manifest(manifest)
+    goal = source["content"]["shotmap"]["shots"][2]
+    event = {"id":"native", "type":"Goal - Volley", "clock":"6'", "team_id":"1", "athlete_id":"native-player",
+        "athlete_name":goal["playerName"], "period":1, "scoring_play":True}
+    visual = PlayVisualization(sport="soccer", soccer_timeline=[event])
+    hydrated = hydrate_shots(store, SimpleNamespace(season=2026, game_id="espn1"), "eng.1", visual)
+    matched = match_shots(hydrated, "espn1")
+    context = matched.soccer_timeline[0]
+    assert context["spatial_provider"] == "fotmob"
+    assert context["spatial_context"]["shot"]["goalCrossedZ"] == goal["goalCrossedZ"]
+    assert context["spatial_event_id"] == str(goal["id"])
+    assert not visual.soccer_analytics and "spatial_context" not in event
+    # Same-minute ambiguity, wrong outcome, wrong game or initials cannot produce a link.
+    duplicate = [{**row, "shots_json":json.dumps([s for s in json.loads(row["shots_json"]) for _ in (1,2)])} for row in rows]
+    cases = [hydrated.model_copy(update={"soccer_analytics":duplicate}),
+        hydrated.model_copy(update={"soccer_timeline":[{**event, "type":"Attempt Saved", "scoring_play":False}]}),
+        hydrated.model_copy(update={"soccer_timeline":[{**event, "athlete_name":"D. Gomez"}]}),
+        hydrated.model_copy(update={"soccer_timeline":[event, event]})]
+    assert all("spatial_context" not in match_shots(case, "espn1").soccer_timeline[0] for case in cases)
+    assert "spatial_context" not in match_shots(hydrated, "other-game").soccer_timeline[0]
+
+
 def test_source_backed_match_preserves_broad_counters_and_native_player_identity(source):
     rows = normalize_fotmob(source, fixture(source), "eng.1")
     assert rows[0]["expected_goals"] == 1.32 and rows[0]["expected_goals_on_target"] == 1.18

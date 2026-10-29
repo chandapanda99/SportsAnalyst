@@ -23,6 +23,7 @@ dependencies = [
     "pydantic>=2.11,<3",
     "sportsdataverse>=0.2.0b1",
     "sportsdataverse[soccer]>=0.2.0b1",
+    "soccerdata>=1.9.0",
     "pydantic-settings>=2.11,<3",
     "python-dotenv>=1.1,<2",
     "typer>=0.19,<1",
@@ -35,7 +36,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cloud-run = ["boto3>=1.42,<2", "google-auth[requests]>=2.58,<3"]
-test = ["httpx>=0.28,<1", "pytest>=8.4,<9", "pytest-asyncio>=1.2,<2", "respx>=0.22,<1", "ruff>=0.14,<1", "curl-cffi>=0.13,<1"]
+test = ["httpx>=0.28,<1", "pytest>=8.4,<10", "pytest-asyncio>=1.2,<2", "respx>=0.22,<1", "ruff>=0.14,<1", "curl-cffi>=0.13,<1"]
 desktop = ["keyring>=25,<26", "pywebview>=6,<7"]
 desktop-build = ["pillow>=11,<13", "pyinstaller>=6.18,<7"]
 
@@ -59,12 +60,15 @@ markers = ["integration: downloads an external sports dataset", "live: requires 
 [tool.fastapi]
 entrypoint = "sports_analyst.api:app"
 
+[tool.black]
+line-length = 143
+
+[tool.uv]
+prerelease = "allow"
+
 [tool.ruff]
 target-version = "py313"
 line-length = 143
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-
-[tool.black]
-line-length = 143

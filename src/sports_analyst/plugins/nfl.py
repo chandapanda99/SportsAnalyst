@@ -904,7 +904,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 )
             )
 
-        adjusted_values = [
+        scoped_download = any(item.partition_key for item in selected_manifests if item.dataset == "play_by_play")
+        adjusted_values = [None, None] if scoped_download else [
             _opponent_adjusted_epa(datasets[season], frame, team)
             for season, frame in zip(endpoint_seasons, (baseline, comparison), strict=True)
         ]
@@ -961,11 +962,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         aggregate.extend(outlier_evidence)
         executions.append(outlier_execution)
 
-        benchmark_evidence, benchmark_execution = self._league_benchmarks(
-            team, datasets, windows, request.scope.season_type, selected_metrics, selected_manifests, analysis_domain
-        )
-        aggregate.extend(benchmark_evidence)
-        executions.append(benchmark_execution)
+        if not scoped_download:
+            benchmark_evidence, benchmark_execution = self._league_benchmarks(
+                team, datasets, windows, request.scope.season_type, selected_metrics, selected_manifests, analysis_domain
+            )
+            aggregate.extend(benchmark_evidence)
+            executions.append(benchmark_execution)
 
         situational_evidence, situational_execution = self._situational_splits(
             baseline, comparison, primary_metric, selected_splits, selected_manifests
@@ -1277,6 +1279,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             "Formation and personnel conclusions are omitted when source fields or subgroup samples are insufficient.",
             *player_weeks.caveats,
         ]
+        if scoped_download:
+            caveats.append("League ranks, percentiles and opponent adjustments require full-league data and are omitted for team-scoped data.")
         if missing_supplemental:
             caveats.append(
                 "Supplemental tools were skipped because these datasets were not selected for this run or were not synced for both windows: "

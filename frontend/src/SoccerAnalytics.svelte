@@ -1,5 +1,6 @@
 <script lang="ts">
   export let rows: Array<Record<string, unknown>> = [];
+  export let showShots = true;
   type RecordValue = Record<string, unknown>;
   function records(value: unknown): RecordValue[] {
     try {const parsed = JSON.parse(String(value ?? '[]')); return Array.isArray(parsed) ? parsed.filter(v => v && typeof v === 'object') : [];}
@@ -13,29 +14,39 @@
   const format = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
     ? value.toLocaleString(undefined, {maximumFractionDigits: 3}) : '—';
   let tab = 'shots';
+  $: if (!showShots && tab === 'shots') tab = 'teams';
   let team = 'all';
   let player = '';
   let selected = 0;
-  $: shots = rows.flatMap(row => records(row.shots_json)).filter(shot => team === 'all' || shot.espn_team_id === team);
+  let provider = '';
+  $: providers = [...new Set(rows.map(row => String(row.provider ?? 'fotmob')))];
+  $: selectedProvider = providers.includes(provider) ? provider : providers[0];
+  $: sourceRows = rows.filter(row => String(row.provider ?? 'fotmob') === selectedProvider);
+  $: shots = sourceRows.flatMap(row => records(row.shots_json)).filter(shot => team === 'all' || shot.espn_team_id === team);
   $: positioned = shots.filter(s => typeof s.x === 'number' && s.x >= 0 && s.x <= 105
     && typeof s.y === 'number' && s.y >= 0 && s.y <= 68);
-  $: players = rows.flatMap(row => records(row.players_json)).filter(p => team === 'all' || p.team_id === team);
+  $: players = sourceRows.flatMap(row => records(row.players_json)).filter(p => team === 'all' || p.team_id === team);
   $: chosenPlayer = players.find(p => p.provider_player_id === player) ?? players[0];
   $: selectedShot = positioned[selected] ?? positioned[0];
-  $: fields = [...new Set(rows.flatMap(row => Object.keys(row).filter(key => typeof row[key] === 'number')))];
-  $: contexts = rows.map(row => ({name: row.team_name, ...context(row.context_json)} as RecordValue));
+  $: fields = [...new Set(sourceRows.flatMap(row => Object.keys(row).filter(key => typeof row[key] === 'number')))];
+  $: contexts = sourceRows.map(row => ({name: row.team_name, ...context(row.context_json)} as RecordValue));
 </script>
 
 <section class="analytics" aria-label="Advanced recorded match analytics">
-  <header><h4>Advanced match analytics</h4><span>FotMob · recorded source data</span></header>
-  <p>Separately attributed from ESPN. Player identities use FotMob IDs. Upstream model versions are undisclosed.</p>
+  <header><h4>Advanced match analytics</h4><span>{selectedProvider} · recorded source data</span></header>
+  <p>Separately attributed from ESPN. Player identities use each provider's native IDs. Upstream model versions are undisclosed.</p>
+  {#if providers.length > 1}<label>Data source <select bind:value={provider} on:change={() => {team = 'all'; player = ''; selected = 0;}}>
+    {#each providers as name}<option value={name}>{name}</option>{/each}
+  </select></label>{/if}
   <nav aria-label="Match analytics views">
     {#each [['shots', 'Shots & chances'], ['teams', 'Team statistics'], ['players', 'Player statistics'], ['context', 'Match context']] as [value, name]}
+      {#if showShots || value !== 'shots'}
       <button type="button" aria-pressed={tab === value} on:click={() => tab = value}>{name}</button>
+      {/if}
     {/each}
   </nav>
   <label>Team <select bind:value={team} on:change={() => {selected = 0; player = '';}}><option value="all">Both teams</option>
-    {#each rows as row}<option value={String(row.team_id)}>{row.team_name ?? row.team_id}</option>{/each}
+    {#each sourceRows as row}<option value={String(row.team_id)}>{row.team_name ?? row.team_id}</option>{/each}
   </select></label>
   {#if tab === 'shots'}
     <p>{shots.length} recorded shots · {positioned.length} with usable source coordinates. Positions are event locations, not player tracking.</p>
@@ -68,8 +79,8 @@
     {:else}<p>No usable shot locations were recorded for this selection.</p>{/if}
   {:else if tab === 'teams'}
     <div class="table-wrap" role="region" aria-label="Recorded team statistics"><table><thead><tr><th>Statistic</th>
-      {#each rows as row}<th>{row.team_name ?? row.team_id}</th>{/each}</tr></thead><tbody>
-      {#each fields as field}<tr><th>{label(field)}</th>{#each rows as row}<td>{format(row[field])}</td>{/each}</tr>{/each}
+      {#each sourceRows as row}<th>{row.team_name ?? row.team_id}</th>{/each}</tr></thead><tbody>
+      {#each fields as field}<tr><th>{label(field)}</th>{#each sourceRows as row}<td>{format(row[field])}</td>{/each}</tr>{/each}
     </tbody></table></div>
     <small>Recorded provider keys and raw units; “attempts” columns preserve supplied fraction denominators. Missing values stay unavailable.</small>
   {:else if tab === 'players'}

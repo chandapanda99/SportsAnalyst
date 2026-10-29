@@ -2651,21 +2651,25 @@ button.analyst-bubble:focus-visible,
 .chart-grid {
     display: grid;
     grid-template-columns:repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1px;
+    grid-auto-flow: row dense;
     align-items: start;
     width: 100%;
     margin-inline: auto;
-    gap: 1px;
-    background: var(--line)
+    column-gap: 1px;
+    background: transparent
 }
 
 .chart-grid article {
     display: flex;
     flex-direction: column;
     align-self: start;
+    grid-row-end: span var(--chart-rows, 1);
     min-width: 0;
     background: var(--color-surface-raised);
     padding: clamp(18px, 1.8vw, 26px);
-    overflow: hidden
+    overflow: hidden;
+    box-shadow: 0 1px var(--line)
 }
 
 .chart-grid article:only-child {
@@ -2981,6 +2985,15 @@ button.analyst-bubble:focus-visible,
         grid-template-columns:1fr
     }
 
+    .chart-grid {
+        grid-auto-rows: auto;
+        row-gap: 1px;
+    }
+
+    .chart-grid article {
+        grid-row-end: auto;
+    }
+
     .chart {
         min-height: 340px;
         aspect-ratio: 16 / 9
@@ -3167,3 +3180,6 @@ button.analyst-bubble:focus-visible,
         min-height: 195px
     }
 }
+.supplemental-charts {margin-top:1.25rem;border:1px solid var(--line);border-radius:.6rem;padding:1rem;}
+.supplemental-charts > summary {cursor:pointer;font-weight:600;min-height:2rem;}
+.supplemental-charts[open] > summary {margin-bottom:.75rem;}

@@ -137,11 +137,10 @@ def test_chat_model_only_rewords_the_completed_analytical_summary(sport, follow_
     ("soccer", "scoring", "Why did goals rise while xG fell? Does possession prove better pressing?", "same covered matches"),
     ("cfb", "quarterback", "Did this transfer improve or just face different opponents?", "FBS/FCS schedule composition"),
 ])
-def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, question, specific_rule, monkeypatch):
+@pytest.mark.parametrize("chat_effort", [None, "low", "", "none"])
+def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, question, specific_rule, chat_effort, monkeypatch):
     """Exercise the real synthesis/tool boundary, without paid model calls."""
     import deepagents
-
-    import sports_analyst.analysis.agents as agents
 
     primary = aggregate_evidence().model_copy(update={
         "unit": "rate", "sample_size": 8,
@@ -192,17 +191,37 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         return Agent()
 
     monkeypatch.setattr(deepagents, "create_deep_agent", build_agent)
-    model = object()
-    monkeypatch.setattr(agents, "get_provider", lambda _: SimpleNamespace(
-        build=lambda *_args, **_kwargs: SimpleNamespace(chat_model=model, model_id="analysis-model")))
-    draft, model_id, fallback = EvidenceBoundAgent(Settings(_env_file=None, foundry_endpoint="test")).synthesize(
+    builds = []
+
+    def build_model(**kwargs):
+        model = SimpleNamespace(with_structured_output=lambda _schema: SimpleNamespace(
+            invoke=lambda messages, config=None: {"message": "The rate improved; unequal coverage limits interpretation."}))
+        builds.append((kwargs, model))
+        return model
+
+    # Inspect actual provider options without any network/model invocation.
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", build_model)
+    if chat_effort is None:
+        monkeypatch.delenv("CHAT_REASONING_EFFORT", raising=False)
+    else:
+        monkeypatch.setenv("CHAT_REASONING_EFFORT", chat_effort)
+    settings = Settings(_env_file=None, model="analysis-model", chat_model="wording-model", reasoning_effort="high",
+        foundry_endpoint="https://example.com/openai/v1/", foundry_api_key="offline-test")
+    draft, model_id, fallback = EvidenceBoundAgent(settings).synthesize(
         question, "selected-player", AnalysisWindow(season=2024), AnalysisWindow(season=2025),
         [primary, counter, missing], [play_evidence()], analysis_seasons=[2024, 2025],
         sport=sport, analysis_domain=domain, analytical_context=brief)
-    assert not fallback and model_id == "analysis-model"
+    assert not fallback and model_id == "azure_foundry:analysis-model"
+    assert len(builds) == 2
+    assert builds[0][0]["model"] == "analysis-model" and builds[0][0]["reasoning"] == {"effort": "high"}
+    assert builds[1][0]["model"] == "wording-model"
+    assert builds[1][0].get("reasoning") == ({"effort": chat_effort} if chat_effort else None)
+    assert settings.reasoning_effort == "high"
+    assert draft.summary == "The rate improved; unequal coverage limits interpretation."
     assert draft.claims[0].evidence_ids == [primary.evidence_id]
     assert captured["invocations"] == 2  # Repair an objective omitted by the first draft.
-    assert captured["model"] is model
+    assert captured["model"] is builds[0][1]
+    assert all(item["model"] is builds[0][1] for item in captured.get("subagents", []))
     for prompt in [captured["system_prompt"], *[item["system_prompt"] for item in captured.get("subagents", [])]]:
         assert specific_rule in prompt
         assert "Missing is not zero" in prompt

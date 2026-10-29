@@ -501,8 +501,9 @@ def test_investigation_prepares_team_and_transfer_player_evidence_with_weighted_
     assert child.play_evidence == bundle.play_evidence
 
 
-def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, monkeypatch):
-    persistence = DurableMemory()
+@pytest.mark.parametrize("durable", [False, True])
+def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, monkeypatch, durable):
+    persistence = DurableMemory() if durable else None
     count = Counter()
 
     def request(url):
@@ -511,11 +512,56 @@ def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, mo
         return {"id": "1"}
 
     monkeypatch.setattr(CFBSource, "_request", staticmethod(request))
-    sources = [CFBSource(tmp_path / name, persistence) for name in ("one", "two")]
+    sources = [CFBSource(tmp_path / (name if durable else "shared"), persistence) for name in ("one", "two")]
     url = f"{CORE}/seasons/2025/teams/1"
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(lambda source: source.get(url), sources)) == [{"id": "1"}, {"id": "1"}]
     assert count[url] == 1
+
+
+@pytest.mark.parametrize("failure", ["blocked", "replaced", "body_failure"])
+def test_local_lease_cleanup_preserves_work_and_replacement_ownership(tmp_path, monkeypatch, caplog, failure):
+    from pathlib import Path
+
+    monkeypatch.setattr("sports_analyst.datasets.cfb_source.logger.handlers", [caplog.handler])
+    source = CFBSource(tmp_path / "source", namespace="preparation")
+    unlink = Path.unlink
+    attempts = []
+
+    def blocked_release(path, *args, **kwargs):
+        if path.parent.name != "leases":
+            return unlink(path, *args, **kwargs)
+        attempts.append(path)
+        if failure == "replaced":
+            path.write_text(json.dumps({"token": "replacement-owner", "expires": time.time() + 60}))
+        error = PermissionError("Simulated Windows sharing violation")
+        error.winerror = 32
+        raise error
+
+    monkeypatch.setattr(Path, "unlink", blocked_release)
+    monkeypatch.setattr("sports_analyst.datasets.cfb_source.time.sleep", lambda _: None)
+    saved = tmp_path / "completed.json"
+    if failure == "body_failure":
+        with pytest.raises(RuntimeError, match="original preparation failure"):
+            with source.lease("resource"):
+                raise RuntimeError("original preparation failure")
+    else:
+        with source.lease("resource"):
+            saved.write_text('{"value":42}')
+        assert json.loads(saved.read_text()) == {"value": 42}
+    assert len(attempts) == (1 if failure == "replaced" else 6)
+    owner = json.loads(attempts[0].read_text())
+    assert owner["expires"] > time.time()
+    if failure == "replaced":
+        assert owner["token"] == "replacement-owner"
+    else:
+        assert "dataset_lease_release_deferred" in caplog.text
+    # A deferred lease remains recoverable through the normal expiry path.
+    monkeypatch.setattr(Path, "unlink", unlink)
+    attempts[0].write_text(json.dumps({**owner, "expires": 0}))
+    with source.lease("resource"):
+        pass
+    assert not attempts[0].exists()
 
 
 @pytest.mark.parametrize("namespace,prefix", [("cfb", ""), ("soccer", "eng.1/")])
@@ -599,7 +645,8 @@ def test_recorded_sync_skips_unplayed_fixtures_and_tracks_only_completed_gaps(tm
                              persistence=DurableMemory() if durable else None, analysis_runtime=False)
     connector = app.connectors["cfb"]
     logger = logging.getLogger("sports_analyst.datasets.cfb")
-    monkeypatch.setattr(logger, "handlers", [*logger.handlers, caplog.handler])
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    monkeypatch.setattr(logger, "propagate", False)
 
     def schedule(team, season):
         rows = {str(season) + str(index): connector.schedule_rows(

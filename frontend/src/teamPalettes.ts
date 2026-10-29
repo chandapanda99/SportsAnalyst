@@ -179,7 +179,7 @@ export function teamChartSeriesPalette(team: string, count: number, sport = 'nfl
 
 export function chartSeriesStyles(spec: Record<string, unknown>, team: string, sport = 'nfl', season?: number) {
     const labels = chartSeriesLabels(spec);
-    const grouped = chartComparisonKind(spec) === 'grouped-observations';
+    const grouped = chartComparisonKind(spec) === 'grouped-observations' && !(spec.usermeta as {colorField?: string})?.colorField;
     const colors = teamChartSeriesPalette(team, labels.length, sport, season);
     const shapes = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'triangle-down'];
     return labels.map((label, i) => ({label, color: colors[grouped ? 0 : i], shape: shapes[grouped ? 0 : i % shapes.length]}));
@@ -222,6 +222,7 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
 export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl', season?: number): Record<string, unknown> {
     const themed = structuredClone(specification);
     const usermeta = themed.usermeta as Record<string, unknown> | undefined;
+    const categoryRows = usermeta?.categoryLayout === 'rows';
     if (usermeta?.chartKind === 'metric-rows') {
         const seriesField = typeof usermeta.colorField === 'string' ? usermeta.colorField : typeof usermeta.seriesField === 'string' ? usermeta.seriesField : undefined;
         const seriesStyles = chartSeriesStyles(specification, team, sport, season);
@@ -235,7 +236,7 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
                 if (typeof row.display_value === 'string') row.display_value = row.display_value.replace(/^\+/, '');
             });
             const height = node.height;
-            if (typeof height === 'number' || height && typeof height === 'object' && !Array.isArray(height) && 'step' in height) {
+            if (!categoryRows && (typeof height === 'number' || height && typeof height === 'object' && !Array.isArray(height) && 'step' in height)) {
                 node.height = METRIC_PLOT_HEIGHT;
             }
             const nestedEncoding = node.encoding as Record<string, unknown> | undefined;
@@ -267,7 +268,8 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             }
             const mark = node.mark as Record<string, unknown> | undefined;
             if (mark?.type === 'text') {
-                node.mark = {...mark, align: 'center', dx: 0, dy: -12, fontSize: 12};
+                node.mark = {...mark, align: categoryRows ? 'left' : 'center', dx: categoryRows ? 8 : 0,
+                    dy: categoryRows ? 0 : -12, fontSize: 12};
                 if (nestedEncoding) nestedEncoding.color = {value: '#EDF5FA'};
             }
             if (mark?.type === 'point' && mark.opacity !== 0.001) {

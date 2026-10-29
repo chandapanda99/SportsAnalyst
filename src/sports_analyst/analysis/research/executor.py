@@ -324,8 +324,9 @@ class JoinExecutor:
         if period is None or period.season not in request.scope.included_seasons or manifest.season != period.season:
             raise ValueError("Window/dataset season outside investigation")
         subject = request.subject
-        if subject and subject.type == "player" and c.player_namespace == "fotmob":
-            raise ValueError("FotMob player scope requires a verified ESPN athlete crosswalk; name/numeric-ID guesses are not allowed")
+        if subject and subject.type == "player" and c.player_namespace in {"fotmob", "understat"}:
+            raise ValueError(f"{c.player_namespace} player scope requires a verified ESPN athlete crosswalk; "
+                             "name/numeric-ID guesses are not allowed")
         identifier = str(subject.id if subject else request.scope.team)
         identity = self.identity_spec(manifest)
         if subject and subject.type == "player" and identity:

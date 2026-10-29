@@ -63,10 +63,12 @@ class DatasetSyncApplication:
             concurrency=settings.dataset_sync_concurrency, namespace="soccer")
 
     def sync(
-            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None,
-            *, team_ids: list[str] | None = None,
+            self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None,
+            sport: str = "nfl", competition: str | None = None,
+            *, team_ids: list[str] | None = None, conference_id: str | None = None, division_id: str | None = None,
     ) -> list[DatasetManifest]:
-        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition, team_ids=team_ids)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition,
+                                team_ids=team_ids, conference_id=conference_id, division_id=division_id)
 
 
 def run_dataset_sync(
@@ -76,7 +78,7 @@ def run_dataset_sync(
         datasets: list[str] | None = None,
         sport: str = "nfl",
         competition: str | None = None,
-        *, team_ids: list[str] | None = None,
+        *, team_ids: list[str] | None = None, conference_id: str | None = None, division_id: str | None = None,
 ) -> list[DatasetManifest]:
     league = (SOCCER_COMPETITIONS.get(competition, ("Soccer",))[0] if sport == "soccer"
               else {"nfl": "NFL", "nba": "NBA", "cfb": "College Football"}.get(sport, "Unknown sport"))
@@ -129,19 +131,24 @@ def run_dataset_sync(
             application.events.emit(key, "complete", message, 1,
                                     manifest_ids=[item.manifest_id for item in manifests])
             return manifests
-        return _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context)
+        from sports_analyst.datasets.download_scope import resolve_download_teams
+
+        scoped_teams = resolve_download_teams(sport, seasons, competition, team_ids, conference_id, division_id)
+        return _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context, scoped_teams)
     except Exception as error:
         logger.exception("dataset_sync_failed job_id=%s context=%s error_type=%s", job_id, context, type(error).__name__)
         raise SyncFailure(context, error) from error
 
 
-def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context) -> list[DatasetManifest]:
+def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition, context, scoped_teams=None) -> list[DatasetManifest]:
     if sport not in application.connectors:
         raise ValueError(f"unsupported sport {sport!r}")
     connector = application.connectors[sport]
-    selected_datasets = list(datasets or (["play_by_play"] if sport == "nfl" else SOCCER_DEFAULT_DATASETS if sport == "soccer" else NBA_DEFAULT_DATASETS))
+    defaults = ["play_by_play"] if sport == "nfl" else SOCCER_DEFAULT_DATASETS if sport == "soccer" else NBA_DEFAULT_DATASETS
+    selected_datasets = list(datasets or defaults)
     key = job_id or stable_id(
-        "sync", {"sport": sport, "competition": competition, "seasons": sorted(seasons), "datasets": selected_datasets, "time": datetime.now(UTC)}
+        "sync", {"sport": sport, "competition": competition, "seasons": sorted(seasons),
+                 "datasets": selected_datasets, "time": datetime.now(UTC)}
     )
     started_at = perf_counter()
     logger.info(
@@ -156,12 +163,26 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
         selected_datasets.append("expected_goals")
 
     application.store.refresh_durable_datasets(sport, seasons, selected_datasets, competition)
+    if sport == "soccer":
+        secondary = [name for name in selected_datasets if name.startswith("understat_")]
+        if secondary:
+            application.store.refresh_durable_datasets(sport, seasons, secondary, competition,
+                provider_id="understat", processing_version="understat-soccerdata-1")
+        if "whoscored_events" in selected_datasets:
+            application.store.refresh_durable_datasets(sport, seasons, ["whoscored_events"], competition,
+                provider_id="whoscored", processing_version="whoscored-soccerdata-1")
     application.store.invalidate_reset_cache(sport, competition)
-    existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)}
-    existing -= {(item.dataset, item.season) for item in application.store.manifests(sport=sport, competition=competition)
+    source_options = {"provider_id": None, "processing_version": None} if sport == "soccer" else {}
+    existing = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition, **source_options)
+                if manifest.partition_key is None}
+    existing -= {(item.dataset, item.season) for item in application.store.manifests(sport=sport, competition=competition, **source_options)
                  if getattr(item, "availability", "available") != "available"}
     if sport == "soccer":
-        incomplete = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition)
+        if "whoscored_events" in selected_datasets:
+            existing |= {(m.dataset, m.season) for m in application.store.manifests(sport=sport, competition=competition,
+                provider_id="whoscored", processing_version="whoscored-soccerdata-1")
+                if m.partition_key is None and m.availability == "available"}
+        incomplete = {(manifest.dataset, manifest.season) for manifest in application.store.manifests(sport=sport, competition=competition, **source_options)
                       if (manifest.coverage.get("fetched_intervals", 0) < manifest.coverage.get("expected_intervals", 0)
                           if manifest.dataset == "play_by_play" else
                           manifest.coverage.get("completed_matches", 0) < manifest.coverage.get("expected_matches", 0))}
@@ -241,12 +262,24 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     context["step"] = "downloading selected datasets"
     try:
         with optional_dependencies(f"{sport.upper()} dataset sync"), timed_stage("acquire_datasets", sport=sport, competition=competition):
-            manifests = connector.sync(
-                seasons, selected_datasets, progress_callback=report_sync,
-                manifest_callback=register_manifest, skip=existing, **sync_kwargs)
+            if scoped_teams and sport in {"nfl", "nba"}:
+                from sports_analyst.datasets.download_scope import sync_team_partitions
+
+                manifests = sync_team_partitions(application, seasons, selected_datasets, sport, scoped_teams, report_sync, register_manifest)
+            elif scoped_teams and sport == "soccer":
+                manifests = []
+                for season, teams in scoped_teams.items():
+                    for team in teams:
+                        manifests.extend(connector.sync(
+                            [season], selected_datasets, progress_callback=report_sync, manifest_callback=register_manifest,
+                            team_id=team, **sync_kwargs))
+            else:
+                manifests = connector.sync(
+                    seasons, selected_datasets, progress_callback=report_sync,
+                    manifest_callback=register_manifest, skip=existing, **sync_kwargs)
     finally:
         if registered:
-            application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
+            application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition, **source_options))
     for manifest in manifests:
         if manifest.manifest_id not in registered:
             register_manifest(manifest)
@@ -254,7 +287,7 @@ def _run_dataset_sync(application, seasons, job_id, datasets, sport, competition
     context.pop("season", None)
     context.pop("dataset", None)
     context["season_label"] = ", ".join(_season_label(sport, competition, season) for season in seasons)
-    application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition))
+    application.store.publish_dataset_catalog(application.store.manifests(sport=sport, competition=competition, **source_options))
     connector.clear_cache()
     application.events.emit(key, "complete", completion_message(manifests), 1.0,
                             manifest_ids=[item.manifest_id for item in manifests])

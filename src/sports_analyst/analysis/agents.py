@@ -397,13 +397,19 @@ def _fallback_synthesis(
             evidence_ids=[item.evidence_id for item in accounting], confidence=_sample_confidence(largest.sample_size)))
     seasonal = [item for item in aggregate if item.metric == f"seasonal_{primary.metric}" and item.value is not None]
     if analysis_seasons and seasonal:
-        seasonal.sort(key=lambda item: int(item.label.split(" ·", 1)[0]))
-        trajectory = ", ".join(f"{item.label.split(' ·', 1)[0]}: {float(item.value):.3f}" for item in seasonal)
+        def season_year(item):
+            return int(item.context["season"]) if "season" in item.context else int(item.label.split(" ·", 1)[0])
+
+        seasonal.sort(key=season_year)
+        trajectory = ", ".join(f"{item.context.get('season_label') or item.label.split(' ·', 1)[0]}: {float(item.value):.3f}"
+                               for item in seasonal)
+        missing_seasons = sorted(set(analysis_seasons) - {season_year(item) for item in seasonal})
+        coverage_note = f" No usable recorded measurement for season IDs {missing_seasons}; these are gaps, not zeroes." if missing_seasons else ""
         claims.append(
             Claim(
                 claim_id=stable_id("claim", {"metric": primary.metric, "seasons": analysis_seasons, "trajectory": trajectory}),
                 claim_type=ClaimType.MEASURED,
-                statement=f"Across the inclusive season range, {primary.label} measured {trajectory}.",
+                statement=f"Within the inclusive season range, recorded {primary.label} measured {trajectory}.{coverage_note}",
                 evidence_ids=[item.evidence_id for item in seasonal],
                 confidence=_sample_confidence(min(item.sample_size for item in seasonal)),
             )
@@ -519,7 +525,10 @@ class EvidenceBoundAgent:
             provider = get_provider(self.settings.model_provider)
             resolved = provider.build(self.settings)
             conversational = (
-                provider.build(self.settings, self.settings.chat_model, include_reasoning=False) if self.settings.chat_model else None
+                provider.build(
+                    self.settings.model_copy(update={"reasoning_effort": self.settings.chat_reasoning_effort}),
+                    self.settings.chat_model,
+                ) if self.settings.chat_model else None
             )
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
             synthesis_mode = _synthesis_mode(question, len(aggregate), conversation_context)
@@ -542,7 +551,7 @@ class EvidenceBoundAgent:
                         "Comparing the strongest performance signals",
                         "Examining situational context and counterexamples",
                         "Challenging the findings against the evidence",
-                        "Drafting the analyst's final read",
+                        "Continuing evidence review and refining the findings",
                     )
                     message = messages[min(self.model_passes, len(messages) - 1)]
                     self.model_passes += 1
@@ -798,7 +807,6 @@ class EvidenceBoundAgent:
                         bool(conversation_context),
                         conversation_context=conversation_context,
                         config={
-                            "callbacks": [progress_handler],
                             "run_name": "open-sports-analyst.conversation-message",
                             "metadata": {
                                 **invocation_metadata,

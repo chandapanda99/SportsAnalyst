@@ -175,13 +175,38 @@ class CFBSource:
         try:
             yield
         finally:
-            if self.persistence.durable:
-                payload, version = self.persistence.read_versioned_bytes(remote)
-                if payload and json.loads(payload).get("token") == token:
-                    self.persistence.write_bytes_if_version(remote, b'{"expires":0}', version)
-            else:
-                if local.exists() and json.loads(local.read_bytes()).get("token") == token:
+            self._release_lease(local, remote, token)
+
+    def _release_lease(self, local: Path, remote: str, token: str) -> None:
+        """Cleanup must not invalidate completed work or mask a body exception.
+
+        A competing Windows reader can briefly prevent unlink. Recheck ownership
+        on every retry; if cleanup remains blocked, retain the expiring lease.
+        """
+        for attempt in range(6):
+            try:
+                if self.persistence.durable:
+                    payload, version = self.persistence.read_versioned_bytes(remote)
+                    if payload and json.loads(payload).get("token") == token:
+                        self.persistence.write_bytes_if_version(remote, b'{"expires":0}', version)
+                else:
+                    try:
+                        owner = json.loads(local.read_bytes())
+                    except FileNotFoundError:
+                        return
+                    if owner.get("token") != token:
+                        return
                     local.unlink(missing_ok=True)
+                return
+            except (OSError, ValueError) as error:
+                if not self.persistence.durable and getattr(error, "winerror", None) in {32, 33} and attempt < 5:
+                    time.sleep(0.05 * 2**attempt)
+                    continue
+                # Leave ownership/expiry untouched. Never delete an unreadable or
+                # replacement lease, and never turn saved evidence into a failure.
+                logger.warning("dataset_lease_release_deferred namespace=%s error_type=%s winerror=%s; lease will expire",
+                               self.namespace, type(error).__name__, getattr(error, "winerror", None))
+                return
 
     def get(self, url: str, ttl: float = 86400, key: str | None = None) -> dict:
         url = checked_url(url)

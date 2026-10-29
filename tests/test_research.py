@@ -390,7 +390,6 @@ const evidence=JSON.parse(await tools.executeJoinedAggregate({plan_id:validated.
     second += '"done";'
     model = Model(responses=[
         AIMessage(content="", tool_calls=[{"name": "eval", "id": "acquire", "args": {"code": first}}]),
-        AIMessage(content="Queued"),
         AIMessage(content="", tool_calls=[{"name": "eval", "id": "measure", "args": {"code": second}}]),
         AIMessage(content="Done")])
     monkeypatch.setattr("sports_analyst.providers.get_provider", lambda _: SimpleNamespace(
@@ -405,6 +404,56 @@ const evidence=JSON.parse(await tools.executeJoinedAggregate({plan_id:validated.
     assert access.acquisition.state.read("rounds")["next"] == 2
     assert any(e.tool == "execute_joined_aggregate" for e in result.executions)
     assert any(e.tool == "complete_calculations_failed" for e in result.executions) != review_complete
+
+
+def test_agent_completes_compatible_installed_seasons_without_source_downloads(tmp_path, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    from sports_analyst.analysis.calculations import complete_calculations
+
+    access, manifests = setup_access(tmp_path, "nfl", [("play_by_play", {
+        "game_id": [f"g{year}"], "play_id": ["a"], "posteam": ["A"], "epa": [float(year - 2023)]})
+        for year in (2024, 2025, 2026)])
+    for index, year in enumerate((2024, 2025, 2026)):
+        manifests[index] = manifests[index].model_copy(update={"season": year})
+        access.manifests[manifests[index].manifest_id] = manifests[index]
+    access.request = access.request.model_copy(update={"scope": access.request.scope.model_copy(update={
+        "comparison": access.request.scope.comparison.model_copy(update={"season": 2026})})})
+    access.app.settings.model_provider = "ollama"
+    monkeypatch.setattr(ResearchState, "fetch", lambda *a, **k: pytest.fail("Season completion must not download source data"))
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    code = '''await tools.recordAnalysisPlan({objectives:["Compare EPA across every selected season"],existing_evidence_ids:[],
+required_data:[],calculations:["Sum recorded EPA by season"],limitations:[]});
+const checked=JSON.parse(await tools.validateJoinPlan({join_plan:{objective:"EPA by season",dataset_id:"m0",window:"baseline",
+grain:"play",measures:[{op:"sum",field:"epa",name:"epa_sum"}]}}));
+const receipt=JSON.parse(await tools.executeJoinedAggregate({plan_id:checked.plan_id}));
+const ids=[...receipt.evidence,...receipt.season_completion.flatMap(r=>r.evidence||[])].map(r=>r.evidence_id);
+await tools.finishQuestionReview({evidence_by_objective:{"0":ids},unresolved:{}});'''
+    model = Model(responses=[AIMessage(content="", tool_calls=[{"name": "eval", "id": "all-seasons", "args": {"code": code}}]),
+                            AIMessage(content="Done")])
+    monkeypatch.setattr("sports_analyst.providers.get_provider", lambda _: SimpleNamespace(
+        build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-all-seasons")))
+    result = SimpleNamespace(aggregate_evidence=[], executions=[], caveats=[])
+    complete_calculations(access.app.settings, access.request.question, result, {}, access)
+    assert sorted(item.value for item in result.aggregate_evidence) == [1., 2., 3.], result.caveats
+    assert len([e for e in result.executions if e.tool == "execute_joined_aggregate"]) == 3
+    assert not any(e.tool == "complete_calculations_failed" for e in result.executions)
+    from sports_analyst.analysis.research.season_plans import season_plan
+
+    original = next(e.parameters for e in result.executions if e.tool == "execute_joined_aggregate")
+    constrained = {**original, "plan": {**original["plan"],
+        "filters": [{"field": "game_id", "op": "eq", "value": "g2024"}]}}
+    with pytest.raises(ValueError, match="Fixed season/date/game"):
+        season_plan(access, constrained, 2025)
+    changed = manifests[1].model_copy(update={"processing_version": "incompatible-pipeline"})
+    access.manifests[changed.manifest_id] = changed
+    with pytest.raises(ValueError, match="No unique compatible installed"):
+        season_plan(access, original, 2025)
 
 
 @pytest.mark.parametrize("durable", [False, True])
@@ -493,9 +542,11 @@ def test_rates_use_paired_coverage_and_comparison_definitions(tmp_path, sport, d
     ("nba", "player_boxscores", "team_boxscores", "points"),
     ("soccer", "team_stats", "expected_goals", "goals"),
 ])
-def test_research_loop_calculates_cites_and_reuses_both_windows(tmp_path, monkeypatch, sport, base, context, field):
+@pytest.mark.parametrize("durable", [False, True])
+def test_research_loop_calculates_cites_and_reuses_both_windows(tmp_path, monkeypatch, sport, base, context, field, durable):
     """Four-sport worker -> measure -> chart -> citation -> follow-up path, offline sources/models."""
     import json
+    from hashlib import sha256
 
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
@@ -512,7 +563,22 @@ def test_research_loop_calculates_cites_and_reuses_both_windows(tmp_path, monkey
         values["play_id"] = ["p1", "p2"]
     if sport in {"cfb", "nba"}:
         values["athlete_id"] = ["7", "7"]
-    access, manifests = setup_access(tmp_path, sport, [(base, values)], persistence=MemoryPersistence())
+    access, manifests = setup_access(tmp_path, sport, [(base, values)],
+                                     persistence=MemoryPersistence() if durable else LocalPersistenceBackend())
+    release_failures = []
+    unlink = Path.unlink
+    journal_lease = sha256(f"research-measurements:{access.acquisition.state.root.name}".encode()).hexdigest()
+
+    def transient_windows_reader(path, *args, **kwargs):
+        if path.parent.name == "leases" and path.stem == journal_lease and len(release_failures) < 2:
+            release_failures.append(path)
+            error = PermissionError("Simulated competing Windows lease reader")
+            error.winerror = 32
+            raise error
+        return unlink(path, *args, **kwargs)
+
+    if not durable:
+        monkeypatch.setattr(Path, "unlink", transient_windows_reader)
     baseline = tmp_path / "baseline.parquet"
     frame = pl.DataFrame(values).with_columns((pl.col(field) / 2).alias(field))
     frame.write_parquet(baseline)
@@ -565,12 +631,16 @@ if(refused.status!=="budget_exhausted") throw new Error("Expected an actionable 
 await tools.finishQuestionReview({evidence_by_objective:{"0":ids},unresolved:{}}); "done";
 '''.replace("CONTEXT_FIELD", json.dumps(context_field)).replace("CONTEXT", json.dumps(context)).replace("GRAIN", json.dumps(contract(manifests[0]).grain)).replace("FIELD", json.dumps(field))
     model = Model(responses=[AIMessage(content="", tool_calls=[{"name": "eval", "id": "q", "args": {"code": first}}]),
-        AIMessage(content="queued"), AIMessage(content="", tool_calls=[{"name": "eval", "id": "m", "args": {"code": second}}]), AIMessage(content="done")])
+        AIMessage(content="", tool_calls=[{"name": "eval", "id": "m", "args": {"code": second}}]), AIMessage(content="done")])
     monkeypatch.setattr("sports_analyst.providers.get_provider", lambda _: SimpleNamespace(
         build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-analytical-model")))
     result = SimpleNamespace(aggregate_evidence=[], executions=[], caveats=[], charts=[])
     complete_calculations(access.app.settings, access.request.question, result, {}, access)
+    assert len(release_failures) == (0 if durable else 2)
     assert not any(e.tool == "complete_calculations_failed" for e in result.executions), result.executions[-1].parameters
+    planning = next(e for e in result.executions if e.tool == "complete_calculations").parameters["planning_turns"]
+    assert [turn["stop_reason"] for turn in planning] == ["acquisition_pending", "review_complete"]
+    assert [turn["model_calls"] for turn in planning] == [1, 1]
     assert len(result.aggregate_evidence) == 4
     production = [e for e in result.aggregate_evidence if e.context["measure"]["name"] == "production"]
     assert [e.value for e in production] == [1, 2] and all(e.sample_size == 1 for e in production)

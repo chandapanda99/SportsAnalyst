@@ -170,8 +170,7 @@ def complete_calculations(settings, question, result, scope, data_access=None):
             raise ValueError("Record the analysis plan first")
         return json.dumps(data_access.executor.validate(join_plan), default=str)
 
-    @tool
-    def execute_joined_aggregate(plan_id: str) -> str:
+    def _execute_joined_aggregate(plan_id: str) -> str:
         """Execute a validated plan, rechecking scope, snapshots, coverage and cardinality.
         Register checked measurements as evidence. Returns IDs, non-null denominators and coverage.
         These are descriptive results, not proof of causal attribution or statistical compatibility.
@@ -237,6 +236,64 @@ def complete_calculations(settings, question, result, scope, data_access=None):
         return json.dumps({"execution_id": execution_id, "coverage": audit, "evidence": [
             {"evidence_id": item.evidence_id, "label": item.label, "value": item.value, "non_null": item.sample_size}
             for item in registered]}, default=str)
+
+    completed_season_plans = set()
+    registered_season_queries = {}
+
+    @tool
+    def execute_joined_aggregate(plan_id: str) -> str:
+        """Execute validated measurements and register checked evidence.
+        For full-season ranges, also check equivalent plans in every selected season using compatible
+        installed snapshots only. Returns explicit failures/gaps; no new source downloads or zero filling.
+        Fixed-date/game predicates require explicit plans. Output and scope limits still apply.
+        """
+        if not data_access:
+            return _execute_joined_aggregate(plan_id)
+        payload = data_access.executor.plans.get(plan_id)
+        full_range = data_access.request.scope.comparison_design == "full_seasons" and not any(
+            window.start_date or window.end_date for window in (data_access.request.scope.baseline, data_access.request.scope.comparison))
+        if not payload or not full_range:
+            return _execute_joined_aggregate(plan_id)
+        def query_identity(checked):
+            raw = dict(checked["plan"])
+            raw["window"] = f"season:{data_access.manifests[raw['dataset_id']].season}"
+            return digest({"plan": raw, "inputs": checked["inputs"]})
+
+        key = query_identity(payload)
+        if key in registered_season_queries:
+            return json.dumps({**registered_season_queries[key], "status": "already_registered"})
+        response = json.loads(_execute_joined_aggregate(plan_id))
+        registered_season_queries[key] = response
+        from sports_analyst.analysis.research.season_plans import season_plan
+
+        source_year = data_access.manifests[payload["plan"]["dataset_id"]].season
+        receipts = []
+        for year in data_access.request.scope.included_seasons:
+            if year == source_year:
+                continue
+            try:
+                peer = season_plan(data_access, payload, year)
+                validated = data_access.executor.validate(peer)
+                peer_id = validated["plan_id"]
+                peer_key = query_identity(validated)
+                if peer_key in registered_season_queries:
+                    continue
+                if peer_id in completed_season_plans:
+                    continue
+                completed_season_plans.add(peer_id)
+                if len(completed_season_plans) > 16:
+                    raise ValueError("Additional season-calculation limit reached; request a narrower range")
+                if getattr(data_access, "progress", None):
+                    data_access.progress(f"Checking measurement coverage · {year}")
+                receipt = json.loads(_execute_joined_aggregate(peer_id))
+                registered_season_queries[peer_key] = receipt
+                receipts.append({"season": year, "status": "registered", "evidence": receipt["evidence"]})
+            except (ValueError, KeyError, OSError, PolarsError) as error:
+                receipts.append({"season": year, "status": "not_registered", "reason": str(error)[:500]})
+                result.caveats.append(f"Additional measurement '{payload['plan']['objective']}' was not registered for season {year}: "
+                                      f"{str(error)[:300]}. This is not proof that the source lacks the statistic.")
+        response["season_completion"] = receipts
+        return json.dumps(response)
 
     @tool
     def prepare_scoped_dataset(dataset: str, season: int) -> str:
@@ -378,8 +435,10 @@ def complete_calculations(settings, question, result, scope, data_access=None):
         return json.dumps({"evidence_id": evidence.evidence_id, "value": value, "validation": "arithmetic_only"})
 
     started = perf_counter()
+    loop_audit = []
     try:
         from langchain.agents import create_agent
+        from langchain.agents.middleware import before_model
         from langchain_quickjs import CodeInterpreterMiddleware
 
         if data_access:
@@ -391,7 +450,8 @@ def complete_calculations(settings, question, result, scope, data_access=None):
             executions.extend(prior_executions)
             seen_metrics.update(item.metric for item in restored)
             if invalidated:
-                result.caveats.append("Previously calculated research was invalidated because its inputs or contracts changed; recalculate affected objectives.")
+                result.caveats.append("Previously calculated research was invalidated because its inputs or contracts changed; "
+                                      "recalculate affected objectives.")
 
         model = get_provider(settings.model_provider).build(settings)
         model_id = model.model_id
@@ -419,7 +479,25 @@ def complete_calculations(settings, question, result, scope, data_access=None):
             selected_tool.func = recoverable(selected_tool.func)
         middleware = CodeInterpreterMiddleware(mode="turn", subagents=False, timeout=3, memory_limit=32 * 1024 * 1024,
             max_result_chars=16000, max_ptc_calls=16, ptc=tools)
-        agent = create_agent(model=model.chat_model, tools=tools, middleware=[middleware],
+        model_call_limit = settings.calculation_model_call_limit
+
+        @before_model(can_jump_to=["end"])
+        def stop_completed_turn(state, runtime):
+            # End through the graph so QuickJS's after_agent hook releases its
+            # turn workspace. PTC results alone do not stop the model/tool loop.
+            turn = loop_audit[-1]
+            if data_access and data_access._acquisition and data_access.acquisition.pending:
+                turn["stop_reason"] = "acquisition_pending"
+            elif review:
+                turn["stop_reason"] = "review_complete"
+            elif turn["model_calls"] >= model_call_limit:
+                turn["stop_reason"] = "model_call_limit"
+            else:
+                turn["model_calls"] += 1
+                return None
+            return {"jump_to": "end"}
+
+        agent = create_agent(model=model.chat_model, tools=tools, middleware=[middleware, stop_completed_turn],
             system_prompt="You are a sports research planner, not the report writer. "
                 "Interpret ANY free-form question, not a fixed list of intents. "
                 "Inspect existing evidence, then record_analysis_plan: objectives, what evidence establishes, "
@@ -432,13 +510,21 @@ def complete_calculations(settings, question, result, scope, data_access=None):
                 "For within-season trends, join the recorded game date and use time_bucket={field:'game__date',interval:'month'}, "
                 "group_by=['month']; retain year and qualifying counts. Do not group by possession/score values to imply chronology. "
                 "Keep the same objective across windows and complementary measures to consolidate charts. "
+                "Prioritize compact per-season measurements across the entire selected range. Use venue/opponent breakdowns "
+                "only when needed to answer the question; grouping by home-team IDs is not a home-versus-away comparison. "
+                "execute_joined_aggregate returns season_completion receipts for compatible installed seasons. Inspect failures "
+                "and report required gaps; do not declare the full comparison complete using a single season or describe an "
+                "unregistered calculation as absent source data. Retain the existing evidence/output budgets. "
                 "For soccer inspect supported match_analytics, asa_analytics, match_players and open_events capabilities when relevant. "
+                "Also discover understat_team_matches, understat_player_matches and understat_shots for supported European leagues; "
+                "keep Understat xG separate from ESPN/FotMob models and require verified mappings for ESPN athlete scope. "
                 "Supplement possession with recorded chance creation, conversion and prevention; use only covered samples, "
                 "keep provider/model definitions separate, and cite contrasting metrics as well as supporting ones. "
                 "If a missing package could resolve an objective, queue prepare_analysis_data then end this turn: the worker "
                 "acquires it and resumes you outside the Interpreter. NFL/NBA bulk assets are permitted within host budgets. "
                 "Use only supported capabilities and verified opponent/transfer context; never change the primary sample. "
-                f"Acquisition permits {settings.research_rounds} rounds. Separate provider failures, unsupported methods, budget limits and missing observations. "
+                f"Acquisition permits {settings.research_rounds} rounds. "
+                "Separate provider failures, unsupported methods, budget limits and missing observations. "
                 "Specify qualifying observations, non-null coverage, units and actual denominators. "
                 "Rates are summed numerators / summed denominators, "
                 "never averages of per-game rates. A tool refusal or missing field is not proof the source never records it. "
@@ -446,6 +532,9 @@ def complete_calculations(settings, question, result, scope, data_access=None):
                 "Never invent results. "
                 "Finish EVERY objective with finish_question_review using evidence IDs or a reason; "
                 "do not merely state that analysis is complete. "
+                f"You have at most {model_call_limit} model calls per planning turn; batch related tool calls in eval. "
+                "When tools return JSON error/status results, inspect them and correct arguments; repeating the same refusal is not progress. "
+                "After a successful finish_question_review the host ends the turn automatically. "
                 "Use the JavaScript interpreter to compose ONLY the supplied tools. Do not claim data are "
                 "missing merely because a breakdown was not calculated. Never mix overlapping accounting partitions, units or samples. "
                 "Use existing verified accounting evidence first. Register only necessary, meaningful arithmetic, or say what remains "
@@ -456,7 +545,14 @@ def complete_calculations(settings, question, result, scope, data_access=None):
             receipts = data_access.acquisition.run()
             messages.append({"role": "user", "content": "Resumed persisted acquisition queue. Receipts: " + json.dumps(receipts, default=str)})
         for _round in range(settings.research_rounds + 1):
-            output = agent.invoke({"messages": messages}, config={"recursion_limit": 32})
+            turn = {"round": _round, "model_calls": 0, "model_call_limit": model_call_limit,
+                    "stop_reason": "model_finished"}
+            loop_audit.append(turn)
+            # Graph steps include middleware and tools, not just model calls.
+            # Leave room for every bounded call plus startup/cleanup hooks.
+            output = agent.invoke({"messages": messages}, config={"recursion_limit": 4 * model_call_limit + 8})
+            if turn["stop_reason"] == "model_call_limit":
+                raise RuntimeError(f"Calculation planner exhausted {model_call_limit} model calls without completing its review")
             pending = data_access and data_access._acquisition and data_access.acquisition.pending
             if not pending:
                 break
@@ -471,22 +567,25 @@ def complete_calculations(settings, question, result, scope, data_access=None):
         # Store model-written code and tool receipts for replay; never trust prose as evidence.
         messages = [item.model_dump(mode="json") for item in output.get("messages", [])]
         payload = {"question": question, "scope": scope, "model": model.model_id, "messages": messages,
-                   "plan": plan, "question_review": review,
+                   "plan": plan, "question_review": review, "planning_turns": loop_audit,
                    "accepted_evidence_ids": [item.evidence_id for item in accepted]}
         executions.append(ToolExecutionRecord(execution_id=stable_id("execution", payload), tool="complete_calculations",
             parameters=payload, started_at=datetime.now(UTC), duration_ms=round((perf_counter() - started) * 1000),
             result_sha256=digest(payload),
             dataset_manifest_ids=sorted({key for item in originals.values() for key in item.dataset_manifest_ids})))
     except Exception as error:
-        logger.exception("calculation_interpreter_failed")
+        logger.exception("calculation_interpreter_failed planning_turns=%s", loop_audit)
         failure = {"status": "failed", "error_type": type(error).__name__,
             "question": question, "scope": scope, "model": model_id, "plan": plan, "review": review,
-            "tool_audit": tool_audit, "retained_evidence_ids": [item.evidence_id for item in accepted]}
+            "tool_audit": tool_audit, "planning_turns": loop_audit,
+            "retained_evidence_ids": [item.evidence_id for item in accepted]}
         result.executions.append(ToolExecutionRecord(execution_id=stable_id("execution", failure),
             tool="complete_calculations_failed", parameters=failure, started_at=datetime.now(UTC),
             duration_ms=round((perf_counter() - started) * 1000), result_sha256=digest(failure),
             dataset_manifest_ids=sorted({key for item in originals.values() for key in item.dataset_manifest_ids})))
-        result.caveats.append(f"INCOMPLETE ANALYSIS: calculation stage failed ({type(error).__name__}); "
+        limit_detail = (f"the planner reached its {settings.calculation_model_call_limit}-call limit before completing review; "
+                        if loop_audit and loop_audit[-1]["stop_reason"] == "model_call_limit" else "")
+        result.caveats.append(f"INCOMPLETE ANALYSIS: calculation stage failed ({type(error).__name__}); {limit_detail}"
                              "this is an execution failure, not proof of missing source data. Existing evidence remains available.")
         # Individually validated measurements remain valid even if a later objective fails.
         result.aggregate_evidence.extend(accepted)

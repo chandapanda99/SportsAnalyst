@@ -139,6 +139,8 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             "scale": {"domain": color_order},
             "legend": None,
         }
+        if comparison_kind == "monthly-trend":
+            color_encoding["legend"] = {"title": "Season / period", "orient": "top", "direction": "horizontal"}
         series_title = {"season-trend": "Season", "grouped-observations": "Recorded context",
                         "monthly-trend": "Month and context"}.get(comparison_kind, "Period")
         tooltip = [
@@ -189,6 +191,22 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             }
         )
 
+    category_rows = comparison_kind == "grouped-observations" and color_field is not None
+    if category_rows:
+        for plot in metric_specs:
+            categories = list(dict.fromkeys(str(row[series_field]) for row in plot["data"]["values"]))
+            plot["height"] = max(120, len(categories) * max(32, 16 * len(color_order)))
+            for layer in plot["layer"]:
+                encoding = dict(layer["encoding"])
+                layer["encoding"] = encoding
+                numeric, categorical = encoding["y"], encoding["x"]
+                encoding["x"] = numeric
+                encoding["y"] = {**categorical, "type": "nominal", "scale": {"type": "band"},
+                                 "axis": {"title": None, "labelLimit": 220, "ticks": False, "domain": False}}
+                encoding["yOffset"] = {"field": color_field, "type": "nominal", "sort": color_order}
+                if layer["mark"]["type"] == "text":
+                    layer["mark"].update(align="left", dx=8, dy=0)
+
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
         "usermeta": {
@@ -199,6 +217,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             "seriesCount": len({row[series_field] for row in values}),
             "seriesField": series_field,
             "seriesLabels": order,
+            **({"categoryLayout": "rows"} if category_rows else {}),
             **({"colorField": color_field, "colorLabels": color_order} if color_field else {}),
         },
         "data": {"values": values},

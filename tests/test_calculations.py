@@ -68,8 +68,8 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":[e.evidence_id,regi
         def bind_tools(self, tools, **kwargs):
             return self
 
-    model = Model(responses=[AIMessage(content="", tool_calls=[{"name": "eval", "id": "calc", "args": {"code": code}}]),
-                             AIMessage(content="Calculation complete")])
+    # This response repeats forever unless the host stops after the valid review.
+    model = Model(responses=[AIMessage(content="", tool_calls=[{"name": "eval", "id": "calc", "args": {"code": code}}])])
     monkeypatch.setattr("sports_analyst.providers.get_provider", lambda name: SimpleNamespace(
         build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-calculation-model")))
     noise = [first.model_copy(update={"evidence_id": f"noise-{i}", "metric": "unrelated_metric"}) for i in range(100)]
@@ -80,6 +80,8 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":[e.evidence_id,regi
     assert len(derived) == 1 and derived[0].value == pytest.approx(first.value * 2)
     assert derived[0].context["validation"] == "arithmetic_only"
     assert any(item.tool == "complete_calculations" and item.parameters["messages"] for item in result.executions)
+    assert result.executions[-1].parameters["planning_turns"][0]["stop_reason"] == "review_complete"
+    assert result.executions[-1].parameters["planning_turns"][0]["model_calls"] == 1
     for expression in ("__import__('os')", "a.__class__", "a ** 10000", "1 / 0"):
         with pytest.raises((ValueError, ZeroDivisionError)):
             checked_arithmetic(expression, {"a": 2.})
@@ -91,6 +93,52 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":[e.evidence_id,regi
     assert broken.executions[-1].tool == "complete_calculations_failed"
     assert broken.executions[-1].parameters["error_type"] == "ValueError"
     assert "execution failure" in broken.caveats[0]
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_interpreter_bounds_planning_and_preserves_measurements(monkeypatch, exhausted):
+    baseline, comparison = accounting_sample()
+    evidence, _, _, _ = phase_accounting(baseline, comparison, [manifest(2024, baseline.columns)])
+    first = evidence[0]
+    start = '''const e=JSON.parse(await tools.inspectCalculationInputs({})).evidence[0];
+await tools.recordAnalysisPlan({objectives:["Compare contributions"],existing_evidence_ids:[e.evidence_id],
+required_data:[],calculations:["Double contribution"],limitations:[]});
+await tools.registerArithmetic({label:"Doubled",expression:"a*2",inputs:{a:{evidence_id:e.evidence_id,field:"value"}},
+proposed_value:e.value*2,unit:e.unit}); "registered";'''
+    finish = f'''await tools.finishQuestionReview({{evidence_by_objective:{{"0":["{first.evidence_id}"]}},unresolved:{{}}}}); "finished";'''
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    def evaluation(code, call_id):
+        return AIMessage(content="", tool_calls=[{"name": "eval", "id": call_id, "args": {"code": code}}])
+
+    # Thirteen model/tool exchanges exceed the former 32 graph-step guard.
+    responses = [evaluation(start, "start")]
+    if exhausted:
+        responses.extend(evaluation('await tools.inspectCalculationInputs({offset:-1});', f"invalid-{i}") for i in range(3))
+    else:
+        responses.extend(evaluation(f'await tools.inspectCalculationInputs({{offset:{i}}});', f"page-{i}") for i in range(11))
+        responses.append(evaluation(finish, "review"))
+    model = Model(responses=responses)
+    monkeypatch.setattr("sports_analyst.providers.get_provider", lambda _: SimpleNamespace(
+        build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-bounded-planner")))
+    result = SimpleNamespace(aggregate_evidence=list(evidence), executions=[], caveats=[])
+    complete_calculations(Settings(_env_file=None, model_provider="ollama", calculation_model_call_limit=4 if exhausted else 24),
+                          "Compare contributions", result, {})
+    assert len([e for e in result.aggregate_evidence if e.metric == "derived_arithmetic"]) == 1
+    execution = next(e for e in result.executions if e.tool.startswith("complete_calculations"))
+    turn = execution.parameters["planning_turns"][0]
+    assert turn["model_calls"] == (4 if exhausted else 13)
+    assert turn["stop_reason"] == ("model_call_limit" if exhausted else "review_complete")
+    if exhausted:
+        assert execution.tool == "complete_calculations_failed"
+        assert execution.parameters["retained_evidence_ids"]
+        assert execution.parameters["tool_audit"][-1]["tool"] == "inspect_calculation_inputs"
+        assert "execution failure" in result.caveats[0]
+    else:
+        assert execution.tool == "complete_calculations" and not result.caveats
 
 
 def test_controlled_game_join_and_scoped_acquisition(tmp_path, monkeypatch):

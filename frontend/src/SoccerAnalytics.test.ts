@@ -1,9 +1,21 @@
 import {cleanup, fireEvent, render, screen} from '@testing-library/svelte';
 import {afterEach, expect, it} from 'vitest';
 import SoccerAnalytics from './SoccerAnalytics.svelte';
-import SoccerEvents from './SoccerEvents.svelte';
 
 afterEach(cleanup);
+
+it('keeps Understat and FotMob shot models separate and does not infer xGOT', async () => {
+  render(SoccerAnalytics, {rows: [
+    {provider: 'fotmob', team_id: '1', shots_json: JSON.stringify([{x: 90, y: 34, expectedGoals: .1}])},
+    {provider: 'understat', team_id: '1', team_name: 'Home', shots_json: JSON.stringify([
+      {x: 94.5, y: 34, min: 8, expectedGoals: .25, playerName: 'Recorded forward', eventType: 'Goal'}])},
+  ]});
+  await fireEvent.change(screen.getByLabelText('Data source'), {target: {value: 'understat'}});
+  expect(screen.getByText(/1 recorded shots · 1/)).toBeTruthy();
+  expect(screen.getByText('0.25')).toBeTruthy();
+  expect(document.querySelector('dl')?.textContent).toContain('xGOT—');
+  expect(screen.queryByText('0.1')).toBeNull();
+});
 
 it('opens recorded shots, team counters, native player statistics and formation context without inventing missing values', async () => {
   const rows = [{team_id: '1', team_name: 'Home', expected_goals: 1.2, accurate_passes: 90, total_passes: 100,
@@ -26,19 +38,4 @@ it('opens recorded shots, team counters, native player statistics and formation 
   expect(screen.getByText(/Recorded player-match values/)).toBeTruthy();
   await fireEvent.click(screen.getByRole('button', {name: 'Match context'}));
   expect(screen.getByText(/Formation: 4-3-3/)).toBeTruthy();
-});
-
-it('browses recorded open-event endpoints and retains missing locations and visual coverage limits', async () => {
-  render(SoccerEvents, {total: 2500, actions: [
-    {id: 'a', event_type: 'Pass', player_name: 'Native player', minute: 2, second: 15,
-      start_x: 20, start_y: 30, end_x: 55, end_y: 32, xt: .03, possession: 2},
-    {id: 'b', event_type: 'Substitution', minute: 65},
-  ]});
-  expect(screen.getByText(/2 of 2500 source events/)).toBeTruthy();
-  expect(screen.getByRole('img', {name: 'Recorded action start and end locations'})).toBeTruthy();
-  await fireEvent.click(screen.getByRole('button', {name: 'Next action'}));
-  expect(screen.getByText('No spatial location was recorded for this event.')).toBeTruthy();
-  expect(screen.getAllByText('Not recorded').length).toBeGreaterThan(0);
-  await fireEvent.change(screen.getByLabelText('Event type'), {target: {value: 'Pass'}});
-  expect(screen.getByText('0.030')).toBeTruthy();
 });

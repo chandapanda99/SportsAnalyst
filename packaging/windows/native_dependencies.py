@@ -51,14 +51,16 @@ def collect_runtime_dlls(distributions):
 def collect_provider_resources(distributions):
     """Preserve provider assets which native-library collection cannot discover."""
     resources = set()
-    for name in ("xgboost", "sportsdataverse", "nflreadpy"):
+    for name, package in (("xgboost", "xgboost"), ("sportsdataverse", "sportsdataverse"),
+                          ("nflreadpy", "nflreadpy"), ("soccerdata", "soccerdata"),
+                          ("wrapper-tls-requests", "tls_requests"), ("seleniumbase", "seleniumbase")):
         if name not in distributions:
             continue
         distribution = distributions[name]
         root = Path(distribution.locate_file("")).resolve()
         for relative in distribution.files or []:
             relative = Path(str(relative))
-            if relative.parts[0] != name or relative.suffix.lower() in {".py", ".pyc", ".pyi", ".pyd", ".dll", ".so"}:
+            if relative.parts[0] != package or relative.suffix.lower() in {".py", ".pyc", ".pyi", ".pyd", ".dll", ".so"}:
                 continue
             source = Path(distribution.locate_file(relative)).resolve()
             if not source.is_file():

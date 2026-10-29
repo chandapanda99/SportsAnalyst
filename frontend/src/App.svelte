@@ -3,11 +3,14 @@
   import {api, pendingJob, pollingStream} from './api';
   import type {EventStreamResponse} from './api';
   import Chart from './Chart.svelte';
+  import {chartLayout} from './chartLayout';
   import SupportingEvidence from './SupportingEvidence.svelte';
   import BasketballLoadingAnimation from './BasketballLoadingAnimation.svelte';
   import SoccerLoadingAnimation from './SoccerLoadingAnimation.svelte';
   import TabletPanel from './TabletPanel.svelte';
   import CFBDiscovery from './CFBDiscovery.svelte';
+  import DownloadScope from './DownloadScope.svelte';
+  import type {DownloadSelection} from './types';
   import Icon from './Icon.svelte';
   import CompletionToast from './CompletionToast.svelte';
   import TeamBadge from './TeamBadge.svelte';
@@ -445,6 +448,7 @@
   let selectedMetrics: string[] = [];
   let selectedSplits: string[] = [];
   let syncSeasons: number[] = [];
+  let downloadScope: DownloadSelection = {kind: 'league', ready: true, label: 'Entire League'};
   let syncDatasets: string[] = ['play_by_play'];
   let dataManagerOpen = true;
   let initializedSelections = false;
@@ -505,7 +509,8 @@
   $: suggestedSources = [...new Set([...requiredSources, ...(setup?.recommended_datasets ?? [])])];
   $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition)
       && item.row_count !== 0 && item.availability !== 'source_unavailable'
-      && (!item.partition_key || item.partition_key === `${subjectType}:${resolvedSubject}`))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
+      && (!item.partition_key || item.partition_key === `${subjectType}:${resolvedSubject}`
+          || item.partition_key === `team:${resolvedTeam}`))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
   $: dataReady = activeSport === 'cfb' ? Boolean(analysisOptions && resolvedTeam && !cfbLoading && !cfbError && !cfbHistoryLoading)
       : Boolean(analysisOptions && requiredSeasons.length && (analysisOptions.automatic_preparation || !sourceGaps.length));
   $: readinessSteps = [
@@ -893,6 +898,7 @@
   }
 
   function resetDraft(sport: string) {
+    downloadScope = {kind: 'league', ready: true, label: 'Entire League'};
     cfbHistoryLoading = false;
     cfbLoading = sport === 'cfb';
     cfbError = '';
@@ -1529,6 +1535,10 @@
     return [...charts].sort((left, right) => Number(isMetricComparison(left)) - Number(isMetricComparison(right)));
   }
 
+  function supplementalChart(chart: Investigation['charts'][number]) {
+    return active?.run.sport === 'soccer' && (chart.specification.usermeta as {reportSection?: string})?.reportSection === 'supplemental';
+  }
+
   function evidenceRoleLabel(play: Evidence) {
     const labels: Record<NonNullable<Evidence['evidence_role']>, string> = {
       typical: 'Typical',
@@ -1568,11 +1578,16 @@
     }).format(timestamp);
   }
 
-  function syncedPackages(season: number) {
+  function snapshotMatchesTeam(dataset: DatasetManifest, selectedTeam = resolvedTeam, fullLibrary = false) {
+    if (activeSport === 'soccer' && dataset.competition !== selectedCompetition) return false;
+    if (activeSport === 'cfb') return dataset.partition_key === `team:${selectedTeam}`;
+    return !dataset.partition_key || (!fullLibrary && dataset.partition_key === `team:${selectedTeam}`);
+  }
+
+  function syncedPackages(season: number, selectedTeam = resolvedTeam, fullLibrary = false) {
     return new Set(datasets.filter((dataset) => (dataset.sport ?? 'nfl') === activeSport && dataset.season === season
         && dataset.row_count !== 0 && dataset.availability !== 'source_unavailable'
-        && (activeSport !== 'soccer' || (dataset.competition === selectedCompetition && !dataset.partition_key))
-        && (activeSport !== 'cfb' || dataset.partition_key === `team:${resolvedTeam}`)).map((dataset) => dataset.dataset));
+        && snapshotMatchesTeam(dataset, selectedTeam, fullLibrary)).map((dataset) => dataset.dataset));
   }
 
   function isReferenceDataset(dataset: string) {
@@ -1626,6 +1641,10 @@
   }
 
   function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons, selectedTeam = resolvedTeam) {
+    if (activeSport !== 'cfb' && ['conference', 'division'].includes(downloadScope.kind))
+      return {state: 'partial', label: 'Per-season group coverage checked on sync'};
+    if (activeSport !== 'cfb' && downloadScope.kind === 'team') selectedTeam = downloadScope.team_ids?.[0] ?? '';
+    const fullLibrary = activeSport !== 'cfb' && downloadScope.kind === 'league';
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => item.dataset === dataset)
           ? {state: 'installed', label: 'Installed'}
@@ -1635,15 +1654,14 @@
     if (!eligibleSeasons.length) return null;
     const scopedSnapshots = datasets.filter(item => (item.sport ?? 'nfl') === activeSport
         && item.dataset === dataset && eligibleSeasons.includes(item.season)
-        && (activeSport !== 'soccer' || (item.competition === selectedCompetition && !item.partition_key))
-        && (activeSport !== 'cfb' || item.partition_key === `team:${selectedTeam}`));
+        && snapshotMatchesTeam(item, selectedTeam, fullLibrary));
     if (scopedSnapshots.some(item => item.availability === 'download_failed'))
       return {state: 'partial', label: 'Download failed · retry'};
     if (scopedSnapshots.some(item => item.availability === 'source_unavailable'))
       return {state: 'partial', label: activeSport === 'cfb' ? 'Limited source coverage · recheck hourly' : 'Not published for selection · recheck'};
     if (scopedSnapshots.some(item => item.coverage?.retained_previous_data || item.coverage?.source_unavailable))
       return {state: 'partial', label: 'Previous data retained · retry refresh'};
-    const local = eligibleSeasons.filter((season) => syncedPackages(season).has(dataset)).length;
+    const local = eligibleSeasons.filter((season) => syncedPackages(season, selectedTeam, fullLibrary).has(dataset)).length;
     if (!local) return null;
     if (activeSport === 'cfb') {
       const snapshots = datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${selectedTeam}`
@@ -1656,20 +1674,20 @@
         return {state: 'partial', label: 'Partial · resume sync'};
     }
     if (activeSport === 'soccer' && dataset === 'team_stats') {
-      const teamSources = datasets.filter(item => item.sport === 'soccer' && !item.partition_key && item.dataset === 'team_stats' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      const teamSources = datasets.filter(item => item.sport === 'soccer' && snapshotMatchesTeam(item, selectedTeam, fullLibrary) && item.dataset === 'team_stats' && eligibleSeasons.includes(item.season));
       const teamMatches = teamSources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const statsLabel = teamSources.every(item => item.coverage?.recorded_matches !== undefined)
           ? `Team stats: ${teamMatches} matches` : `Team stats: ${local}/${eligibleSeasons.length} seasons`;
-      const sources = datasets.filter(item => !item.partition_key && item.dataset === 'expected_goals' && item.competition === selectedCompetition && eligibleSeasons.includes(item.season));
+      const sources = datasets.filter(item => snapshotMatchesTeam(item, selectedTeam, fullLibrary) && item.dataset === 'expected_goals' && eligibleSeasons.includes(item.season));
       const covered = sources.reduce((sum, item) => sum + (item.coverage?.recorded_matches ?? 0), 0);
       const expected = sources.reduce((sum, item) => sum + (item.coverage?.expected_matches ?? 0), 0);
-      const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season));
+      const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season, selectedTeam, fullLibrary));
       return {
         state: incomplete ? 'partial' : 'installed',
         label: `${statsLabel} · xG: ${covered}/${expected} matches${incomplete ? ' · resume sync' : covered < expected ? ' · limited source coverage' : ''}`
       };
     }
-    if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season))) {
+    if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season, selectedTeam, fullLibrary))) {
       return {state: 'partial', label: 'Partial · resume sync'};
     }
     return local === eligibleSeasons.length
@@ -1682,7 +1700,7 @@
     return eligibleSelectedSeasons(dataset, selectedSeasons).length > 0;
   }
 
-  function soccerPackageIncomplete(dataset: string, season: number) {
+  function soccerPackageIncomplete(dataset: string, season: number, selectedTeam = resolvedTeam, fullLibrary = false) {
     if (activeSport === 'cfb') {
       const snapshot = datasets.find(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`
           && item.dataset === dataset && item.season === season);
@@ -1691,16 +1709,17 @@
     }
     if (activeSport !== 'soccer') return false;
     if (dataset === 'team_stats') {
-      const xg = datasets.find(item => item.sport === 'soccer' && !item.partition_key && item.competition === selectedCompetition && item.dataset === 'expected_goals' && item.season === season);
+      const xg = datasets.find(item => item.sport === 'soccer' && snapshotMatchesTeam(item, selectedTeam, fullLibrary) && item.dataset === 'expected_goals' && item.season === season);
       if (!xg || (xg.coverage?.completed_matches ?? 0) < (xg.coverage?.expected_matches ?? 0)) return true;
     }
-    const manifest = datasets.find(item => item.sport === 'soccer' && !item.partition_key && item.competition === selectedCompetition && item.dataset === dataset && item.season === season);
+    const manifest = datasets.find(item => item.sport === 'soccer' && snapshotMatchesTeam(item, selectedTeam, fullLibrary) && item.dataset === dataset && item.season === season);
     const completed = dataset === 'play_by_play' ? manifest?.coverage?.fetched_intervals : manifest?.coverage?.completed_matches;
     const expected = dataset === 'play_by_play' ? manifest?.coverage?.expected_intervals : manifest?.coverage?.expected_matches;
     return completed !== undefined && expected !== undefined && completed < expected;
   }
 
   function missingSyncSeasons(dataset: string, selectedSeasons = syncSeasons) {
+    if (activeSport !== 'cfb' && downloadScope.kind !== 'league') return eligibleSelectedSeasons(dataset, selectedSeasons);
     if (isReferenceDataset(dataset)) {
       return datasets.some((item) => (item.sport ?? 'nfl') === activeSport && item.dataset === dataset) ? [] : selectedSeasons.slice(0, 1);
     }
@@ -1712,7 +1731,8 @@
     return eligibleSelectedSeasons(dataset, selectedSeasons).filter((season) =>
         season === currentNflSeason || season === currentNbaSeason || season === currentSoccerSeason
         || (activeSport === 'cfb' && season === now.getUTCFullYear())
-        || !syncedPackages(season).has(dataset) || soccerPackageIncomplete(dataset, season));
+        || !syncedPackages(season, resolvedTeam, activeSport !== 'cfb').has(dataset)
+        || soccerPackageIncomplete(dataset, season, resolvedTeam, activeSport !== 'cfb'));
   }
 
   function seasonLabel(season: number) {
@@ -2071,6 +2091,10 @@
   }
 
   async function syncData() {
+    if (activeSport !== 'cfb' && !downloadScope.ready) {
+      error = 'Choose a valid download team or group first.';
+      return;
+    }
     if (activeSport === 'cfb' && !resolvedTeam) {
       error = 'Choose a college-football school before an explicit sync.';
       return;
@@ -2091,13 +2115,15 @@
     try {
       const missingSeasons = [...new Set(requestedDatasets.flatMap(dataset => missingSyncSeasons(dataset, requestedSeasons)))];
       const stream = await api.syncStream(activeSport, missingSeasons, requestedDatasets, activeSport === 'soccer' ? selectedCompetition : undefined,
-          activeSport === 'cfb' ? [resolvedTeam] : undefined);
+          activeSport === 'cfb' ? [resolvedTeam] : downloadScope.team_ids,
+          activeSport === 'cfb' ? undefined : {conference_id: downloadScope.conference_id, division_id: downloadScope.division_id});
       await streamDatasetSync(stream);
       await refresh();
       syncComplete = true;
       busy = false;
       syncing = false;
-      notifyCompletion('Data Sync Complete', 'Your data library has been refreshed.');
+      notifyCompletion('Data Sync Complete', activeSport === 'cfb' ? 'Your data library has been refreshed.'
+          : `${downloadScope.label} library refreshed. Check the source coverage below before running.`);
     } catch (problem) {
       error = String(problem);
       try {
@@ -2636,6 +2662,13 @@
                   </span>
                 </div>
               {/if}
+              {#if activeSport !== 'cfb' && analysisOptions}
+                {#key `${activeSport}:${selectedCompetition}`}
+                  <DownloadScope sport={activeSport} season={syncSeasons[0] ?? comparison}
+                    competition={activeSport === 'soccer' ? selectedCompetition : undefined}
+                    teams={analysisOptions.teams} disabled={busy} onchange={(selection) => downloadScope = selection}/>
+                {/key}
+              {/if}
               {#if workspaceLoading}
                 <div class="library-loading" role="status" aria-live="polite">
                   <span class="library-spinner" aria-hidden="true"></span>
@@ -2714,10 +2747,11 @@
                     new results. For like-for-like comparisons, select matching week ranges.</p>
                 {/if}
                 <button class="download-data-button"
-                        disabled={!syncSeasons.length || !syncDatasets.length || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
+                        disabled={!syncSeasons.length || !syncDatasets.length || (activeSport !== 'cfb' && !downloadScope.ready) || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
                         on:click={syncData}>
                   {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length}
                   sources for {syncSeasons.length} seasons
+                  {#if activeSport !== 'cfb' && downloadScope.kind !== 'league'} · {downloadScope.label}{/if}
                   <Icon name="database-import" size={20}/>
                 </button>
                 {#if activeSport === 'cfb'}
@@ -3179,14 +3213,14 @@
         </aside>
       </div>
       <section class="charts">
-        <div class="section-title"><span>Charts</span>
-          {#if active.charts.length}<small>Hover a point to inspect its values.</small>{/if}
+        <div class="section-title"><span>Performance comparisons</span>
+          {#if active.charts.length}<small>Season summaries, monthly trends and clearly scoped supporting calculations.</small>{/if}
         </div>
         {#if !active.charts.length}<p class="empty-state">No charts were produced for this analysis. The findings and supporting evidence above contain the available
           measurements.</p>{/if}
         <div class="chart-grid">
-          {#each orderedCharts(active.charts) as chart}
-            <article class:chart-trend={isTrendChart(chart.specification)}
+          {#each orderedCharts(active.charts.filter(chart => !supplementalChart(chart))) as chart}
+            <article use:chartLayout class:chart-trend={isTrendChart(chart.specification)}
                      class:chart-metric-group={isMetricRowChart(chart.specification)}><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
@@ -3194,6 +3228,21 @@
             </article>
           {/each}
         </div>
+        {#if active.charts.some(supplementalChart)}
+          <details class="supplemental-charts">
+            <summary>Additional scoped calculations ({active.charts.filter(supplementalChart).length})</summary>
+            <p class="section-help">These calculations use specific filters or subsets. Their gaps do not indicate missing overall team statistics.</p>
+            <div class="chart-grid">
+              {#each orderedCharts(active.charts.filter(supplementalChart)) as chart}
+                <article use:chartLayout class:chart-trend={isTrendChart(chart.specification)} class:chart-metric-group={isMetricRowChart(chart.specification)}>
+                  <h3>{chart.title}</h3>
+                  <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
+                    sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season}/>
+                </article>
+              {/each}
+            </div>
+          </details>
+        {/if}
       </section>
       <section class="plays">
         <div class="section-title">

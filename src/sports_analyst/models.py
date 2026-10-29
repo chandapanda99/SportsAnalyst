@@ -31,7 +31,10 @@ class DatasetManifest(BaseModel):
     manifest_id: str
     sport: str = "nfl"
     competition: str | None = None
-    partition_key: str | None = Field(default=None, pattern=r"^(team|player|game):[0-9]+$")
+    partition_key: str | None = Field(default=None, pattern=r"^(?:(?:team|player|game):[0-9]+|team:[A-Z]{2,4})$")
+    download_scope: Literal["league", "team"] | None = None
+    source_scope: Literal["league", "team"] | None = None
+    source_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     # Legacy manifests remain the primary, version-1 channel. Upstream adapters
     # use explicit channels so they never replace a sport's analysis snapshot.
     provider_id: str = Field(default="primary", pattern=r"^[a-z][a-z0-9_-]{0,63}$")
@@ -508,7 +511,7 @@ class PlayVisualization(BaseModel):
     away_team_name: str | None = None
     quarter_seconds_remaining: float | None = None
     game_seconds_remaining: float | None = None
-    soccer_timeline: list[dict[str, str | bool]] = Field(default_factory=list)
+    soccer_timeline: list[dict[str, Any]] = Field(default_factory=list)
     soccer_analytics: list[dict[str, Any]] = Field(default_factory=list)
     soccer_analytics_manifest_ids: list[str] = Field(default_factory=list)
     soccer_actions: list[dict[str, Any]] = Field(default_factory=list)

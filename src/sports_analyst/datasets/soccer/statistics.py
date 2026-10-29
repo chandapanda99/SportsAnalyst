@@ -71,6 +71,14 @@ for field, label in (("asa_team_xgoals", "ASA team-model xG"), ("asa_player_xgoa
                                           "points" if field.endswith("points") else "goals")
 
 
+for field, label, domain, unit in (("expected_goals", "Expected goals", "attack", "goals"),
+        ("non_penalty_xg", "Non-penalty xG", "attack", "goals"),
+        ("expected_points", "Expected points", "results", "points"),
+        ("ppda", "PPDA", "defense", "provider units"), ("deep_completions", "Deep completions", "control", "count")):
+    MATCH_METRICS[f"understat_{field}_per_match"] = (
+        f"{label} per covered match (Understat)", "understat_team_matches", domain, field, None, unit)
+
+
 def measured_value(metric, rows, frame, team_id):
     _, _, _, field, denominator, _ = MATCH_METRICS[metric]
     if not {"game_id", "team_id", field} <= set(frame.columns):
@@ -79,7 +87,7 @@ def measured_value(metric, rows, frame, team_id):
     selected = [row for row in frame.iter_rows(named=True)
                 if str(row["game_id"]) in games and str(row["team_id"]) == team_id]
     source = MATCH_METRICS[metric][1]
-    expected_provider = {"match_analytics": "fotmob", "asa_analytics": "asa"}.get(source)
+    expected_provider = {"match_analytics": "fotmob", "asa_analytics": "asa", "understat_team_matches": "understat"}.get(source)
     if expected_provider and any(row.get("provider") != expected_provider for row in selected):
         raise ValueError("Incompatible provider rows; missing values cannot be filled from another model")
     keys = [str(row["game_id"]) for row in selected]

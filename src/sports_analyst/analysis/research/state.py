@@ -81,7 +81,7 @@ class ResearchState:
                 self.write("budget", state)
             return state
 
-    def fetch(self, url, destination=None, max_bytes=None):
+    def fetch(self, url, destination=None, max_bytes=None, headers=None, cookie_jar=None):
         """Only adapters supply URLs. Charge redirects and reserve bytes BEFORE reading."""
         owner = self
 
@@ -91,6 +91,9 @@ class ResearchState:
                 "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com",
                 "api.github.com", "raw.githubusercontent.com",
                 "sports.core.api.espn.com", "site.api.espn.com", "site.web.api.espn.com",
+                "understat.com",
+                  "www.whoscored.com",
+                  "www.fotmob.com",
             }:
                 raise ValueError("Research adapter requested an unapproved source host")
             return url
@@ -103,14 +106,17 @@ class ResearchState:
 
         url = checked(url)
         self.consume(requests=1)
-        request = urllib.request.Request(url, headers={"User-Agent": "Open-Sports-Analyst/1.1"})
+        request = urllib.request.Request(url, headers={"User-Agent": "Open-Sports-Analyst/1.1", **(headers or {})})
         chunks, output = [], None
         try:
             if destination:
                 destination = Path(destination)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 output = destination.open("wb")
-            with urllib.request.build_opener(Redirect()).open(request, timeout=30) as response:
+            handlers = [Redirect()]
+            if cookie_jar is not None:
+                handlers.append(urllib.request.HTTPCookieProcessor(cookie_jar))
+            with urllib.request.build_opener(*handlers).open(request, timeout=30) as response:
                 length = response.headers.get("Content-Length")
                 current = self.consume()
                 if length and int(length) > self.app.settings.research_transfer_bytes - current["bytes"]:

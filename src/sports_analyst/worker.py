@@ -53,7 +53,8 @@ def execute_job(settings: Settings, job: dict) -> None:
             application.follow_up(payload["parent_id"], payload["question"], key)
         elif job["kind"] == "sync":
             application.sync(payload["seasons"], key, payload.get("datasets"), payload["sport"], payload.get("competition"),
-                             **({"team_ids": payload.get("team_ids")} if payload["sport"] == "cfb" else {}))
+                             **{name: payload[name] for name in ("team_ids", "conference_id", "division_id")
+                                if payload.get(name) and (payload["sport"] != "cfb" or name == "team_ids")})
         else:
             raise ValueError("Unsupported job kind")
         logger.info("job_work_completed job_id=%s kind=%s", key, job["kind"])
@@ -194,7 +195,8 @@ def execute_object_job(settings: Settings, key: str) -> None:
             run_object_analysis(application, key, kind, payload)
         elif kind == "sync":
             application.sync(payload["seasons"], key, payload.get("datasets"), payload["sport"], payload.get("competition"),
-                             **({"team_ids": payload.get("team_ids")} if payload["sport"] == "cfb" else {}))
+                             **{name: payload[name] for name in ("team_ids", "conference_id", "division_id")
+                                if payload.get(name) and (payload["sport"] != "cfb" or name == "team_ids")})
         else:
             raise ValueError(f"unsupported job kind: {kind}")
     except Exception as error:

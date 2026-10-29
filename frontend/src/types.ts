@@ -53,6 +53,9 @@ export type DatasetManifest = {
 };
 export type AnalysisWindow = { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string };
 export type TeamOption = { value: string; label: string };
+export type DownloadSelection = {kind: 'league' | 'team' | 'conference' | 'division'; ready: boolean; label: string;
+  team_ids?: string[]; conference_id?: string; division_id?: string};
+export type DownloadCatalog = {teams: TeamOption[]; conferences: TeamOption[]; divisions: TeamOption[]; season: number};
 export type PlayerOption = {
   discovery_source?: string | null;
   player_id: string;
@@ -142,7 +145,11 @@ export type PlayVisualization = {
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;
   shot_x?: number; shot_y?: number; shot_coordinate_system?: string; possession_number?: number; offense_player_ids?: string[]; defense_player_ids?: string[];
   game_date?: string; home_team_name?: string; away_team_name?: string;
-  soccer_timeline?: Array<{clock: string; text: string; type: string; sequence?: string; side?: 'home' | 'away' | 'neutral'; scoring_play?: boolean; player_in?: string; player_out?: string}>;
+  soccer_timeline?: Array<{clock: string; text: string; type: string; sequence?: string; side?: 'home' | 'away' | 'neutral';
+    spatial_context?: Record<string, unknown>; spatial_provider?: string; spatial_event_id?: string; spatial_match_method?: string;
+    scoring_play?: boolean; player_in?: string; player_out?: string; id?: string; provider?: string;
+    team_id?: string; athlete_id?: string; athlete_name?: string; period?: number | null;
+    field_position_x?: number | null; field_position_y?: number | null; coordinate_system?: string}>;
   soccer_analytics?: Array<Record<string, unknown>>;
   soccer_analytics_manifest_ids?: string[];
   soccer_actions?: Array<Record<string, unknown>>;

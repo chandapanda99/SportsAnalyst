@@ -143,7 +143,8 @@ export const api = {
     plays: CFBRecordedPlay[]; teams?: CFBTeamContext[]; game_roster?: CFBGameRosterPlayer[];
     coverage: string; message?: string;
   }>(`/api/investigations/${encodeURIComponent(investigation)}/evidence/${encodeURIComponent(evidence)}/plays`, {method: 'POST'}),
-  datasets: (sport?: string) => json<DatasetManifest[]>(sport ? `/api/datasets?sport=${sport}` : '/api/datasets'),
+  datasets: (sport?: string) => json<DatasetManifest[]>(sport
+    ? `/api/datasets?sport=${sport}${sport === 'soccer' ? '&include_providers=true' : ''}` : '/api/datasets'),
   clearDatasets: (sport: string, competition?: string, token?: string) => json<{deleted_packages: number}>(`/api/datasets/${sport}`, {
     method: 'DELETE', headers: {'content-type': 'application/json', ...(token ? {'X-Data-Admin-Token': token} : {})},
     body: JSON.stringify({competition, confirmation: 'CLEAR DOWNLOADED DATA'})
@@ -171,7 +172,9 @@ export const api = {
   sync: (sport: string, seasons: number[], datasets: string[], competition?: string) => json<{ job_id: string; timeout_seconds: number }>(`/api/datasets/${sport}/sync`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition })
   }),
-  syncStream: (sport: string, seasons: number[], datasets: string[], competition?: string, teamIds?: string[], cfbScope?: {subdivision: string; conference_id: string}) =>
+  downloadCatalog: (sport: string, season: number, competition?: string) => json<import('./types').DownloadCatalog>(
+    `/api/sports/${sport}/download-catalog?season=${season}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}`),
+  syncStream: (sport: string, seasons: number[], datasets: string[], competition?: string, teamIds?: string[], cfbScope?: {subdivision?: string; conference_id?: string; division_id?: string}) =>
     eventStream(`/api/datasets/${sport}/sync-stream`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seasons, datasets, competition, ...(teamIds ? {team_ids: teamIds} : {}), ...cfbScope })
     }, 'Dataset'),

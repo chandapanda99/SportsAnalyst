@@ -115,12 +115,13 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
     if meta.get("chartKind") == "metric-rows":
         domain = meta.get("colorLabels", meta.get("seriesLabels", []))
         colors = [palette.display_primary, palette.display_secondary, "#A9C9F4", "#DBB3E7", "#B4D8B5", "#E8C69F"]
-        grouped = meta.get("comparisonKind") == "grouped-observations"
+        grouped = meta.get("comparisonKind") == "grouped-observations" and not meta.get("colorField")
         color_range = [colors[0 if grouped else i % len(colors)] for i in range(len(domain))]
         shapes = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"]
         for plot_index, plot in enumerate(themed.get("vconcat", [])):
             plot["width"] = 640
-            plot["height"] = 130
+            if meta.get("categoryLayout") != "rows":
+                plot["height"] = 130
             plot.get("title", {}).update(color="#EDF5FA")
             for layer in plot.get("layer", []):
                 mark = layer.get("mark", {})
@@ -133,10 +134,11 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
                     encoding["shape"] = {"field": meta.get("colorField", meta["seriesField"]), "type": "nominal", "legend": None,
                         "scale": {"domain": domain, "range": [shapes[0 if grouped else i % len(shapes)] for i in range(len(domain))]}}
                     if not grouped and plot_index == 0:
-                        color["legend"] = {"title": "Seasons" if meta.get("comparisonKind") == "season-trend" else "Periods", "orient": "top"}
+                        color["legend"] = {"title": meta.get("colorTitle") or (
+                            "Seasons" if meta.get("comparisonKind") == "season-trend" else "Periods"), "orient": "top"}
                 if mark.get("type") == "text":
                     encoding["color"] = {"value": "#EDF5FA"}
-                    if len(plot.get("data", {}).get("values", [])) > 8:
+                    if meta.get("categoryLayout") != "rows" and len(plot.get("data", {}).get("values", [])) > 8:
                         mark["opacity"] = 0
         themed["spacing"] = 32
 
@@ -160,6 +162,22 @@ def _themed_chart_specification(specification: dict, team: str, sport: str = "nf
 
 
 def _chart_svg(specification: dict, team: str, sport: str = "nfl") -> str:
+    meta = specification.get("usermeta", {})
+    if meta.get("displayMode") == "matrix":
+        headers = "".join(f"<th>{html.escape(period)}</th>" for period in meta["expectedPeriods"])
+        body = []
+        for row in meta["comparisonSummary"]:
+            cells = []
+            for cell in row["cells"]:
+                content = "<br>".join(html.escape(entry["value"]) + (
+                    f" <small>(sample {entry['sample']:,})</small>" if entry.get("sample") is not None else "")
+                    for entry in cell["entries"]) or "— <small>No measurement</small>"
+                cells.append(f"<td>{content}</td>")
+            name = " · ".join(filter(None, [row["category"], row["metric"]]))
+            body.append(f"<tr><th>{html.escape(name)}</th>{''.join(cells)}</tr>")
+        return ("<p>Selected periods side by side. Missing measurements are not zero.</p>"
+                f"<div style='overflow-x:auto'><table><thead><tr><th>Metric / category</th>{headers}</tr></thead>"
+                f"<tbody>{''.join(body)}</tbody></table></div>")
     themed = _themed_chart_specification(specification, team, sport)
     # Vega-Lite specs must be JSON data. Polars can surface Python date/datetime
     # values in chart rows, so normalize the complete spec before conversion and

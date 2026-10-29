@@ -71,12 +71,14 @@ def requirements(request, first_install):
         required.add("lineups")
     for metric in request.metrics or SOCCER_DEFAULTS.get(request.analysis_domain, SOCCER_DEFAULTS["results"]):
         source = SOCCER_METRICS.get(metric, (None, None))[1]
-        if source in {"team_stats", "lineups", "key_events", "expected_goals", "match_analytics", "asa_analytics"}:
+        if source in {"team_stats", "lineups", "key_events", "expected_goals", "match_analytics", "asa_analytics", "understat_team_matches"}:
             required.add(source)
     return required, optional - required
 
 
 def project_soccer(app, connector, competition, season, partition, dataset, current):
+    if dataset.startswith("understat_"):
+        return None  # Provider identities/coverage must not be rebuilt as ESPN manifests.
     """Reuse full competition snapshots without relabeling them as team downloads."""
     try:
         source = app.store.manifest_for_season(season, dataset, "soccer", competition)
@@ -137,8 +139,22 @@ def prepare_investigation(app, request, identifier):
     if request.sport == "soccer" and competition not in SOCCER_COMPETITIONS:
         raise ValueError("Select a supported soccer competition before preparing data")
     partition = None
-    if request.sport == "soccer" and (request.subject is None or request.subject.type == "team"):
-        team = request.subject.id if request.subject else request.scope.team
+    if request.sport in {"nfl", "nba"}:
+        from sports_analyst.datasets.download_scope import canonical_team
+
+        identity = request.subject.team_id if request.subject and request.subject.type == "player" else request.scope.team
+        team = canonical_team(request.sport, identity)
+        if team:
+            candidate = f"team:{team}"
+            app.store.refresh_durable_datasets(request.sport, request.scope.included_seasons, ["play_by_play"], partition_key=candidate)
+            if any(item.partition_key == candidate for item in app.store.manifests("play_by_play", request.sport)):
+                full_years = {item.season for item in app.store.manifests("play_by_play", request.sport)
+                              if item.partition_key is None and item.row_count}
+                if not set(request.scope.included_seasons) <= full_years:
+                    partition = candidate
+    if request.sport == "soccer" and (request.subject is None or request.subject.type == "team" or request.subject.team_id):
+        team = (request.subject.team_id if request.subject and request.subject.type == "player"
+                else request.subject.id if request.subject else request.scope.team)
         if not team.isdigit():
             raise ValueError("Select a numeric ESPN soccer team ID")
         partition = f"team:{team}"
@@ -161,6 +177,9 @@ def prepare_investigation(app, request, identifier):
             required, optional = requirements(request, first_install)
             pending = []
             for dataset in sorted(required | optional):
+                if dataset.startswith("understat_"):
+                    app.store.refresh_durable_datasets(request.sport, [season], [dataset], competition, partition,
+                        provider_id="understat", processing_version="understat-soccerdata-1")
                 if request.sport == "nfl" and season < DATASET_MIN_SEASONS[dataset]:
                     continue
                 if request.sport == "nba" and season not in NBA_DATASETS[dataset].available_seasons:
@@ -168,7 +187,9 @@ def prepare_investigation(app, request, identifier):
                         raise ValueError(f"{dataset} has no published NBA snapshot for {season}")
                     continue
                 try:
-                    manifest = app.store.manifest_for_season(season, dataset, request.sport, competition, partition)
+                    manifest = app.store.manifest_for_season(season, dataset, request.sport, competition, partition,
+                        **({"provider_id": "understat", "processing_version": "understat-soccerdata-1"}
+                           if dataset.startswith("understat_") else {}))
                 except KeyError:
                     manifest = project_soccer(app, connector, competition, season, partition, dataset, current) if partition else None
                 if manifest and reusable(manifest, current) and (app.store.persistence.durable or Path(manifest.local_path).exists()):
@@ -206,6 +227,11 @@ def prepare_investigation(app, request, identifier):
                     refresh_seasons={season} if season == current else set(),
                 )
             else:
+                if partition:
+                    from sports_analyst.datasets.download_scope import sync_team_partitions
+
+                    sync_team_partitions(app, [season], pending, request.sport, {season: [team]}, progress, app.store.save_manifest)
+                    pending = []
                 for dataset in pending:
                     try:
                         connector.sync([season], [dataset], progress_callback=progress, manifest_callback=app.store.save_manifest)

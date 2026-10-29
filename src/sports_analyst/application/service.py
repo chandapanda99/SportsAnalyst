@@ -198,7 +198,8 @@ class AnalystApplication:
 
     def analysis_options(self, sport: str = "nfl", competition: str | None = None) -> AnalysisOptions:
         connector, plugin = self._sport(sport)
-        manifests = [item for item in self.store.manifests(sport=sport) if item.row_count > 0]
+        manifests = [item for item in self.store.manifests(sport=sport,
+            **({"provider_id": None, "processing_version": None} if sport == "soccer" else {})) if item.row_count > 0]
         if sport == "cfb":
             return plugin.analysis_options(manifests)
         if sport == "soccer":
@@ -296,11 +297,12 @@ class AnalystApplication:
 
     def sync(
             self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None, sport: str = "nfl", competition: str | None = None,
-            *, team_ids: list[str] | None = None,
+            *, team_ids: list[str] | None = None, conference_id: str | None = None, division_id: str | None = None,
     ) -> list[DatasetManifest]:
         from sports_analyst.application.sync import run_dataset_sync
 
-        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition, team_ids=team_ids)
+        return run_dataset_sync(self, seasons, job_id, datasets, sport, competition,
+                                team_ids=team_ids, conference_id=conference_id, division_id=division_id)
 
     def dataset_sync_timeout_seconds(
             self, seasons: list[int], datasets: list[str] | None = None, sport: str = "nfl"
@@ -477,18 +479,27 @@ class AnalystApplication:
                 for season, manifest in manifests.items()
             }
             required_supplemental = plugin.required_supplemental_datasets(request)
-            endpoint_seasons = {request.scope.baseline_season, request.scope.comparison_season}
+            analysis_seasons = set(request.scope.included_seasons)
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] = {}
-            for manifest in self.store.manifests(sport=request.sport, competition=request.scope.competition):
+            candidates = self.store.manifests(sport=request.sport, competition=request.scope.competition,
+                **({"provider_id": None, "processing_version": None} if request.sport == "soccer" else {}))
+            for manifest in candidates:
                 if manifest.row_count == 0:
                     continue
                 if request.sport in {"cfb", "soccer"} and manifest.partition_key != partition:
                     continue
+                if request.sport in {"nfl", "nba"}:
+                    if manifest.partition_key not in {None, partition}:
+                        continue
+                    if partition and manifest.partition_key is None and any(
+                            item.partition_key == partition and (item.dataset, item.season) == (manifest.dataset, manifest.season)
+                            for item in candidates):
+                        continue
                 if manifest.dataset in {"play_by_play", "teams"}:
                     continue
                 if manifest.dataset not in required_supplemental:
                     continue
-                if manifest.dataset != "players" and manifest.season not in endpoint_seasons:
+                if manifest.dataset != "players" and manifest.season not in analysis_seasons:
                     continue
                 supplemental_manifests.setdefault(manifest.dataset, {})[manifest.season] = manifest
             supplemental = {
@@ -496,7 +507,7 @@ class AnalystApplication:
                 for dataset, season_manifests in supplemental_manifests.items()
             }
             if request.sport == "soccer" and request.subject and request.subject.type == "player" and "assists" in request.metrics:
-                for season in endpoint_seasons:
+                for season in sorted(analysis_seasons):
                     try:
                         dataset_name = f"player_game_logs_{request.subject.id}"
                         try:
@@ -515,7 +526,7 @@ class AnalystApplication:
                     self.events.emit(identifier, "loading", "Loading recorded player expected goals", 0.2)
 
                 player_xg_progress()
-                for season in sorted(endpoint_seasons):
+                for season in sorted(analysis_seasons):
                     try:
                         manifest = connector.player_expected_goals_manifest(
                             request.scope.competition, season, request.subject.id,
@@ -533,7 +544,7 @@ class AnalystApplication:
                     raise ValueError("Published season statistics require full-season comparisons without date filters")
                 def season_stats_progress() -> None:
                     self.events.emit(identifier, "loading", "Loading published soccer season statistics", 0.2)
-                for season in sorted(endpoint_seasons):
+                for season in sorted(analysis_seasons):
                     season_stats_progress()
                     try:
                         manifest = connector.season_statistics_manifest(request.scope.competition, season,
@@ -573,7 +584,11 @@ class AnalystApplication:
             }, data_access=scoped_data)
             from sports_analyst.analysis.research.presentation import add_research_charts
 
-            add_research_charts(result)
+            add_research_charts(result, request=request, data_access=scoped_data)
+            if request.sport == "soccer":
+                from sports_analyst.datasets.soccer.understat import attach_tablets
+
+                attach_tablets(result.play_evidence, scoped_data)
             queried_ids = {key for item in result.aggregate_evidence for key in item.dataset_manifest_ids}
             if request.sport == "cfb":
                 for index, evidence in enumerate(result.play_evidence):
@@ -825,7 +840,7 @@ class AnalystApplication:
         work = SimpleNamespace(aggregate_evidence=list(root.aggregate_evidence), executions=[],
                                caveats=[], charts=list(root.charts))
         complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped)
-        add_research_charts(work)
+        add_research_charts(work, request=request, data_access=scoped)
         source_manifests = {m.manifest_id: m for m in root.dataset_manifests}
         used = {key for e in work.aggregate_evidence for key in e.dataset_manifest_ids}
         source_manifests.update({key: m for key, m in scoped.manifests.items() if key in used})
@@ -925,7 +940,30 @@ class AnalystApplication:
         matches = [item for item in [*bundle.aggregate_evidence, *bundle.play_evidence] if item.evidence_id == evidence_id]
         if not matches:
             raise KeyError(f"evidence not found: {evidence_id}")
-        return matches[0]
+        return self._soccer_recap_context(bundle, matches[0])
+
+    def _soccer_recap_context(self, bundle, evidence):
+        if evidence not in bundle.play_evidence or evidence.sport != "soccer" or not evidence.visualization:
+            return evidence
+        from sports_analyst.datasets.soccer.recap import cached_timeline
+
+        timeline = cached_timeline(self.connectors["soccer"], bundle.run.scope.competition,
+            evidence.season, evidence.game_id, evidence.visualization.soccer_timeline)
+        from sports_analyst.datasets.soccer.whoscored import cached_recap
+
+        visual = evidence.visualization.model_copy(update={"soccer_timeline": timeline})
+        try:
+            visual = cached_recap(self.connectors["soccer"], bundle.run.scope.competition, evidence.season, evidence.game_id, visual)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            logger.warning("soccer_recap_enrichment_unavailable game_id=%s error_type=%s", evidence.game_id, type(error).__name__)
+        from sports_analyst.datasets.soccer.shot_recap import hydrate_shots, match_shots
+
+        try:
+            visual = hydrate_shots(self.store, evidence, bundle.run.scope.competition, visual)
+            visual = match_shots(visual, evidence.game_id)
+        except (OSError, ValueError, TypeError, KeyError, pl.exceptions.PolarsError) as error:
+            logger.warning("soccer_shot_context_unavailable game_id=%s error_type=%s", evidence.game_id, type(error).__name__)
+        return evidence.model_copy(update={"visualization": visual})
 
     def evidence_many(self, investigation_id: str, evidence_ids: list[str]) -> list[Any]:
         bundle = self.store.get_investigation(investigation_id)
@@ -933,7 +971,7 @@ class AnalystApplication:
         missing = [identifier for identifier in evidence_ids if identifier not in lookup]
         if missing:
             raise KeyError(f"evidence not found: {missing}")
-        return [lookup[identifier] for identifier in evidence_ids]
+        return [self._soccer_recap_context(bundle, lookup[identifier]) for identifier in evidence_ids]
 
     def query_sql(self, sql: str, sport: str = "nfl", partition_key: str | None = None) -> list[dict[str, Any]]:
         if sport == "cfb" and not partition_key:

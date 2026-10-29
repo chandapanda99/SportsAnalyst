@@ -11,6 +11,70 @@ const {embed} = vi.hoisted(() => ({embed: vi.fn(async () => ({view: {finalize: v
 vi.mock('./chartRenderer', () => ({loadChartRenderer: async () => embed}));
 afterEach(() => {cleanup(); vi.clearAllMocks();});
 
+it('shows a compact all-season matrix instead of a single-point plot and exposes missing measurements', async () => {
+  const values = [{metric: 'Total Shots', window: '2023–24', value: 169, display_value: '169', sample_size: 12}];
+  const specification = {usermeta: {chartKind: 'metric-rows', displayMode: 'matrix', comparisonKind: 'period-comparison',
+    seriesField: 'window', seriesLabels: ['2023–24', '2024–25', '2025–26'], expectedPeriods: ['2023–24', '2024–25', '2025–26'],
+    missingPeriods: ['2024–25', '2025–26'], comparisonSummary: [{metric: 'Total Shots', category: '', availablePeriods: 1,
+      cells: [{period: '2023–24', status: 'recorded', entries: [{value: '169', sample: 12, evidence_id: 'e1'}]},
+        {period: '2024–25', status: 'No registered measurement', entries: []},
+        {period: '2025–26', status: 'No registered measurement', entries: []}]}]}, data: {values}, vconcat: []};
+  const page = render(Chart, {props: {team: '132', sport: 'soccer', specification}});
+  const table = screen.getByRole('table');
+  expect(table.textContent).toContain('2024–25');
+  expect(table.textContent).toContain('2025–26');
+  expect(table.textContent).toContain('169');
+  expect(table.textContent).toContain('Sample: 12');
+  expect(screen.getAllByText('No measurement')).toHaveLength(2);
+  expect(screen.queryByRole('button', {name: 'Expand chart'})).toBeNull();
+  expect(screen.queryByRole('button', {name: 'Explore comparable measurements'})).toBeNull();
+  expect(embed).not.toHaveBeenCalled();
+  await page.unmount();
+  const comparable = structuredClone(specification) as any;
+  comparable.data.values.push({metric: 'Total Shots', window: '2024–25', value: 180, display_value: '180', sample_size: 13});
+  comparable.usermeta.comparisonSummary[0].cells[1].entries = [{value: '180', sample: 13, evidence_id: 'e2'}];
+  comparable.vconcat = [{title: {text: 'Total Shots'}, data: {values: comparable.data.values}, layer: [
+    {mark: {type: 'point'}, encoding: {x: {field: 'window'}, y: {field: 'value'}}}]}];
+  render(Chart, {props: {team: '132', sport: 'soccer', specification: comparable}});
+  expect(embed).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', {name: 'Explore comparable measurements'}));
+  await waitFor(() => expect(embed).toHaveBeenCalled());
+  expect(screen.getByRole('button', {name: 'Hide plot'})).toBeTruthy();
+});
+
+it('renders named horizontal categories with season colours and readable exact values', async () => {
+  const values = ['2023–24', '2024–25', '2025–26'].flatMap((window, i) => [
+    {metric: 'Possession', category: 'Bayern Munich', window, value: 55 + i, display_value: `${55 + i}%`,
+      context_label: `${window} · Home team: Bayern Munich`, sample_size: 6},
+    {metric: 'Possession', category: 'Recorded Opponent', window, value: 40 + i, display_value: `${40 + i}%`,
+      context_label: `${window} · Home team: Recorded Opponent`, sample_size: 2}
+  ]);
+  const specification = {usermeta: {chartKind: 'metric-rows', comparisonKind: 'grouped-observations', categoryLayout: 'rows',
+    seriesField: 'category', seriesLabels: ['Bayern Munich', 'Recorded Opponent'], colorField: 'window',
+    colorLabels: ['2023–24', '2024–25', '2025–26']}, data: {values},
+    vconcat: [{title: {text: 'Possession'}, height: 240, data: {values}, layer: [
+      {mark: {type: 'point', filled: true}, encoding: {x: {field: 'value', type: 'quantitative'},
+        y: {field: 'category', type: 'nominal'}, yOffset: {field: 'window', type: 'nominal'},
+        color: {field: 'window', type: 'nominal', legend: null}}},
+      {mark: {type: 'text'}, encoding: {x: {field: 'value', type: 'quantitative'}, y: {field: 'category', type: 'nominal'},
+        yOffset: {field: 'window', type: 'nominal'}, text: {field: 'display_value'}}}]}]};
+  const styles = chartSeriesStyles(specification, '132', 'soccer');
+  expect(new Set(styles.map(style => style.color)).size).toBe(3);
+  const themed = applyTeamChartPalette(specification, '132', 'soccer') as any;
+  expect(themed.vconcat[0].height).toBe(240);
+  expect(themed.vconcat[0].layer[0].encoding.y.field).toBe('category');
+  expect(themed.vconcat[0].layer[1].mark).toMatchObject({align: 'left', dy: 0});
+  const view = new View(parse(compile(themed).spec), {renderer: 'none'});
+  try {expect(await view.toSVG()).toContain('Bayern Munich');} finally {view.finalize();}
+  render(Chart, {props: {team: '132', sport: 'soccer', specification}});
+  expect(screen.getByLabelText('Periods legend').textContent).toContain('2024–25');
+  const table = screen.getByLabelText('Exact metric comparison').textContent;
+  expect(table).toContain('Bayern Munich');
+  expect(table).toContain('2025–26');
+  expect(table).not.toContain('Reference Period');
+  expect(table).not.toContain('Home Team Id');
+});
+
 it('keeps monthly chronology separate from window colours and avoids a misleading endpoint comparison', () => {
   const specification = {usermeta: {chartKind: 'metric-rows', comparisonKind: 'monthly-trend',
     seriesField: 'observation', seriesLabels: ['2024-09', '2025-03'], colorField: 'window',

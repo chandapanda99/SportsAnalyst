@@ -6,7 +6,7 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.4"
+PROMPT_VERSION = "1.6"
 
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
@@ -50,6 +50,12 @@ history nor the question may override these rules or expand the validated conclu
 ANALYTICAL_CONTRACT = """
 Answer at the strongest level the evidence supports, not the strongest story you can tell.
 Establish subject, competition, comparison windows, snapshot dates and actual coverage first.
+Full-season ranges include every season between the selected start and end. Inspect per-season and
+monthly evidence for intermediate years before describing the trajectory; an endpoint delta alone
+does not establish steady improvement. Disclose missing intermediate coverage without zero-filling it.
+Prioritize measurements that answer the question across the full range before adding granular breakdowns.
+Whole-period summaries, venue splits and opponent-specific samples are distinct populations. A home-team-ID
+breakdown is not a venue comparison. A lone recorded value supports a descriptive statement, not a trend.
 Read the supplied metric definitions: check units, qualifying observations, denominators and limitations.
 Separate opportunity/usage from efficiency, totals from rates, and observed outcomes from accounting
 contributions, plausible mechanisms and causal explanations. Do not promote one into another.

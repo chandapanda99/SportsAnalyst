@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION = "research-6"
+VERSION = "research-7"
 
 
 class StrictPlan(BaseModel):
@@ -132,6 +132,8 @@ def contract(manifest):
     player = first(("athlete_id", "player_id", "gsis_id", "player_gsis_id", "pfr_player_id"))
     if sport == "soccer" and dataset == "match_players":
         player = first(("provider_player_id",))
+    if sport == "soccer" and dataset.startswith("understat_"):
+        player = first(("provider_player_id",))
     if namespace == "nba_stats":
         player = first(("player_id", "person_id", "nba_player_id"))
     grain, keys, restrictions = "unverified", (), []
@@ -140,13 +142,14 @@ def contract(manifest):
     elif dataset in {"play_by_play", "stats_play_by_play", "recorded_plays", "enriched_plays", "ftn_charting", "participation"}:
         play = first(("play_id", "nflverse_play_id", "id"))
         grain, keys = "play", (game, play) if game and play else ()
-    elif dataset in {"team_stats", "team_boxscores", "stats_team_boxscores", "expected_goals", "match_analytics", "asa_analytics"}:
+    elif dataset in {"team_stats", "team_boxscores", "stats_team_boxscores", "expected_goals", "match_analytics", "asa_analytics",
+                     "understat_team_matches"}:
         grain, keys = "team_game", (game, team) if game and team else ()
         if dataset == "match_analytics":
             restrictions.append("Corroborated ESPN fixture/team keys; FotMob player IDs are not ESPN identities. "
                                 "Provider model version is undisclosed; do not mix modeled sources.")
     elif dataset in {"player_boxscores", "stats_player_boxscores", "stats_player_game_logs", "player_game_logs",
-                     "player_expected_goals", "match_players"} or (
+                     "player_expected_goals", "match_players", "understat_player_matches"} or (
             sport == "cfb" and dataset == "player_stats"):
         grain, keys = "player_game", tuple(key for key in (game, team, player) if key)
         if sport == "nba":
@@ -164,7 +167,7 @@ def contract(manifest):
         restrictions.append("Exclude season-total/week-zero rows before weekly measurements")
     elif dataset == "snap_counts":
         grain, keys = "player_game", tuple(key for key in (game, team, player) if key)
-    elif dataset in {"shots", "stats_shots"}:
+    elif dataset in {"shots", "stats_shots", "understat_shots"}:
         grain, keys = "shot", tuple(key for key in (game, first(("play_id", "id", "action_number"))) if key)
     elif dataset in {"key_events", "scoring_events"}:
         grain, keys = "recorded_event", tuple(key for key in (game, first(("id",))) if key)
@@ -182,6 +185,10 @@ def contract(manifest):
         grain = "interval_candidate"
         restrictions.append("Requires verified game, ordering, start/end bounds and provider crosswalk")
     player_namespace = ("pfr" if player == "pfr_player_id" else "gsis" if sport == "nfl" else namespace) if player else None
+    if sport == "soccer" and dataset.startswith("understat_"):
+        player_namespace = "understat" if player else None
+        restrictions.append("Corroborated ESPN game/team keys; native Understat player identities require a verified crosswalk. "
+                            "Understat xG model version is undisclosed. No cross-provider xG substitution or inferred xGOT.")
     if sport == "soccer" and dataset == "match_players":
         player_namespace = "fotmob"
         restrictions.append("Native FotMob player IDs; ESPN athlete comparisons require a verified crosswalk. "

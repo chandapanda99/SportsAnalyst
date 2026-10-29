@@ -58,6 +58,7 @@ class SyncRequest(BaseModel):
     team_ids: list[str] | None = Field(default=None, min_length=1, max_length=60)
     subdivision: str | None = None
     conference_id: str | None = None
+    division_id: str | None = None
 
 
 class FollowUpRequest(BaseModel):
@@ -183,9 +184,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         return sources
 
     @api.get("/api/datasets", response_model=list[DatasetManifest])
-    def datasets(sport: str | None = None, provider_id: str = "primary", processing_version: str = "1") -> list[DatasetManifest]:
+    def datasets(sport: str | None = None, provider_id: str = "primary", processing_version: str = "1",
+                 include_providers: bool = False) -> list[DatasetManifest]:
         refresh_catalog()
-        return service.store.manifests(sport=sport, provider_id=provider_id, processing_version=processing_version)
+        return service.store.manifests(sport=sport, provider_id=None if include_providers else provider_id,
+                                       processing_version=None if include_providers else processing_version)
 
     @api.get("/api/sports", response_model=list[SportOption])
     def sports() -> list[SportOption]:
@@ -220,8 +223,28 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             logger.exception("cfb_player_history_unavailable athlete_id=%s", athlete_id)
             raise HTTPException(503, "Player season/transfer history could not be verified. Retry before investigating.") from error
 
-    def resolve_cfb_sync(sport, request):
+    @api.get("/api/sports/{sport}/download-catalog")
+    def download_scope_catalog(sport: str, season: int = Query(..., ge=1920, le=2100), competition: str | None = None):
+        from sports_analyst.datasets.download_scope import download_catalog
+
+        try:
+            return download_catalog(sport, season, competition)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        except Exception as error:
+            raise HTTPException(503, "Download groups could not load. Retry or use a team or full-league download.") from error
+
+    def validate_sync_scope(sport, request):
         if sport != "cfb":
+            from sports_analyst.datasets.download_scope import resolve_download_teams
+
+            try:
+                resolve_download_teams(sport, request.seasons, request.competition, request.team_ids,
+                                       request.conference_id, request.division_id)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
+            except Exception as error:
+                raise HTTPException(503, "Season-specific download groups could not be verified. Retry before downloading.") from error
             return
         connector = service.connectors["cfb"]
         if not request.team_ids and request.conference_id:
@@ -268,7 +291,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
 
     @api.post("/api/datasets/{sport}/sync", status_code=202)
     def sync_datasets(sport: str, request: SyncRequest, background_tasks: BackgroundTasks) -> dict[str, str | int]:
-        resolve_cfb_sync(sport, request)
+        validate_sync_scope(sport, request)
         try:
             service._sport(sport)
         except ValueError as error:
@@ -277,7 +300,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             raise HTTPException(status_code=422, detail="Select a supported soccer competition")
         job_id = stable_id(
             "sync",
-            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons),
+             "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
 
@@ -288,7 +312,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         def execute() -> None:
             try:
                 service.sync(request.seasons, job_id, request.datasets, sport, request.competition,
-                             **({"team_ids": request.team_ids} if sport == "cfb" else {}))
+                             **{name: getattr(request, name) for name in ("team_ids", "conference_id", "division_id")
+                                if getattr(request, name) and (sport != "cfb" or name == "team_ids")})
             except Exception as error:
                 logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
                 logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
@@ -300,7 +325,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     @api.post("/api/datasets/{sport}/sync-stream")
     async def sync_datasets_stream(sport: str, request: SyncRequest) -> StreamingResponse:
         """Keep cloud dataset work and progress on one request and one application instance."""
-        await asyncio.to_thread(resolve_cfb_sync, sport, request)
+        await asyncio.to_thread(validate_sync_scope, sport, request)
         try:
             service._sport(sport)
         except ValueError as error:
@@ -309,7 +334,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             raise HTTPException(status_code=422, detail="Select a supported soccer competition")
         job_id = stable_id(
             "sync",
-            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons), "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
+            {"sport": sport, "competition": request.competition, "seasons": sorted(request.seasons),
+             "datasets": request.datasets, "time": datetime.now(UTC).isoformat()},
         )
         timeout_seconds = service.dataset_sync_timeout_seconds(request.seasons, request.datasets, sport)
         if service.jobs is not None:
@@ -321,7 +347,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             )
         return StreamingResponse(
             _dataset_sync_stream(service, job_id, sport, request.seasons, request.datasets, timeout_seconds, request.competition,
-                                 request.team_ids),
+                                 request.team_ids, request.conference_id, request.division_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -398,7 +424,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         try:
             from sports_analyst.analysis.research.presentation import refresh_chart_presentation
 
-            return refresh_chart_presentation(service.store.get_investigation(investigation_id))
+            return refresh_chart_presentation(service.store.get_investigation(investigation_id), store=service.store)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -407,7 +433,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         try:
             from sports_analyst.analysis.research.presentation import refresh_chart_presentation
 
-            return [refresh_chart_presentation(bundle) for bundle in service.store.investigation_thread(investigation_id)]
+            return [refresh_chart_presentation(bundle, store=service.store) for bundle in service.store.investigation_thread(investigation_id)]
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -668,12 +694,16 @@ async def _dataset_sync_stream(
         timeout_seconds: float,
         competition: str | None = None,
         team_ids: list[str] | None = None,
+        conference_id: str | None = None,
+        division_id: str | None = None,
 ):
     """Run a blocking dataset sync while its SSE response keeps the hosting instance active."""
 
     def execute() -> None:
         try:
-            service.sync(seasons, job_id, datasets, sport, competition, **({"team_ids": team_ids} if sport == "cfb" else {}))
+            scope = {"team_ids": team_ids, "conference_id": conference_id, "division_id": division_id}
+            service.sync(seasons, job_id, datasets, sport, competition,
+                         **{name: value for name, value in scope.items() if value and (sport != "cfb" or name == "team_ids")})
         except Exception as error:
             logger.error("dataset_sync_failed job_id=%s error_type=%s", job_id, type(error).__name__)
             logger.debug("dataset_sync_failed_details job_id=%s", job_id, exc_info=True)
