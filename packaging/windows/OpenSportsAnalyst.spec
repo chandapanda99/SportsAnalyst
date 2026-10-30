@@ -44,7 +44,7 @@ a = Analysis(
         "sportsdataverse.dl_utils",
         "sportsdataverse.errors",
     ],
-    hookspath=[],
+    hookspath=[str(ROOT / "packaging" / "windows" / "hooks")],
     hooksconfig={},
     runtime_hooks=[],
     excludes=["tkinter", "PyQt5", "PyQt6", "PySide2", "PySide6"],

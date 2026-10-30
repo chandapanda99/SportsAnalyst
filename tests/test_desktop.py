@@ -39,18 +39,25 @@ def test_windows_packaging_collects_runtime_dlls_and_preserves_loader_paths(tmp_
     collector = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(collector)
     root = tmp_path / "site-packages"
-    dlls = ["xgboost/lib/xgboost.dll", "numpy.libs/math.dll", "webview/lib/bridge.dll"]
+    tls_dll = "tls_requests/bin/tls-client-xgo-1.13.1-windows-amd64.dll"
+    dlls = ["xgboost/lib/xgboost.dll", "numpy.libs/math.dll", "webview/lib/bridge.dll", tls_dll]
     assets = ["xgboost/VERSION", "xgboost/data/example.json"]
     for relative in [*dlls, *assets]:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"native fixture")
+    tls_source = root / "tls_requests/models/libraries.py"
+    tls_source.parent.mkdir(parents=True, exist_ok=True)
+    tls_source.write_text('LATEST_VERSION_TAG_NAME = "v1.13.1"\n', encoding="utf-8")
     distributions = {
         "open-sports-analyst": types.SimpleNamespace(
-            requires=["xgboost>=2", "pywebview; extra == 'desktop'", "pytest; extra == 'test'"], files=[]),
+            requires=["xgboost>=2", "pywebview; extra == 'desktop'", "wrapper-tls-requests", "pytest; extra == 'test'"], files=[]),
         "xgboost": types.SimpleNamespace(requires=["numpy>=2"], files=[Path(dlls[0]), *map(Path, assets)]),
         "numpy": types.SimpleNamespace(requires=[], files=[Path(dlls[1])]),
         "pywebview": types.SimpleNamespace(requires=[], files=[Path(dlls[2])]),
+        # The upstream runtime DLL is downloaded after installation and absent
+        # from the wheel's file manifest. It must still reach the installer.
+        "wrapper-tls-requests": types.SimpleNamespace(requires=[], files=[Path("tls_requests/models/libraries.py")]),
     }
     for distribution in distributions.values():
         distribution.locate_file = lambda relative: root / relative
@@ -61,9 +68,14 @@ def test_windows_packaging_collects_runtime_dlls_and_preserves_loader_paths(tmp_
     assert (str((root / dlls[0]).resolve()), "xgboost/lib") in binaries
     assert (str((root / dlls[1]).resolve()), "numpy.libs") in binaries
     assert (str((root / dlls[2]).resolve()), "webview/lib") in binaries
+    assert (str((root / tls_dll).resolve()), "tls_requests/bin") in binaries
     resources = collector.collect_provider_resources(runtime)
     assert (str((root / assets[0]).resolve()), "xgboost") in resources
     assert (str((root / assets[1]).resolve()), "xgboost/data") in resources
+    (root / tls_dll).unlink()
+    with pytest.raises(FileNotFoundError, match="TLS client 1.13.1 Windows x64 DLL is missing"):
+        collector.collect_runtime_dlls(runtime)
+    (root / tls_dll).write_bytes(b"native fixture")
     # A stale/incomplete installation must fail packaging rather than shipping.
     distributions["xgboost"].files = [Path("xgboost/lib/missing.dll")]
     with pytest.raises(FileNotFoundError, match="Required runtime DLL is missing"):
@@ -109,6 +121,52 @@ assert all(name not in sys.modules for name in ('nflreadpy', 'sportsdataverse', 
 '''
     result = subprocess.run([sys.executable, "-c", probe], env=environment, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "win32" or os.getenv("SPORTS_ANALYST_FROZEN_TESTS") != "1",
+                    reason="Opt-in Windows PyInstaller build; requires prepared TLS runtime")
+def test_frozen_tls_provider_imports_and_loads_its_bundled_dll_offline(tmp_path):
+    """Exercise the real package, hook, and downloaded DLL in a frozen process."""
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[1]
+    source = root / "packaging/windows/native_dependencies.py"
+    spec = importlib.util.spec_from_file_location("frozen_tls_dependencies", source)
+    collector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(collector)
+    distribution = collector.metadata.distribution("wrapper-tls-requests")
+    libraries = collector.tls_runtime_libraries(distribution)
+    probe = tmp_path / "tls_probe.py"
+    probe.write_text('''import ctypes
+import urllib.request
+from pathlib import Path
+
+def offline(*args, **kwargs):
+    raise AssertionError("Frozen provider check must not access the network")
+
+urllib.request.urlopen = offline
+from tls_requests.models import libraries
+assert Path(libraries.__file__).is_file()
+version = libraries.LATEST_VERSION_TAG_NAME.removeprefix("v")
+paths = [path for path in libraries.TLSLibrary.find_all()
+         if libraries.PATTERN_RE.search(path) and f"-{version}-" in Path(path).name]
+assert paths, "Bundled TLS DLL is missing"
+native = ctypes.CDLL(paths[0])
+assert callable(native.request)
+print("FROZEN_TLS_OK")
+''', encoding="utf-8")
+    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--name", "tls_probe",
+               "--additional-hooks-dir", str(root / "packaging/windows/hooks"),
+               "--distpath", str(tmp_path / "dist"), "--workpath", str(tmp_path / "work"),
+               "--specpath", str(tmp_path), "--copy-metadata", "wrapper-tls-requests"]
+    for library in libraries:
+        command.extend(["--add-binary", f"{library}{os.pathsep}tls_requests/bin"])
+    result = subprocess.run([*command, str(probe)], cwd=tmp_path, capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stderr[-10000:]
+    result = subprocess.run([str(tmp_path / "dist/tls_probe/tls_probe.exe")], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "FROZEN_TLS_OK" in result.stdout
 
 
 def test_desktop_configuration_persists_settings_and_loads_secrets_securely(tmp_path: Path, monkeypatch) -> None:

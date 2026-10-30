@@ -136,6 +136,14 @@ try
     }
     Write-Host "Desktop Dependencies: SYNCHRONIZED"
 
+    # Some provider transports download their DLL separately from the wheel.
+    # Stage it before freezing so the installed app needs no first-run download.
+    uv run --no-sync python packaging/windows/native_dependencies.py
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Provider runtime preparation failed"
+    }
+
     uv run --no-sync python packaging/windows/make_icon.py
     if ($LASTEXITCODE -ne 0)
     {

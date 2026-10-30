@@ -30,6 +30,9 @@ without displaying raw provider exceptions. This context is also retained by clo
 
 The build collects DLLs from the declared desktop runtime dependency tree (including `xgboost/lib/xgboost.dll`) and preserves their package-relative paths.
 It also includes XGBoost, SportsDataverse, and nflreadpy package resources, including XGBoost's required `VERSION` file.
+For SoccerData's TLS transport, the build prepares the package-required Windows x64 DLL before freezing and collects it even though it is absent
+from the wheel's file manifest. A targeted PyInstaller hook preserves `tls_requests/models/libraries.py`, whose physical path the provider checks
+during import. The smoke test loads the bundled TLS DLL offline; it does not download missing binaries on the installed user's machine.
 The frozen smoke test loads NFL and SportsDataverse providers and exercises core native data libraries offline before producing an installer.
 Missing required packages or DLLs fail the build. Native extension modules and system dependencies are additionally handled by PyInstaller's analysis/hooks;
 this is not a guarantee against Windows policy blocks or every future dependency issue, so test releases on a clean Windows machine as well.
