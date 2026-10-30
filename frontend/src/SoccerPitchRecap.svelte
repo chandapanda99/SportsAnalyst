@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {onDestroy} from 'svelte';
+  import {onDestroy, tick} from 'svelte';
   import {surface} from '@sportsdataverse/sporty';
   import {toSVG} from '@sportsdataverse/sporty/svg';
   import {soccerPitch} from './surfaceGeometry';
@@ -30,6 +30,10 @@
   let timer: ReturnType<typeof setInterval> | undefined;
   let dataKey: unknown;
   let appliedFocus = '';
+  let fullPitch = false;
+  let detailKey = '';
+  let closeDetail: HTMLButtonElement;
+  let shotTrigger: SVGGElement;
 
   $: resetData(matchKey, actions, analytics, timeline);
   $: sources = recapSources(actions, analytics, timeline);
@@ -44,6 +48,14 @@
   $: current = filtered[selected] ?? filtered[0];
   $: recap = staticRecap(current);
   $: shotEndpoint = current?.shot?.endpoint;
+  $: shotEvent = recap.category === 'shot' || recap.category === 'goal';
+  // Crop only when every recorded position fits. Long-range shots retain context.
+  $: positions = [current?.start, current?.end, shotEndpoint].filter((p): p is {x:number; y:number} => !!p);
+  $: third = shotEvent && positions.length ? positions.every(p => p.x >= 70) ? 'right'
+    : positions.every(p => p.x <= 35) ? 'left' : '' : recap.zone ? recap.zone.x >= 70 ? 'right' : 'left' : '';
+  $: focused = shotEvent && !fullPitch && !!third;
+  $: pitchViewBox = focused ? third === 'right' ? '-36 -56 72 40' : '-36 16 72 40' : viewBox;
+  $: if (current?.key !== detailKey) detailKey = '';
   $: fotmobShots = sources.get('fotmob') ?? [];
   $: visibleCount = source === 'statsbomb' ? Math.max(total, events.length) : events.length;
   $: if (selected >= filtered.length) {selected = 0; pause();}
@@ -67,7 +79,7 @@
     const next = [key, nextActions, nextAnalytics, nextTimeline];
     if (!next.some((v, i) => !Array.isArray(dataKey) || dataKey[i] !== v)) return;
     dataKey = next;
-    pause(); selected = 0; provider = ''; team = 'all'; kind = 'all'; possession = 'all'; appliedFocus = '';
+    pause(); selected = 0; provider = ''; team = 'all'; kind = 'all'; possession = 'all'; appliedFocus = ''; fullPitch = false; detailKey = '';
   }
   function restartFilters() {pause(); selected = 0;}
   function changeSource() {team = 'all'; kind = 'all'; possession = 'all'; restartFilters();}
@@ -83,6 +95,15 @@
     }, speed);
   }
   function select(index: number) {pause(); selected = index;}
+  async function openShot() {
+    if (!current?.shot) return;
+    pause(); detailKey = current.key;
+    await tick(); closeDetail?.focus();
+  }
+  async function returnToPitch() {
+    detailKey = '';
+    await tick(); shotTrigger?.focus();
+  }
   function arrow(event: RecapEvent) {
     if (!event.start || !event.end) return '';
     const angle = Math.atan2(event.end.y - event.start.y, event.end.x - event.start.x);
@@ -118,7 +139,20 @@
   <div class="recap-grid">
     <div class="pitch-wrap">
       {#if current?.start || recap.zone}
-      <svg {viewBox} class:playing role="img" aria-label="Recorded action start and end locations">
+      <div class="view-toolbar">
+        <span>{detailKey ? 'Shot detail' : focused ? 'Final third · vertical view' : 'Full pitch'}</span>
+        {#if shotEvent && third && !detailKey}<button type="button" on:click={() => fullPitch = !fullPitch}>{fullPitch ? 'Focus on shot' : 'Show full pitch'}</button>{/if}
+      </div>
+      {#if detailKey && current?.shot}
+        <section class="shot-detail" aria-label="Selected shot detail">
+          <button type="button" bind:this={closeDetail} on:click={returnToPitch}>← Back to pitch</button>
+          <ShotGoalView shot={current.shot}/>
+          <p class="coverage">Animated reveal of recorded placement; no ball flight is reconstructed.</p>
+        </section>
+      {:else}
+      {#key `${current?.key}:${focused}`}
+      <svg viewBox={pitchViewBox} class:playing class:focused class="event-pitch" role="group" aria-label="Recorded action start and end locations">
+        <g transform={focused ? 'rotate(-90)' : undefined}>
         {@html geometry}
         <g transform="translate(-52.5,-34)">
           {#if current?.start && shotEndpoint}
@@ -137,9 +171,18 @@
             <circle class="halo" cx={current.start.x} cy={current.start.y} r="3.5"/>
             <circle class="event-point" class:goal={current.outcome === 'Goal'} cx={current.start.x} cy={current.start.y}
               r={current.xg === null ? 1.4 : 1.4 + Math.sqrt(Math.max(0, Math.min(1, current.xg))) * 1.7}/>
+            {#if current.shot}
+              <g class="shot-trigger" role="button" tabindex="0" aria-label="Open shot detail" bind:this={shotTrigger}
+                on:click={openShot} on:keydown={event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); openShot();}}}>
+                <circle cx={current.start.x} cy={current.start.y} r="5" fill="transparent"/>
+              </g>
+            {/if}
           {/if}
         </g>
+        </g>
       </svg>
+      {/key}
+      {/if}
       {#if !current?.start && recap.zone}<p class="location-gap">From commentary: {recap.zone.label}. Shaded area is a broad zone, not an exact position.</p>{/if}
       {:else if current}
         <div class="static-event" class:discipline={recap.category === 'card'} aria-label="Event summary visual">
@@ -167,7 +210,7 @@
           <svg class="outcome-badge" viewBox="0 0 24 24"><ShotMarker x={12} y={12} size={22} outcome={current.shot.outcome}/></svg>
           <p class="location-gap">The {current.shot.outcome === 'blocked' ? 'block' : 'save'} location was not recorded.</p>
         {/if}
-        <ShotGoalView shot={current.shot}/>
+        {#if current.start && !detailKey}<p class="coverage">Select the shot marker to explore its recorded goal-mouth placement.</p>{/if}
       {:else if current?.start && !current.end}<p class="location-gap">Point-only event: no usable endpoint was recorded.</p>{/if}
       {#if !focusTimelineKey || source !== 'espn'}
       <div class="transport" aria-label="Recap playback controls">
@@ -232,6 +275,13 @@
   svg .arrow {fill:#91f2d5;stroke-width:.3;}
   svg .shot-path {stroke:#ffd188;stroke-width:.65;stroke-dasharray:2 1.5;}
   .outcome-badge {width:42px;background:transparent;}.shot-caption {font-size:.8rem;color:#bcd2cd;line-height:1.5;}
+  .view-toolbar {display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:42px;margin-bottom:8px;font-size:.8rem;color:#a7becd;}
+  .event-pitch,.shot-detail {animation:reveal-event .35s ease-out;}
+  .event-pitch.focused {max-height:440px;}
+  .shot-detail {min-height:240px;padding:16px;background:#0b211d;border-radius:8px;}
+  .shot-trigger {cursor:pointer;}.shot-trigger:focus-visible circle {stroke:white;stroke-width:.7;stroke-dasharray:1 1;}
+  @keyframes reveal-event {from {opacity:0;transform:translateY(8px);}to {opacity:1;transform:translateY(0);}}
+  @media(prefers-reduced-motion:reduce) {.event-pitch,.shot-detail {animation:none;}}
   svg .event-point {fill:#91f2d5;stroke:white;stroke-width:.5;}svg .goal {fill:#ffc680;}svg .halo {fill:none;stroke:#91f2d5;stroke-width:.5;opacity:.5;}
   svg.playing .halo {animation:recap-focus 1s ease-in-out infinite;}@keyframes recap-focus {50% {opacity:1;stroke-width:1;}}
   @media(prefers-reduced-motion:reduce) {svg.playing .halo {animation:none;}}
