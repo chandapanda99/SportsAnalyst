@@ -68,11 +68,15 @@ def _prepared_schedule(schedule: pl.DataFrame) -> pl.DataFrame:
 
 
 def available_segments(schedule: pl.DataFrame, season: int) -> list[dict[str, str]]:
-    return [option for option in NBA_SEGMENTS if segment_game_ids(schedule, season, option["value"])]
+    frame = _prepared_schedule(schedule)
+    return [option for option in NBA_SEGMENTS if _segment_game_ids(frame, season, option["value"])]
 
 
 def segment_game_ids(schedule: pl.DataFrame, season: int, segment: str) -> set[str]:
-    frame = _prepared_schedule(schedule)
+    return _segment_game_ids(_prepared_schedule(schedule), season, segment)
+
+
+def _segment_game_ids(frame: pl.DataFrame, season: int, segment: str) -> set[str]:
     if frame.is_empty():
         return set()
     segment = segment.lower()

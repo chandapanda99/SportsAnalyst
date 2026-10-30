@@ -5,13 +5,25 @@ type Sport = typeof leagues[number];
 const loaded = new Set<string>();
 const cache = new Map<string, {logo?: string; name?: string; colors?: readonly [string, string]}>();
 const leagueData = new Map<string, LeagueData>();
-let initialization: Promise<void> | undefined;
+const initialization = new Map<string, Promise<void>>();
 
 // Only the four supported league shards are loaded; no manifest download, fuzzy
 // name matching, or blocking image requests are needed to open the workspace.
-export function initializeBranding() {
-  return initialization ??= Promise.allSettled(leagues.map(async sport => {
-    leagueData.set(sport, await loadLeague(sport)); loaded.add(sport);
+export function initializeBranding(sport?: string) {
+  const selected = leagues.filter(league => !sport || league === sport);
+  return Promise.allSettled(selected.map(league => {
+    let pending = initialization.get(league);
+    if (!pending) {
+      pending = loadLeague(league).then(data => {
+        leagueData.set(league, data);
+        loaded.add(league);
+      }).catch(error => {
+        initialization.delete(league); // A failed optional shard can be retried.
+        throw error;
+      });
+      initialization.set(league, pending);
+    }
+    return pending;
   })).then(() => undefined);
 }
 

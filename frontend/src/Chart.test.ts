@@ -9,7 +9,29 @@ import {initializeBranding} from './sportsBranding';
 
 const {embed} = vi.hoisted(() => ({embed: vi.fn(async () => ({view: {finalize: vi.fn(), resize: () => ({runAsync: async () => {}})}}))}));
 vi.mock('./chartRenderer', () => ({loadChartRenderer: async () => embed}));
-afterEach(() => {cleanup(); vi.clearAllMocks();});
+afterEach(() => {cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals();});
+
+it('defers offscreen charts until needed and releases their renderer when closed', async () => {
+  let visible: (entries: Array<{isIntersecting: boolean}>) => void = () => {};
+  const disconnect = vi.fn();
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback: typeof visible) {visible = callback;}
+    observe() {}
+    disconnect = disconnect;
+  });
+  const page = render(Chart, {props: {team: 'CHI', specification: {
+    data: {values: [{season: 2024, value: .2}]}, mark: 'point',
+    encoding: {x: {field: 'season'}, y: {field: 'value'}}
+  }}});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(embed).not.toHaveBeenCalled();
+  visible([{isIntersecting: true}]);
+  await waitFor(() => expect(embed).toHaveBeenCalledTimes(1));
+  const {view} = await embed.mock.results[0].value;
+  await page.unmount();
+  expect(view.finalize).toHaveBeenCalledTimes(1);
+  expect(disconnect).toHaveBeenCalled();
+});
 
 it('shows a compact all-season matrix instead of a single-point plot and exposes missing measurements', async () => {
   const values = [{metric: 'Total Shots', window: '2023–24', value: 169, display_value: '169', sample_size: 12}];

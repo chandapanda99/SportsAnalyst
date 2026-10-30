@@ -17,8 +17,8 @@ from sports_analyst.config import Settings
 from sports_analyst.datasets.acquisition import bounded_results, timed_stage
 from sports_analyst.datasets.availability import completed_games, missing_source, retain_previous
 from sports_analyst.datasets.cfb_source import CORE, SITE, WEB, CFBSource, query_url
-from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError
+from sports_analyst.datasets.snapshots import SnapshotReader, sha256_file
 from sports_analyst.models import DatasetManifest, PlayerOption, stable_id
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ class SportsDataverseCFBConnector:
         self.settings = settings
         self.data_dir = settings.data_dir / "raw" / "cfb"
         self.source = CFBSource(self.data_dir, concurrency=settings.dataset_sync_concurrency)
+        self._reader = SnapshotReader(self.settings, self.data_dir)
 
     @staticmethod
     def validate_id(value):
@@ -974,15 +975,8 @@ class SportsDataverseCFBConnector:
                                       f"{school} · {season} · school/season {selection_index + 1}/{selections} saved", True)
         return manifests
 
-    @staticmethod
-    def load(manifest, columns=None, predicate=None):
-        lazy = pl.scan_parquet(manifest.local_path)
-        if predicate is not None:
-            lazy = lazy.filter(predicate)
-        if columns:
-            lazy = lazy.select([column for column in columns if column in manifest.columns])
-        return lazy.collect()
+    def load(self, manifest, columns=None, predicate=None):
+        return self._reader.load(manifest, columns, predicate)
 
-    @staticmethod
-    def clear_cache():
-        pass  # Persistent, scoped source cache is cleared through LocalStore.
+    def clear_cache(self):
+        self._reader.clear_cache()

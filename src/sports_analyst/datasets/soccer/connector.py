@@ -7,12 +7,10 @@ import importlib.metadata
 import json
 import logging
 import re
-from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import as_completed
 from datetime import date
 from pathlib import Path
-from threading import RLock
 from typing import Any
 
 import polars as pl
@@ -21,8 +19,14 @@ from sports_analyst.analysis.research.state import ContextPool as ThreadPoolExec
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.datasets.availability import completed_games, missing_source, unavailable_snapshot
 from sports_analyst.datasets.errors import FixtureDiscoveryError
-from sports_analyst.datasets.nfl import sha256_file
 from sports_analyst.datasets.optional import OptionalDependencyError, load_optional_module
+from sports_analyst.datasets.snapshots import SnapshotReader, sha256_file
+from sports_analyst.datasets.soccer.catalog import (
+    SOCCER_COMPETITIONS,
+    SOCCER_DATASETS,
+    SOCCER_DEFAULT_DATASETS,
+    soccer_season_label,
+)
 from sports_analyst.datasets.soccer.expected_goals import CORE_ROOT, ExpectedGoalsSource
 from sports_analyst.datasets.soccer.expected_goals import coverage as xg_coverage
 from sports_analyst.datasets.soccer.season_statistics import FIELDS, SeasonStatisticsSource
@@ -30,21 +34,6 @@ from sports_analyst.datasets.soccer.statistics import ALIASES, number
 from sports_analyst.models import DatasetManifest, stable_id
 
 logger = logging.getLogger(__name__)
-
-SOCCER_COMPETITIONS = {
-    "eng.1": ("Premier League", False),
-    "usa.1": ("MLS", True),
-    "esp.1": ("La Liga", False),
-    "ger.1": ("Bundesliga", False),
-    "ita.1": ("Serie A", False),
-    "fra.1": ("Ligue 1", False),
-    "usa.nwsl": ("NWSL", True),
-    "uefa.champions": ("UEFA Champions League", False),
-}
-SOCCER_DATASETS = ("play_by_play", "team_stats", "lineups", "key_events", "match_analytics", "asa_analytics", "open_events", "match_players",
-                   "understat_team_matches", "understat_player_matches", "understat_shots", "whoscored_events")
-SOCCER_DEFAULT_DATASETS = ["play_by_play", "team_stats", "lineups", "key_events"]
-
 
 def _stat_column(name: str) -> str:
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name.replace("-", "_")).lower()
@@ -65,10 +54,6 @@ def _snapshot_order(frame: pl.DataFrame, dataset: str) -> pl.DataFrame:
     return ordered.sort([*keys, *ties], nulls_last=True) if keys or ties else ordered
 
 
-def soccer_season_label(competition: str, season: int) -> str:
-    return str(season) if SOCCER_COMPETITIONS[competition][1] else f"{season - 1}–{str(season)[-2:]}"
-
-
 def _months(competition: str, season: int):
     first = date(season, 1, 1) if SOCCER_COMPETITIONS[competition][1] else date(season - 1, 7, 1)
     last = date(season, 12, 31) if SOCCER_COMPETITIONS[competition][1] else date(season, 6, 30)
@@ -87,9 +72,8 @@ class SportsDataverseSoccerConnector:
         self.settings.ensure_directories()
         self.data_dir = self.settings.data_dir / "raw" / "soccer"
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cache: OrderedDict[str, pl.DataFrame] = OrderedDict()
+        self._reader = SnapshotReader(self.settings, self.data_dir)
         self._fixture_coverage: dict[tuple[str, int], tuple[int, int]] = {}
-        self._lock = RLock()
         self.source_cache = None
         self.expected_goals = ExpectedGoalsSource(self.data_dir, self.settings.dataset_sync_concurrency)
         self.season_statistics = SeasonStatisticsSource(self.data_dir)
@@ -675,15 +659,10 @@ class SportsDataverseSoccerConnector:
         return manifest.model_copy(update={"source_url": f"{CORE_ROOT}/{competition}/seasons/{source_season}/types/",
             "coverage": {f"{field}_rows": frame[field].is_not_null().sum() for field in FIELDS}})
 
-    def load(self, manifest: DatasetManifest, columns=None) -> pl.DataFrame:
+    def load(self, manifest: DatasetManifest, columns=None, predicate: pl.Expr | None = None) -> pl.DataFrame:
         if manifest.sport != "soccer" or manifest.competition not in SOCCER_COMPETITIONS:
             raise ValueError("Expected a soccer manifest with a supported competition")
-        path = Path(manifest.local_path).resolve()
-        if self.data_dir.resolve() not in path.parents:
-            raise ValueError("Soccer dataset is outside the managed data directory")
-        selected = [column for column in (columns or manifest.columns) if column in manifest.columns]
-        return pl.read_parquet(path, columns=selected)
+        return self._reader.load(manifest, columns, predicate)
 
     def clear_cache(self) -> None:
-        with self._lock:
-            self._cache.clear()
+        self._reader.clear_cache()

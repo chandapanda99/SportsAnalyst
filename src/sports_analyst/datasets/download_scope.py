@@ -39,7 +39,7 @@ def canonical_team(sport, value):
 def _catalog(sport, season, competition, refresh_bucket):
     module = load_optional_module(f"sportsdataverse.{sport}", "Download scope discovery")
     if sport == "soccer":
-        from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+        from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 
         if competition not in SOCCER_COMPETITIONS:
             raise ValueError("Select a supported soccer competition")

@@ -10,11 +10,8 @@ import polars as pl
 
 from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.nba import NBA_DATASETS
-from sports_analyst.datasets.nfl import DATASET_MIN_SEASONS
-from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
-from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
-from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULTS
-from sports_analyst.plugins.soccer import METRICS as SOCCER_METRICS
+from sports_analyst.datasets.nfl_catalog import DATASET_MIN_SEASONS, LATEST_SYNCABLE_SEASON
+from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 
 logger = logging.getLogger(__name__)
 FRESH_SECONDS = 3600
@@ -65,6 +62,8 @@ def requirements(request, first_install):
         if request.analysis_domain in {"lineups", "impact"}:
             required.add("lineups")
         return required, set()
+    from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULTS
+    from sports_analyst.plugins.soccer import METRICS as SOCCER_METRICS
     required = {"play_by_play"}
     optional = {"key_events"}
     if player:

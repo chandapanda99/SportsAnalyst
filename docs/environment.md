@@ -148,7 +148,7 @@ All settings use the following environment variables and may be placed in `.env`
 |           `OLLAMA_MODEL`           |            `qwen3:8b`             | Ollama model                                                    |
 |          `SQL_ROW_LIMIT`           |              `10000`              | Maximum constrained-SQL result rows                             |
 |   `EVENT_STREAM_TIMEOUT_SECONDS`   |               `120`               | SSE inactivity timeout before frontend recovery                 |
-|         `DATASET_CACHE_MB`         |               `384`               | In-memory analytical dataset cache; `0` disables it             |
+|         `DATASET_CACHE_MB`         |               `384`               | Shared in-memory snapshot cache across initialized sports per runtime; `0` disables it |
 | `VERIFY_DATASET_CHECKSUMS_ON_LOAD` |              `false`              | Recalculate SHA-256 whenever a manifest is loaded               |
 |   `INVESTIGATION_HISTORY_LIMIT`    |               `50`                | Default compact history page size                               |
 |            `LOG_LEVEL`             |              `INFO`               | Backend logging level                                           |

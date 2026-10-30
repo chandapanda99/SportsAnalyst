@@ -7,24 +7,21 @@ from pathlib import Path
 from threading import Lock
 from time import perf_counter
 
+from sports_analyst.application.runtime import sport_registries
 from sports_analyst.config import Settings
 from sports_analyst.datasets.acquisition import timed_stage
 from sports_analyst.datasets.availability import completion_message
-from sports_analyst.datasets.cfb import SportsDataverseCFBConnector
-from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.errors import SyncFailure
-from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS, SportsDataverseNBAConnector
-from sports_analyst.datasets.nfl import NFLVerseConnector
+from sports_analyst.datasets.nba import NBA_DEFAULT_DATASETS
+from sports_analyst.datasets.nfl_catalog import LATEST_SYNCABLE_SEASON
 from sports_analyst.datasets.optional import optional_dependencies
-from sports_analyst.datasets.soccer.connector import (
+from sports_analyst.datasets.soccer.catalog import (
     SOCCER_COMPETITIONS,
     SOCCER_DEFAULT_DATASETS,
-    SportsDataverseSoccerConnector,
     soccer_season_label,
 )
 from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.models import DatasetManifest, stable_id
-from sports_analyst.plugins.nfl_shared import LATEST_SYNCABLE_SEASON
 from sports_analyst.storage.local import LocalStore
 
 logger = logging.getLogger("sports_analyst.service")
@@ -44,12 +41,7 @@ class DatasetSyncApplication:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.store = LocalStore(settings, restore_durable_index=False)
-        self.connectors = {
-            "nfl": NFLVerseConnector(settings),
-            "nba": SportsDataverseNBAConnector(settings),
-            "soccer": SportsDataverseSoccerConnector(settings),
-            "cfb": SportsDataverseCFBConnector(settings),
-        }
+        self.connectors, _ = sport_registries(settings, self.store.persistence)
         polling = settings.job_progress_transport == "poll"
         self.jobs = ObjectJobStore(
             self.store.persistence,
@@ -57,10 +49,7 @@ class DatasetSyncApplication:
             status_min_interval=0.5 if polling else 0,
         )
         self.events = self.jobs
-        self.connectors["cfb"].source.persistence = self.store.persistence
-        self.connectors["soccer"].source_cache = CFBSource(
-            self.settings.data_dir / "raw" / "soccer", self.store.persistence,
-            concurrency=settings.dataset_sync_concurrency, namespace="soccer")
+
 
     def sync(
             self, seasons: list[int], job_id: str | None = None, datasets: list[str] | None = None,

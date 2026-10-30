@@ -21,6 +21,7 @@ from sports_analyst.datasets.availability import SourceUnavailable
 from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.datasets.soccer.enrichment import name_key
+from sports_analyst.datasets.soccer.club_identity import club_key
 from sports_analyst.datasets.soccer.statistics import number
 from sports_analyst.models import DatasetManifest, stable_id
 
@@ -31,15 +32,8 @@ DATASETS = ("understat_team_matches", "understat_player_matches", "understat_sho
 LEAGUES = {"eng.1": ("ENG-Premier League", "EPL"), "esp.1": ("ESP-La Liga", "La_liga"),
            "ger.1": ("GER-Bundesliga", "Bundesliga"), "ita.1": ("ITA-Serie A", "Serie_A"),
            "fra.1": ("FRA-Ligue 1", "Ligue_1")}
-# Reviewed aliases only. Similar spellings are not a match decision.
-ALIASES = {"manchestercity": "mancity", "manchesterunited": "manutd", "manchesterutd": "manutd",
-           "tottenhamhotspur": "tottenham", "wolverhamptonwanderers": "wolves", "wolverhampton": "wolves",
-           "brightonhovealbion": "brighton", "brightonandhovealbion": "brighton", "newcastleunited": "newcastle"}
-
-
-def team_key(value):
-    key = name_key(value)
-    return ALIASES.get(key, key)
+def team_key(value, competition=None):
+    return club_key(value, competition)
 
 
 def fixture_signature(fixture):
@@ -62,8 +56,8 @@ def fixture_match(native, fixture):
                 for side in ("home", "away")) and native.get("game_id") is not None
             and native.get("is_result") is True
             and str(native.get("date", ""))[:10] == str(fixture.get("date", ""))[:10]
-            and all(team_key(native.get(f"{side}_team")) == team_key(fixture.get(f"{side}_team"))
-                    and bool(team_key(native.get(f"{side}_team")))
+            and all(team_key(native.get(f"{side}_team"), fixture.get("competition")) == team_key(fixture.get(f"{side}_team"), fixture.get("competition"))
+                    and bool(team_key(native.get(f"{side}_team"), fixture.get("competition")))
                     and number(native.get(f"{side}_goals")) is not None
                     and number(native.get(f"{side}_goals")) == number(fixture.get(f"{side}_score"))
                     for side in ("home", "away")))

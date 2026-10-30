@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from sports_analyst.datasets.soccer.enrichment import name_key
-from sports_analyst.datasets.nfl import sha256_file
+from sports_analyst.datasets.snapshots import sha256_file
 
 
 def shot_list(value):

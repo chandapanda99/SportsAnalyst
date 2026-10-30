@@ -16,15 +16,15 @@ it('keeps recorded soccer event order when display clocks repeat', async () => {
       {sequence: '2', clock: "46'", type: 'Goal', text: 'Third source event'},
       {sequence: '0', clock: "45+2'", type: 'Goal', text: 'First source event'},
     ]}} as Evidence;
-  render(SoccerMatchTablet, {play, onclose: vi.fn()});
+  const page = render(SoccerMatchTablet, {play, onclose: vi.fn()});
   const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});
   const buttons = within(timeline).getAllByRole('button');
   await fireEvent.click(buttons[0]);
-  expect(screen.getByText('First source event')).toBeTruthy();
+  expect(page.container.querySelector('.event-detail')?.textContent).toContain('First source event');
   await fireEvent.click(buttons[1]);
-  expect(screen.getByText('Second source event')).toBeTruthy();
+  expect(page.container.querySelector('.event-detail')?.textContent).toContain('Second source event');
   await fireEvent.click(buttons[2]);
-  expect(screen.getByText('Third source event')).toBeTruthy();
+  expect(page.container.querySelector('.event-detail')?.textContent).toContain('Third source event');
 });
 
 it.each(['nfl', 'cfb', 'nba', 'soccer'])('shows an interactive placeholder before mounting the %s tablet', async sport => {

@@ -4,7 +4,7 @@ from pathlib import Path
 import polars as pl
 
 from sports_analyst.analysis.research.contracts import VERSION, contract
-from sports_analyst.datasets.nfl import sha256_file
+from sports_analyst.datasets.snapshots import sha256_file
 
 
 def audit_snapshot(manifest, path=None):

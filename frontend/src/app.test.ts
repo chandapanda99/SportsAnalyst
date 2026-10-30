@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
+import {teamLogoUrl} from './teamPalettes';
 
 describe('Open Sports Analyst workbench', () => {
   let mockInvestigations: Array<Record<string, unknown>>;
@@ -32,6 +33,11 @@ describe('Open Sports Analyst workbench', () => {
       }
       if (url.includes('/evidence/')) {
         const identifier = url.split('/').at(-1)!;
+        const savedPlay = mockInvestigations.flatMap((item: any) => item.play_evidence ?? [])
+          .find((item: any) => item.evidence_id === identifier);
+        if (savedPlay) return Promise.resolve(new Response(JSON.stringify(savedPlay), {
+          status: 200, headers: {'content-type': 'application/json'}
+        }));
         return Promise.resolve(new Response(JSON.stringify({
           evidence_id: identifier,
           label: `Evidence ${identifier}`,
@@ -658,7 +664,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.queryByText('The follow-up found a consistent shift.')).toBeNull();
     await screen.findByText('Which games changed the most?');
     const galleryLogo = document.querySelector('.recent-subject-badge img') as HTMLImageElement;
-    expect(galleryLogo.getAttribute('src')).toBe('https://a.espncdn.com/i/teamlogos/nfl/500/kc.png');
+    expect(galleryLogo.getAttribute('src')).toBe(teamLogoUrl('KC', 'nfl'));
     await fireEvent.load(galleryLogo);
     expect(galleryLogo.classList.contains('loaded')).toBe(true);
     await fireEvent.error(galleryLogo);
@@ -809,6 +815,16 @@ describe('Open Sports Analyst workbench', () => {
     const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
     let finishSync: () => void = () => {};
     vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input) === '/api/investigations/soccer-report/evidence/soccer-match') {
+        const saved = (mockInvestigations[0] as any).play_evidence[0];
+        const shot = {id: 'fotmob-shot', eventType: 'Goal', min:42, x:93, y:30, goalCrossedY:35,
+          goalCrossedZ:.8, playerName:'Alex Forward', expectedGoals:.3, espn_team_id:'1'};
+        const enriched = {...saved, visualization:{...saved.visualization,
+          soccer_analytics:[{provider:'fotmob', game_id:'501', team_id:'1', shots_json:JSON.stringify([shot])}],
+          soccer_timeline:saved.visualization.soccer_timeline.map((event: any) => event.type === 'Goal'
+            ? {...event, spatial_provider:'fotmob', spatial_event_id:shot.id, spatial_context:{shot}} : event)}};
+        return Promise.resolve(new Response(JSON.stringify(enriched), {status:200, headers:{'content-type':'application/json'}}));
+      }
       if (String(input) === '/api/datasets/soccer/sync-stream') {
         return Promise.resolve(new Response(new ReadableStream({
           start(controller) {
@@ -839,6 +855,10 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
     expect(document.querySelector('.recent-subject-name')?.textContent).toBe('Home FC');
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
+    // The saved report has no shots. The tablet must consume the enriched
+    // evidence response, not remain attached to the stale saved example.
+    expect(await screen.findByText('Where the goal crossed the line')).toBeTruthy();
+    expect(screen.getByRole('option', {name:'FotMob'})).toBeTruthy();
     expect((await screen.findAllByText('Alex scores')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();
     const timeline = screen.getByRole('list', {name: 'Recorded match events in time order'});

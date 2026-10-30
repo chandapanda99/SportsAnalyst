@@ -406,7 +406,7 @@ class LocalStore:
         if sport not in {"nfl", "nba", "soccer", "cfb"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
-            from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+            from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
             if competition not in SOCCER_COMPETITIONS:
                 raise ValueError("Select a supported soccer competition")
         elif competition is not None:
@@ -450,7 +450,7 @@ class LocalStore:
         if sport not in {"nfl", "nba", "soccer", "cfb"}:
             raise ValueError("Unsupported sport")
         if sport == "soccer":
-            from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+            from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
             if competition not in SOCCER_COMPETITIONS:
                 raise ValueError("Select a supported soccer competition")
         key = f"metadata/dataset-resets/{sport}/{competition or 'all'}.txt"
@@ -495,19 +495,32 @@ class LocalStore:
     def manifest_for_season(self, season: int, dataset: str = "play_by_play", sport: str = "nfl", competition: str | None = None,
                             partition_key: str | None = None, *, provider_id: str = "primary",
                             processing_version: str = "1") -> DatasetManifest:
-        matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key,
-                                                         provider_id=provider_id, processing_version=processing_version)
-                   if manifest.season == season and manifest.partition_key == partition_key]
-        if not matches and self._refresh_durable_record(
+        def lookup():
+            # Select one snapshot in SQL rather than parsing every season and
+            # team partition on each lookup. An omitted competition retains the
+            # existing all-competition lookup behavior.
+            clauses = ["sport = ?", "dataset = ?", "season = ?",
+                       "coalesce(json_extract_string(payload, '$.partition_key'), '') = ?",
+                       "coalesce(json_extract_string(payload, '$.provider_id'), 'primary') = ?",
+                       "coalesce(json_extract_string(payload, '$.processing_version'), '1') = ?"]
+            parameters = [sport, dataset, season, partition_key or "", provider_id, processing_version]
+            if competition is not None:
+                clauses.append("json_extract_string(payload, '$.competition') = ?")
+                parameters.append(competition)
+            with self.connect(read_only=True) as db:
+                row = db.execute("SELECT payload FROM datasets WHERE " + " AND ".join(clauses)
+                                 + " ORDER BY acquired_at DESC, manifest_id DESC LIMIT 1", parameters).fetchone()
+            return DatasetManifest.model_validate_json(row[0]) if row else None
+
+        manifest = lookup()
+        if manifest is None and self._refresh_durable_record(
             self._dataset_metadata_lookup_key(sport, dataset, season, competition, partition_key, provider_id, processing_version),
             self._register_durable_dataset
         ):
-            matches = [manifest for manifest in self.manifests(dataset, sport, competition, partition_key,
-                                                             provider_id=provider_id, processing_version=processing_version)
-                       if manifest.season == season and manifest.partition_key == partition_key]
-        if not matches:
+            manifest = lookup()
+        if manifest is None:
             raise KeyError(f"{sport} {dataset} season {season} has not been synced")
-        return matches[0]
+        return manifest
 
     def materialize_manifest(self, manifest: DatasetManifest) -> DatasetManifest:
         path = Path(manifest.local_path)

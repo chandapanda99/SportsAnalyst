@@ -12,7 +12,7 @@ import polars as pl
 
 from sports_analyst.analysis.research.contracts import VERSION, JoinPlan, contract, relationships
 from sports_analyst.analysis.research.semantics import definitions, measure_fields, rate_definition
-from sports_analyst.datasets.nfl import sha256_file
+from sports_analyst.datasets.snapshots import sha256_file
 from sports_analyst.models import AnalysisWindow, stable_id
 
 MODELED = {"epa", "wpa", "cpoe", "cp", "xpass", "pass_oe"}

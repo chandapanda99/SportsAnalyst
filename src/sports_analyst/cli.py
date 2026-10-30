@@ -7,7 +7,7 @@ import typer
 
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import get_settings
-from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 from sports_analyst.models import AnalysisRequest, AnalysisScope
 
 app = typer.Typer(help="Open Sports Analyst — evidence-bound local sports analysis")

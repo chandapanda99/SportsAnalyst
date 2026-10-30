@@ -83,6 +83,31 @@ def test_source_backed_match_preserves_broad_counters_and_native_player_identity
         normalize_fotmob(future, fixture(source), "eng.1")
 
 
+def test_champions_league_stage_discovery_and_reviewed_bayern_alias(tmp_path, monkeypatch, source):
+    connector = SportsDataverseSoccerConnector(Settings(data_dir=tmp_path, _env_file=None))
+    detail = deepcopy(source)
+    detail["general"].update(leagueId=894202, parentLeagueId=42)
+    detail["header"]["teams"][0]["name"] = "Bayern München"
+    game = {**fixture(source), "home_team":"Bayern Munich", "competition":"uefa.champions"}
+    native = {"id":"4813647", "home":detail["header"]["teams"][0], "away":detail["header"]["teams"][1],
+        "status":{"finished":True, "utcTime":game["date"]}}
+    payload = {"leagues":[{"id":894202, "primaryId":42, "matches":[native]},
+        {"id":1000001457, "primaryId":9741, "matches":[native]}]}
+    adapter = SoccerEnrichment(connector)
+    monkeypatch.setattr(adapter, "fetch", lambda c,s,f,p,r=False: payload if f == "fotmob_matches" else detail)
+    rows = adapter.match("uefa.champions", 2026, game)
+    assert len(rows) == 2 and json.loads(rows[0]["shots_json"])
+    # Parent competition matching must not admit another tournament, and the
+    # reviewed senior-club alias cannot admit youth teams or altered scores.
+    for replacement in ("Bayern München U19", "Unrelated club"):
+        changed = {**game, "home_team":replacement}
+        with pytest.raises(ValueError, match="unique"):
+            adapter.match("uefa.champions", 2026, changed)
+    payload["leagues"] = payload["leagues"][1:]
+    with pytest.raises(ValueError, match="unique"):
+        adapter.match("uefa.champions", 2026, game)
+
+
 def test_recorded_rates_use_paired_sums_and_do_not_zero_fill_missing_matches():
     rows = [{"game_id": "a"}, {"game_id": "b"}, {"game_id": "c"}]
     data = pl.DataFrame({"game_id": ["a", "b", "c"], "team_id": ["1"] * 3,

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import polars as pl
 
-from sports_analyst.datasets.nfl import sha256_file
-from sports_analyst.datasets.soccer.connector import soccer_season_label
+from sports_analyst.datasets.snapshots import sha256_file
+from sports_analyst.datasets.soccer.catalog import soccer_season_label
 
 
 def field_label(field):

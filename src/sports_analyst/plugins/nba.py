@@ -7,6 +7,7 @@ import json
 import math
 import re
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -804,7 +805,7 @@ class NBAPlugin:
         normalized = team.strip().upper()
         return TEAM_ALIASES.get(normalized, normalized)
 
-    def resolve_players(self, query: str, sources: list[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
+    def resolve_players(self, query: str, sources: Iterable[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
         needle = query.strip().lower()
         found: dict[str, dict[str, Any]] = {}
         for season, frame in sources:

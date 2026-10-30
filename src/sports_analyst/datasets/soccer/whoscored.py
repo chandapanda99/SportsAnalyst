@@ -19,7 +19,8 @@ from sports_analyst.analysis.research.state import ACTIVE_BUDGET, ResearchState
 from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.optional import load_optional_module
 from sports_analyst.datasets.soccer.statistics import number
-from sports_analyst.datasets.soccer.understat import LEAGUES, fixture_signature, records, team_key
+from sports_analyst.datasets.soccer.club_identity import normalized_name, same_club, VERSION as CLUB_IDENTITY_VERSION
+from sports_analyst.datasets.soccer.understat import LEAGUES, fixture_signature, records
 from sports_analyst.models import stable_id
 
 VERSION = "whoscored-soccerdata-1"
@@ -73,7 +74,7 @@ def normalize(raw, fixture, provider_game, metadata):
             "outcome": (event.get("outcomeType") or {}).get("displayName"), "is_goal": bool(event.get("isGoal")),
             "start_x": start[0], "start_y": start[1], "end_x": end[0], "end_y": end[1],
             "coordinate_system": "WhoScored/Opta provider 0–100 coordinates scaled to 105 × 68; stadium direction unverified.",
-            "fixture_sha256": fixture_signature(fixture), "source_sha256": checksum,
+            "fixture_sha256": fixture_signature(fixture), "source_sha256": checksum, "club_identity_version": CLUB_IDENTITY_VERSION,
             "raw_event_json": json.dumps(event, sort_keys=True)})
     return rows
 
@@ -153,7 +154,7 @@ class WhoScoredSource:
                 schedule = records(client.read_schedule())
                 for index, fixture in enumerate(fixtures.iter_rows(named=True), 1):
                     candidates = [game for game in schedule if str(game.get("date", ""))[:10] == str(fixture["date"])[:10]
-                        and all(team_key(game.get(f"{side}_team", "")) == team_key(fixture.get(f"{side}_team", ""))
+                        and all(same_club(game.get(f"{side}_team"), fixture.get(f"{side}_team"), competition)
                             and number(game.get(f"{side}_score")) is not None
                             and number(game.get(f"{side}_score")) == number(fixture.get(f"{side}_score")) for side in ("home", "away"))]
                     if len(candidates) != 1:
@@ -167,7 +168,7 @@ class WhoScoredSource:
                             if not saved or saved.get("fixture_sha256") != fixture_signature(fixture):
                                 raw = client.read_events(match_id=int(game["game_id"]), output_fmt="raw", retry_missing=False)
                                 metadata = self.match_payload
-                                if any(team_key(metadata[side]["name"]) != team_key(fixture[f"{side}_team"]) for side in ("home", "away")):
+                                if any(not same_club(metadata[side]["name"], fixture[f"{side}_team"], competition) for side in ("home", "away")):
                                     raise ValueError("WhoScored match header conflicts with fixture sides")
                                 events = normalize(raw[int(game["game_id"])], fixture, game["game_id"], metadata)
                                 if not events:
@@ -237,7 +238,7 @@ def cached_recap(connector, competition, season, game_id, visual):
     fixture = saved["fixture"]
     if str(fixture.get("event_id")) != str(game_id) or saved.get("fixture_sha256") != fixture_signature(fixture):
         return visual
-    if any(team_key(fixture.get(f"{side}_team", "")) != team_key(getattr(visual, f"{side}_team_name") or "")
+    if any(not same_club(fixture.get(f"{side}_team"), getattr(visual, f"{side}_team_name"), competition)
            or number(fixture.get(f"{side}_score")) != getattr(visual, f"{side}_score") for side in ("home", "away")):
         return visual
     if visual.game_date and str(fixture.get("date"))[:10] != str(visual.game_date)[:10]:
@@ -251,13 +252,13 @@ def cached_recap(connector, competition, season, game_id, visual):
         return int(match[1]) + int(match[2] or 0) if match else None
     proposals = []
     for event in visual.soccer_timeline:
-        name = team_key(event.get("athlete_name") or "")
+        name = normalized_name(event.get("athlete_name") or "")
         native_name = str(event.get("athlete_name") or "")
         period = number(event.get("period"))
         minute = signature(event)
         team = str(event.get("team_id") or "")
         identities = {row.get("provider_player_id") for row in actions if row.get("team_id") == team
-            and team_key(row.get("player_name") or "") == name}
+            and normalized_name(row.get("player_name") or "") == name}
         kind = str(event.get("type") or "").lower()
         candidates = []
         if event.get("athlete_id") and len(native_name.split()) >= 2 and len(identities) == 1 and period is not None and minute is not None:

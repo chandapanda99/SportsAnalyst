@@ -254,7 +254,7 @@ class ScopedData:
             raise ValueError("Query exceeds column budget")
         materialized = self.app.store.materialize_manifest(manifest)
         if dataset_id not in self.verified:
-            from sports_analyst.datasets.nfl import sha256_file
+            from sports_analyst.datasets.snapshots import sha256_file
 
             if sha256_file(Path(materialized.local_path)) != manifest.sha256:
                 raise ValueError("Source snapshot checksum changed; prepare the investigation again")

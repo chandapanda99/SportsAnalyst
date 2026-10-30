@@ -93,6 +93,11 @@ class BlockProviders(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, BlockProviders())
 from sports_analyst import api, cli, desktop, worker
+assert all(name not in sys.modules for name in (
+    'sports_analyst.plugins.nfl', 'sports_analyst.plugins.nba',
+    'sports_analyst.plugins.soccer', 'sports_analyst.plugins.cfb',
+    'sports_analyst.analysis.agents', 'langsmith',
+))
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.datasets.nfl import NFLVerseConnector
 from sports_analyst.datasets.nba import SportsDataverseNBAConnector

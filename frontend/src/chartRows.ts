@@ -26,9 +26,17 @@ export function comparisonRows(spec: Record<string, unknown>) {
   const field = meta.seriesField;
   const values = ((spec.data as {values?: MetricValue[]})?.values ?? [])
     .filter(row => typeof row.metric === 'string' && typeof row.value === 'number' && Number.isFinite(row.value));
-  return [...new Set(values.map(row => row.metric))].map(metric => {
-    const entries = values.filter(row => row.metric === metric).sort((a, b) =>
-      (meta.seriesLabels?.indexOf(String(a[field])) ?? 0) - (meta.seriesLabels?.indexOf(String(b[field])) ?? 0));
+  const groups = new Map<string, MetricValue[]>();
+  const ranks = new Map<string, number>();
+  meta.seriesLabels?.forEach((label, index) => {if (!ranks.has(label)) ranks.set(label, index);});
+  const rank = (row: MetricValue) => ranks.get(String(row[field])) ?? (meta.seriesLabels ? -1 : 0);
+  for (const row of values) {
+    const entries = groups.get(row.metric);
+    if (entries) entries.push(row);
+    else groups.set(row.metric, [row]);
+  }
+  return [...groups].map(([metric, entries]) => {
+    entries.sort((a, b) => rank(a) - rank(b));
     const first = entries[0], last = entries.at(-1)!;
     const percentage = ['percentage', 'rate', 'proportion'].includes(first.unit ?? '') && entries.every(row => Math.abs(row.value) <= 1);
     const change = (last.value - first.value) * (percentage ? 100 : 1);

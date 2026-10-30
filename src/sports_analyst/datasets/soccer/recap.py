@@ -35,7 +35,7 @@ def native_context(event, commentary):
 
 def cached_timeline(connector, competition, season, game_id, timeline):
     """Enrich old saved evidence from its cached summary; no source requests."""
-    from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+    from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 
     if competition not in SOCCER_COMPETITIONS or not str(game_id).isdigit():
         return timeline

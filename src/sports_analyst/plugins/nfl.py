@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 
 import polars as pl
 
-from sports_analyst.datasets.nfl import DATASET_MIN_SEASONS, REFERENCE_DATASETS, SUPPORTED_DATASETS
+from sports_analyst.datasets.nfl_catalog import DATASET_MIN_SEASONS, REFERENCE_DATASETS, SUPPORTED_DATASETS
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -408,7 +409,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             ],
         )
 
-    def resolve_players(self, query: str, sources: list[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
+    def resolve_players(self, query: str, sources: Iterable[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
         token = query.strip().lower()
         players: dict[str, dict[str, Any]] = {}
         for season, frame in sources:

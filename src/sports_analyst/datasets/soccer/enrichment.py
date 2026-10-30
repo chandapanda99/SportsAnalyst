@@ -9,7 +9,6 @@ import hashlib
 import json
 import re
 import time
-import unicodedata
 from concurrent.futures import as_completed
 from contextlib import nullcontext
 from datetime import date
@@ -20,6 +19,7 @@ import polars as pl
 from sports_analyst.analysis.research.state import ACTIVE_BUDGET, ContextPool, ResearchLimit, budget_json
 from sports_analyst.datasets.optional import OptionalDependencyError, load_optional_module
 from sports_analyst.datasets.soccer.statistics import ALIASES, number, stat_key
+from sports_analyst.datasets.soccer.club_identity import normalized_name as name_key, same_club, VERSION as CLUB_IDENTITY_VERSION
 
 VERSION = "soccer-context-1"
 # Provider competition IDs, not team/player identity mappings.
@@ -28,13 +28,9 @@ FOTMOB_LEAGUES = {"eng.1": 47, "esp.1": 87, "ger.1": 54, "ita.1": 55,
 ASA_LEAGUES = {"usa.1": "mls", "usa.nwsl": "nwsl"}
 
 
-def name_key(name):
-    return "".join(c for c in unicodedata.normalize("NFKD", str(name)).casefold() if c.isalnum())
-
-
 def same_side(native, fixture, side):
-    names = {name_key(native.get(key, "")) for key in ("name", "longName", "shortName")}
-    return bool(name_key(fixture.get(f"{side}_team", ""))) and name_key(fixture[f"{side}_team"]) in names
+    return any(same_club(native.get(key), fixture.get(f"{side}_team"), fixture.get("competition"))
+               for key in ("name", "longName", "shortName"))
 
 
 def fixture_matches(native, fixture):
@@ -108,6 +104,7 @@ def normalize_fotmob(payload, fixture, competition):
             "team_name": teams[index].get("name"),
             "provider": "fotmob", "provider_game_id": str(general.get("matchId")), "provider_team_id": str(teams[index]["id"]),
             "source_model": "FotMob reported; upstream model version undisclosed", "definition_version": VERSION,
+            "club_identity_version": CLUB_IDENTITY_VERSION,
             "source_sha256": hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(),
             "date": str(fixture["date"])[:10], **counters(pairs)}
         row["shots_json"] = json.dumps([s for s in shot_rows if s["espn_team_id"] == team])
@@ -178,7 +175,8 @@ class SoccerEnrichment:
     def match(self, competition, season, fixture, refresh=False):
         day = str(fixture["date"])[:10].replace("-", "")
         raw = self.fetch(competition, season, "fotmob_matches", {"date": day, "timezone": "UTC"}, refresh)
-        matches = [m for league in raw.get("leagues", []) if league.get("id") == FOTMOB_LEAGUES[competition]
+        matches = [m for league in raw.get("leagues", []) if (
+            league.get("primaryId") or league.get("parentLeagueId") or league.get("id")) == FOTMOB_LEAGUES[competition]
                    for m in league.get("matches", []) if fixture_matches(m, fixture)]
         if len(matches) != 1:
             raise ValueError("No unique, corroborated FotMob fixture mapping")

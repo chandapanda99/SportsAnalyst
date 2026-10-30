@@ -21,7 +21,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from sports_analyst import __version__
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.datasets.errors import safe_sync_message
-from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS
+from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -158,8 +158,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
             count = service.store.clear_datasets(sport, request.competition)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        for connector in service.connectors.values():
-            connector.clear_cache()
+        service.clear_caches()
         refresh_catalog()
         return {"deleted_packages": count}
 

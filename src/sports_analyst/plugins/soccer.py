@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -12,7 +13,7 @@ from typing import Any
 import polars as pl
 
 from sports_analyst.analysis.ordering import unique_records
-from sports_analyst.datasets.soccer.connector import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
+from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS, SOCCER_DATASETS, soccer_season_label
 from sports_analyst.datasets.soccer.expected_goals import PLAYER_XG_FIELDS, TEAM_XG_FIELDS, numeric
 from sports_analyst.datasets.soccer.season_statistics import FIELDS as SEASON_STAT_FIELDS
 from sports_analyst.datasets.soccer.statistics import EVENT_METRICS, MATCH_METRICS, event_value, measured_value
@@ -141,7 +142,8 @@ class SoccerPlugin:
     def analysis_options(self, manifests: list[DatasetManifest], context: Any = None) -> AnalysisOptions:
         context = context if isinstance(context, dict) else {}
         competition = context.get("competition") or "eng.1"
-        from sports_analyst.datasets.soccer.understat import DATASETS as UNDERSTAT_DATASETS, LEAGUES as UNDERSTAT_LEAGUES
+        from sports_analyst.datasets.soccer.understat import DATASETS as UNDERSTAT_DATASETS
+        from sports_analyst.datasets.soccer.understat import LEAGUES as UNDERSTAT_LEAGUES
         if competition not in SOCCER_COMPETITIONS:
             raise ValueError(f"Unsupported soccer competition: {competition}")
         selected = [item for item in manifests if item.competition == competition]
@@ -224,7 +226,7 @@ class SoccerPlugin:
             subject_types=[{"value": "team", "label": "Team"}, {"value": "player", "label": "Player"}],
         )
 
-    def resolve_players(self, query: str, sources: list[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
+    def resolve_players(self, query: str, sources: Iterable[tuple[int, pl.DataFrame]]) -> list[PlayerOption]:
         found: dict[str, dict] = {}
         needle = query.casefold().strip()
         for season, frame in sources:
@@ -582,7 +584,8 @@ class SoccerPlugin:
                 analytics_frame = supplemental.get("match_analytics", {}).get(window.season, pl.DataFrame())
                 analytics = analytics_frame.filter(pl.col("game_id").cast(pl.String) == row["game_id"]).to_dicts() if (
                     "game_id" in analytics_frame.columns) else []
-                from sports_analyst.datasets.soccer.understat import DATASETS as UNDERSTAT_DATASETS, tablet_rows
+                from sports_analyst.datasets.soccer.understat import DATASETS as UNDERSTAT_DATASETS
+                from sports_analyst.datasets.soccer.understat import tablet_rows
 
                 understat_analytics = tablet_rows(row["game_id"], {
                     name: supplemental.get(name, {}).get(window.season, pl.DataFrame()) for name in UNDERSTAT_DATASETS})

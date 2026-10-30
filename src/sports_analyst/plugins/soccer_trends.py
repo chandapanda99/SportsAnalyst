@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from sports_analyst.datasets.soccer.connector import soccer_season_label
+from sports_analyst.datasets.soccer.catalog import soccer_season_label
 from sports_analyst.datasets.soccer.expected_goals import numeric
 from sports_analyst.datasets.soccer.statistics import EVENT_METRICS, MATCH_METRICS, event_value, measured_value
 from sports_analyst.models import AggregateEvidence, ChartArtifact, stable_id

@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from sports_analyst.datasets.nfl_catalog import LATEST_SYNCABLE_SEASON as LATEST_SYNCABLE_SEASON
 from sports_analyst.models import (
     AggregateEvidence,
     ChartArtifact,
@@ -21,8 +22,6 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
-
-LATEST_SYNCABLE_SEASON = 2026
 
 NFL_TEAMS = {
     "ARI": "Arizona Cardinals",

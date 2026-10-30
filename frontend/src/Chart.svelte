@@ -16,6 +16,7 @@
 
     let {specification, team, sport = 'nfl', season}: Props = $props();
     let target = $state<HTMLDivElement>();
+    let visibleTarget = $state<HTMLDivElement>();
     let renderError = $state('');
     let metric = $state('');
     let showChart = $state(false);
@@ -45,9 +46,27 @@
     let metricRowCount = $derived(Number(metricMetadata?.metricRowCount ?? 0));
 
     $effect(() => {
-        if (matrixMode && (!showChart || !hasPlot)) return;
         const host = target;
         if (!host) return;
+        if (typeof IntersectionObserver === 'undefined') {
+            visibleTarget = host;
+            return;
+        }
+        let disposed = false;
+        const observer = new IntersectionObserver(entries => {
+            if (!disposed && entries.some(entry => entry.isIntersecting)) {
+                visibleTarget = host;
+                observer.disconnect();
+            }
+        }, {rootMargin: '200px'});
+        observer.observe(host);
+        return () => {disposed = true; observer.disconnect();};
+    });
+
+    $effect(() => {
+        if (matrixMode && (!showChart || !hasPlot)) return;
+        const host = target;
+        if (!host || visibleTarget !== host) return;
         const themedSpecification = applyTeamChartPalette(filterMetric(specification, metric), team, sport, season);
         // Vega's concatenated plots do not reliably resolve a hidden container's
         // width. Give each metric plot a measured width, including after expand.
