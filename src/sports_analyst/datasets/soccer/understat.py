@@ -1,4 +1,4 @@
-"""SoccerData 1.9.0 parsing through bounded, durable Understat acquisition."""
+"""Validated SoccerData parsing through bounded, durable Understat acquisition."""
 from __future__ import annotations
 
 import hashlib
@@ -20,14 +20,13 @@ from sports_analyst.analysis.research.state import ACTIVE_BUDGET, ContextPool, R
 from sports_analyst.datasets.availability import SourceUnavailable
 from sports_analyst.datasets.cfb_source import CFBSource
 from sports_analyst.datasets.optional import load_optional_module
-from sports_analyst.datasets.soccer.enrichment import name_key
 from sports_analyst.datasets.soccer.club_identity import club_key
 from sports_analyst.datasets.soccer.statistics import number
 from sports_analyst.models import DatasetManifest, stable_id
 
 VERSION = "understat-soccerdata-1"
 logger = logging.getLogger(__name__)
-PACKAGE_VERSION = "1.9.0"
+SUPPORTED_PACKAGE_VERSIONS = {"1.9.0", "2026.43.0"}
 DATASETS = ("understat_team_matches", "understat_player_matches", "understat_shots")
 LEAGUES = {"eng.1": ("ENG-Premier League", "EPL"), "esp.1": ("ESP-La Liga", "La_liga"),
            "ger.1": ("GER-Bundesliga", "Bundesliga"), "ita.1": ("ITA-Serie A", "Serie_A"),
@@ -124,11 +123,18 @@ class UnderstatSource:
     def client(self, competition, season, refresh):
         os.environ.setdefault("SOCCERDATA_DIR", str(self.connector.data_dir / "soccerdata"))
         module = load_optional_module("soccerdata", "Understat xG and shot data")
-        if importlib.metadata.version("soccerdata") != PACKAGE_VERSION:
-            raise RuntimeError("Understat transport requires the locked SoccerData 1.9.0 release")
+        version = importlib.metadata.version("soccerdata")
+        if version not in SUPPORTED_PACKAGE_VERSIONS:
+            raise RuntimeError(f"Understat transport has not been validated with SoccerData {version}; "
+                               f"supported releases: {', '.join(sorted(SUPPORTED_PACKAGE_VERSIONS))}")
         owner = self
 
         class BoundedUnderstat(module.Understat):
+            def _init_session(self, headers=None):
+                # Every request goes through _request_api and the acquisition
+                # budget. Do not initialize the upstream TLS/browser transport.
+                return None
+
             @classmethod
             def _all_leagues(cls):
                 # Upstream selects its league map by class name.
@@ -368,7 +374,8 @@ class UnderstatSource:
                     if "source_payloads_json" in frame.columns else None,
                 source_url="https://understat.com/", provider_id="understat", processing_version=VERSION,
                 resolution_version=VERSION, sha256=checksum, row_count=frame.height, columns=frame.columns,
-                package_version=f"soccerdata:{PACKAGE_VERSION}", license="See Understat data terms; no redistribution rights inferred.",
+                package_version=f"soccerdata:{importlib.metadata.version('soccerdata')}",
+                license="See Understat data terms; no redistribution rights inferred.",
                 attribution="Understat data acquired using SoccerData; corroborated ESPN fixture/team mapping.",
                 local_path=str(snapshot.resolve()), file_size=snapshot.stat().st_size, modified_ns=snapshot.stat().st_mtime_ns,
                 coverage=coverage, availability=availability,

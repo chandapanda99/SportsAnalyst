@@ -4,6 +4,7 @@ Payload structure follows the pinned upstream Understat parser. These offline
 fixtures verify integration behavior, not live source availability.
 """
 import json
+import importlib.metadata
 from types import SimpleNamespace
 
 import polars as pl
@@ -73,6 +74,7 @@ def test_understat_real_parser_scoped_sync_cache_analysis_and_tablet(tmp_path, m
     manifests = connector.sync([2024], list(DATASETS), competition="eng.1", team_id="10")
     assert len(manifests) == 3 and len(fetched) == 4
     assert all(m.provider_id == "understat" and m.partition_key == "team:10" for m in manifests)
+    assert all(m.package_version == f"soccerdata:{importlib.metadata.version('soccerdata')}" for m in manifests)
     assert all(m.availability == "available" for m in manifests)
     frames = {m.dataset: pl.read_parquet(m.local_path) for m in manifests}
     assert frames["understat_shots"]["x"].to_list() == [94.5, 94.5]
@@ -136,6 +138,33 @@ def test_understat_missing_or_ambiguous_fixture_never_becomes_xg_zero(tmp_path, 
     result = UnderstatSource(connector).publish("eng.1", 2024, fixtures, [DATASETS[0]])[0]
     assert result.row_count == 0 and result.availability == "source_unavailable"
     assert result.coverage["ambiguous_matches" if ambiguous else "unmatched_matches"] == 1
+
+
+def test_bundesliga_core_and_understat_sync_with_installed_parser(tmp_path, monkeypatch):
+    from urllib.parse import urlparse
+    import soccerdata
+
+    monkeypatch.setenv("SOCCERDATA_DIR", str(tmp_path / "soccerdata"))
+    def unexpected_session(*args, **kwargs):
+        raise AssertionError("The upstream transport must not bypass the acquisition budget")
+    monkeypatch.setattr(soccerdata.Understat.__mro__[1], "_init_session", unexpected_session)
+    connector = SportsDataverseSoccerConnector(Settings(_env_file=None, data_dir=tmp_path))
+    fixtures = pl.DataFrame({"event_id": ["101"], "home_team_id": ["10"], "away_team_id": ["20"],
+        "home_team": ["Home"], "away_team": ["Away"], "home_score": [1], "away_score": [0],
+        "date": ["2023-08-12T15:00:00Z"], "status": ["STATUS_FINAL"]})
+    data = {key.replace("EPL", "Bundesliga"): value for key, value in payloads().items()}
+    data["/getStatData"]["stat"][0]["league"] = "Bundesliga"
+    def fetch(state, url, **kwargs):
+        state.consume(requests=1)
+        return json.dumps(data[urlparse(url).path]).encode()
+    monkeypatch.setattr(ResearchState, "fetch", fetch)
+    monkeypatch.setattr(connector, "_scoreboard", lambda *args, **kwargs: fixtures)
+    progress = []
+    manifests = connector.sync([2024], ["play_by_play", *DATASETS], competition="ger.1",
+        progress_detail_callback=lambda *args: progress.append(args))
+    assert {m.dataset for m in manifests} == {"play_by_play", *DATASETS}
+    assert all(m.row_count > 0 and m.competition == "ger.1" for m in manifests)
+    assert any(event[1] == DATASETS[0] and "preparing provider" in event[6] for event in progress)
 
 
 def test_understat_join_preserves_observations_and_native_player_identity(tmp_path):

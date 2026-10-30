@@ -367,6 +367,7 @@ class SportsDataverseSoccerConnector:
             if "whoscored_events" in pending:
                 from sports_analyst.datasets.soccer.whoscored import WhoScoredSource
 
+                detail("whoscored_events", .2, "WhoScored spatial events · preparing provider", True)
                 understat["whoscored_events"] = WhoScoredSource(self).publish(competition, season, final,
                     team_id=team_id, refresh=season in (refresh_seasons or set()),
                     progress=lambda done, total: detail("whoscored_events", .2 + .75 * done / max(total, 1),
@@ -375,6 +376,7 @@ class SportsDataverseSoccerConnector:
             if understat_pending:
                 from sports_analyst.datasets.soccer.understat import UnderstatSource
 
+                detail(understat_pending[0], .2, "Understat xG and shots · preparing provider", True)
                 understat.update({m.dataset: m for m in UnderstatSource(self).publish(
                     competition, season, final, understat_pending, team_id=team_id,
                     refresh=season in (refresh_seasons or set()),
