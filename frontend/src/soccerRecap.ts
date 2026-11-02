@@ -9,6 +9,7 @@ export type RecapEvent = {
   xg: number | null; xgot: number | null; xt: number | null; orientation: string;
   uncertainOrder: boolean; qualifiers: SourceRecord; index: number;
   shot: ShotDiagram | null;
+  number: string; position: string;
 };
 
 export function shotDiagram(raw: SourceRecord, provider: string): ShotDiagram | null {
@@ -75,6 +76,18 @@ function ordered(events: RecapEvent[]): RecapEvent[] {
 
 export function recapSources(actions: SourceRecord[], analytics: SourceRecord[], timeline: SourceRecord[] = []): Map<string, RecapEvent[]> {
   const sources = new Map<string, RecapEvent[]>();
+  const players: SourceRecord[] = analytics.flatMap(row => array(row.players_json).map(player => ({...player, identity_provider: row.provider})));
+  function identity(raw: SourceRecord, provider: string, team: string) {
+    const id = text(raw.provider_player_id ?? raw.playerId ?? raw.athlete_id);
+    const candidates = players.filter(player => player.identity_provider === provider && id
+      && text(player.provider_player_id) === id && (!team || text(player.team_id) === team));
+    const player: SourceRecord = candidates.length === 1 ? candidates[0] : {};
+    const position = raw.position ?? player.position;
+    const label = position && typeof position === 'object' ? (position as SourceRecord).abbreviation ?? (position as SourceRecord).name : position;
+    return {number: text(raw.shirt_number ?? raw.jersey_number ?? raw.jersey ?? player.shirt_number),
+      // Numeric provider position codes are not human-readable position labels.
+      position: typeof label === 'string' && !/^\d+$/.test(label) ? label : ''};
+  }
   function add(raw: SourceRecord, provider: string, shot: boolean, parent: SourceRecord = {}) {
     const events = sources.get(provider) ?? [];
     const index = events.length;
@@ -98,6 +111,7 @@ export function recapSources(actions: SourceRecord[], analytics: SourceRecord[],
         : 'Provider event coordinates on 105 × 68; stadium attacking direction is unverified.'),
       uncertainOrder: false, qualifiers: shot ? {situation: raw.situation, body_part: raw.shotType} : raw,
       shot: shot ? shotDiagram(raw, provider) : null,
+      ...identity(raw, provider, text(shot ? raw.espn_team_id : raw.team_id, text(parent.team_id))),
     };
     sources.set(provider, [...events, event]);
   }
@@ -130,6 +144,9 @@ export function recapSources(actions: SourceRecord[], analytics: SourceRecord[],
       // Keep origin, goal plane, model values and orientation from one shot.
       selected.start = point(raw.x, raw.y);
       selected.shot = shotDiagram(raw, 'fotmob');
+      const details = identity(raw, 'fotmob', text(raw.espn_team_id));
+      selected.number ||= details.number;
+      selected.position ||= details.position;
       selected.xg = probability(raw.expectedGoals);
       selected.xgot = probability(raw.expectedGoalsOnTarget);
       selected.orientation = 'FotMob shot diagram: normalized attacking goal at x=105 m. Static schematic, not tracked flight.';

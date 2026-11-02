@@ -49,6 +49,7 @@ def _summary(game: str, with_events: bool = True) -> dict:
 class SoccerIntegrationTests(unittest.TestCase):
     def test_native_timeline_locations_and_saved_evidence_recap(self) -> None:
         payload = _summary("123")
+        payload["rosters"][0]["roster"][0]["jersey"] = "9"
         goal = payload["keyEvents"][0]
         goal["period"] = {"number": 1}
         payload["commentary"] = [{"play": {"id": goal["id"], "team": {"id": "1"},
@@ -56,6 +57,12 @@ class SoccerIntegrationTests(unittest.TestCase):
         parsed = self.connector._parse_summary(payload, "key_events").to_dicts()[0]
         self.assertEqual((parsed["field_position_x"], parsed["field_position_y"]), (.25, .6))
         self.assertEqual(parsed["provider"], "espn")
+        self.assertEqual((parsed["shirt_number"], parsed["position"]), ("9", "F"))
+        from sports_analyst.datasets.soccer.recap import roster_identity
+
+        self.assertEqual(roster_identity(payload, "10", "2"), {})
+        duplicate = {**payload, "rosters": payload["rosters"] * 2}
+        self.assertEqual(roster_identity(duplicate, "10", "1"), {})
         # Same-minute events, conflicting identities, and duplicate references
         # cannot supply spatial context for the selected native event.
         for replacement in (
@@ -85,6 +92,7 @@ class SoccerIntegrationTests(unittest.TestCase):
                 self.assertEqual(event["id"], goal["id"])
                 self.assertEqual(event["field_position_x"], .25)
                 self.assertEqual(event["athlete_name"], "Alex Forward")
+                self.assertEqual((event["shirt_number"], event["position"]), ("9", "F"))
             self.assertEqual(evidence.visualization.soccer_timeline, [legacy])
             location.write_text(json.dumps({**payload, "header": {"id": "456"}}), encoding="utf-8")
             self.assertEqual(app.evidence("saved", "recap").visualization.soccer_timeline, [legacy])

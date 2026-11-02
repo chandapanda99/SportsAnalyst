@@ -171,7 +171,7 @@ class SportsDataverseSoccerConnector:
                                  "position": (player.get("position") or {}).get("abbreviation"),
                                  "starter": player.get("starter")})
         elif section == "key_events":
-            from sports_analyst.datasets.soccer.recap import native_context
+            from sports_analyst.datasets.soccer.recap import native_context, roster_identity
 
             roster = {str(player.get("athlete", {}).get("id") or ""): player
                       for entry in payload.get("rosters") or [] for player in entry.get("roster") or []}
@@ -199,6 +199,7 @@ class SportsDataverseSoccerConnector:
                         incoming, outgoing = replacement.group(1).strip(), replacement.group(2).strip()
                 rows.append({"id": str(event.get("id") or ""), "event_sequence": sequence,
                              **native_context(event, payload.get("commentary") or []),
+                             **roster_identity(payload, str(athlete.get("id") or ""), str((event.get("team") or {}).get("id") or "")),
                              "type": (event.get("type") or {}).get("text"),
                              "text": event.get("text"), "clock": (event.get("clock") or {}).get("displayValue"),
                              "team_id": str((event.get("team") or {}).get("id") or ""),

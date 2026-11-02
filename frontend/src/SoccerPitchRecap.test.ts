@@ -4,8 +4,36 @@ import SoccerPitchRecap from './SoccerPitchRecap.svelte';
 import SoccerMatchTablet from './SoccerMatchTablet.svelte';
 import type {Evidence} from './types';
 import fotmobCapture from '../../tests/fixtures/soccer/fotmob_match.json';
+import * as teamPalettes from './teamPalettes';
 
-afterEach(() => {cleanup(); vi.useRealTimers();});
+afterEach(() => {cleanup(); vi.useRealTimers(); vi.restoreAllMocks();});
+
+it('separates the compact branded player tooltip from the ball detail control and respects provider identity', async () => {
+  const palette = vi.spyOn(teamPalettes, 'teamChartPalette').mockReturnValue(['#c8102e', '#ffffff']);
+  const shot = {...fotmobCapture.content.shotmap.shots.find(s => s.eventType === 'Goal')!, espn_team_id:'132'};
+  const row = {provider:'fotmob', team_id:'132', team_name:'Bayern Munich', shots_json:JSON.stringify([shot]),
+    players_json:JSON.stringify([{provider_player_id:String(shot.playerId), team_id:'132', shirt_number:'9', position:'ST'}])};
+  const view = render(SoccerPitchRecap, {analytics:[row], season:2025});
+  const marker = screen.getByRole('button', {name:`Player details: ${shot.playerName}`});
+  expect(view.container.querySelector('.event-point')?.getAttribute('r')).toBe('1.1');
+  expect(view.container.querySelector('.event-point')?.getAttribute('style')).toContain('#c8102e');
+  expect(palette).toHaveBeenCalledWith('Bayern Munich', 'soccer', 2025, expect.any(Array));
+  await fireEvent.mouseEnter(marker);
+  expect(within(screen.getByRole('tooltip')).getByText('#9 · ST')).toBeTruthy();
+  await fireEvent.click(marker);
+  expect(screen.queryByLabelText('Selected shot detail')).toBeNull();
+  await fireEvent.mouseLeave(marker);
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  const ball = screen.getByRole('button', {name:'Open shot detail'});
+  expect(ball.querySelector(':scope > circle')?.getAttribute('cx')).toBe('105');
+  await fireEvent.click(ball);
+  expect(screen.getByLabelText('Selected shot detail')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', {name:'← Back to pitch'}));
+  await view.rerender({analytics:[{...row, provider:'understat'}, {...row, players_json:'[]'}]});
+  await fireEvent.change(screen.getByLabelText('Recap source'), {target:{value:'fotmob'}});
+  await fireEvent.focus(screen.getByRole('button', {name:`Player details: ${shot.playerName}`}));
+  expect(within(screen.getByRole('tooltip')).getByText('Number not recorded · Position not recorded')).toBeTruthy();
+});
 
 it('renders captured shot origin and goal placement, a save glove, and a blocked ball without a false goal crossing', async () => {
   const shots = fotmobCapture.content.shotmap.shots;

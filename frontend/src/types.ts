@@ -148,7 +148,7 @@ export type PlayVisualization = {
   soccer_timeline?: Array<{clock: string; text: string; type: string; sequence?: string; side?: 'home' | 'away' | 'neutral';
     spatial_context?: Record<string, unknown>; spatial_provider?: string; spatial_event_id?: string; spatial_match_method?: string;
     scoring_play?: boolean; player_in?: string; player_out?: string; id?: string; provider?: string;
-    team_id?: string; athlete_id?: string; athlete_name?: string; period?: number | null;
+    team_id?: string; athlete_id?: string; athlete_name?: string; period?: number | null; shirt_number?: string | number | null; position?: string | null;
     field_position_x?: number | null; field_position_y?: number | null; coordinate_system?: string}>;
   soccer_analytics?: Array<Record<string, unknown>>;
   soccer_analytics_manifest_ids?: string[];

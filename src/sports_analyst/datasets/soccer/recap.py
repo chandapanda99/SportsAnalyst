@@ -6,7 +6,22 @@ import json
 from sports_analyst.datasets.soccer.statistics import number
 
 CONTEXT_FIELDS = ("id", "provider", "team_id", "athlete_id", "athlete_name", "period",
-                  "field_position_x", "field_position_y", "coordinate_system")
+                  "field_position_x", "field_position_y", "coordinate_system", "shirt_number", "position")
+
+
+def roster_identity(payload, athlete_id, team_id):
+    """Match-only ESPN identity; never infer a shirt or role from a name."""
+    candidates = [player for entry in payload.get("rosters") or []
+                  if team_id and str((entry.get("team") or {}).get("id") or "") == team_id
+                  for player in entry.get("roster") or []
+                  if athlete_id and str((player.get("athlete") or {}).get("id") or "") == athlete_id]
+    if len(candidates) != 1:
+        return {}
+    player = candidates[0]
+    jersey = player.get("jersey") or (player.get("athlete") or {}).get("jersey")
+    return {"shirt_number": str(jersey) if jersey is not None else None,
+            "position": (player.get("position") or {}).get("abbreviation")
+                        or ((player.get("athlete") or {}).get("position") or {}).get("abbreviation")}
 
 
 def native_context(event, commentary):

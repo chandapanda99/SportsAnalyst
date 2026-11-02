@@ -563,7 +563,7 @@ class SoccerPlugin:
                                   str(match.get("away_team_id") or ""): "away"}
                     timeline = [{"clock": str(event.get("clock") or ""), "text": str(event.get("text") or ""),
                                  **{key: event.get(key) for key in ("id", "provider", "team_id", "athlete_id", "athlete_name",
-                                     "period", "field_position_x", "field_position_y", "coordinate_system")},
+                                     "period", "field_position_x", "field_position_y", "coordinate_system", "shirt_number", "position")},
                                  **({"sequence": str(event["event_sequence"])} if event.get("event_sequence") is not None else {}),
                                  "type": str(event.get("type") or ""),
                                  "player_in": str(event.get("player_in") or ""),

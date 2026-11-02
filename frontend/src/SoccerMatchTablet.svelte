@@ -176,7 +176,7 @@
   <div class="timeline-recap" bind:this={recapAnchor}>
     <SoccerPitchRecap actions={match?.soccer_actions ?? []} analytics={match?.soccer_analytics ?? []}
       timeline={recapTimeline} focusTimelineKey={selectedEvent ? String(selectedEvent.index) : ''}
-      focusRevision={selectionRevision} total={match?.soccer_actions_count ?? 0} matchKey={play.evidence_id}/>
+      focusRevision={selectionRevision} season={play.season} total={match?.soccer_actions_count ?? 0} matchKey={play.evidence_id}/>
   </div>
   {#if match?.soccer_analytics?.length}
     <details class="additional-statistics"><summary>Additional recorded match statistics</summary>
