@@ -3,7 +3,7 @@
     import {branding} from './sportsBranding';
     import TeamBadge from './TeamBadge.svelte';
     import SchematicViewport from './SchematicViewport.svelte';
-    import {chartComparisonKind, chartGuidance, comparisonRows, filterMetric} from './chartRows';
+    import {chartComparisonKind, chartGuidance, comparisonRows, filterMetric, showEverySeason} from './chartRows';
     import {loadChartRenderer} from './chartRenderer';
     import ComparisonMatrix, {type SummaryRow} from './ComparisonMatrix.svelte';
 
@@ -67,7 +67,7 @@
         if (matrixMode && (!showChart || !hasPlot)) return;
         const host = target;
         if (!host || visibleTarget !== host) return;
-        const themedSpecification = applyTeamChartPalette(filterMetric(specification, metric), team, sport, season);
+        const themedSpecification = applyTeamChartPalette(showEverySeason(filterMetric(specification, metric)), team, sport, season);
         // Vega's concatenated plots do not reliably resolve a hidden container's
         // width. Give each metric plot a measured width, including after expand.
         if (Array.isArray(themedSpecification.vconcat)) {

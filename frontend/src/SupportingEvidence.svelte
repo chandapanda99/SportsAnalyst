@@ -1,9 +1,11 @@
 <script lang="ts">
   import type {Evidence} from './types';
+  import {metricFormatter} from './metricFormat';
 
   export let items: Evidence[] = [];
   export let loading = false;
   export let error = '';
+  export let periods = {baseline: 'Earlier period', comparison: 'Later period'};
   export let retry: () => void = () => {
   };
   const number = (value: number | undefined) => value == null ? 'Not recorded' : new Intl.NumberFormat(undefined, {maximumFractionDigits: 3}).format(value);
@@ -16,20 +18,26 @@
     <button type="button" on:click={retry}>Retry supporting evidence</button>
   {:else}
     {#each items as item}
+      {@const format = metricFormatter(item)}
       <article class="evidence-record">
         <h4>{item.label || `Play ${item.play_id ?? ''}`}</h4>
         {#if item.description}<p>{item.description}</p>{/if}
         <dl>
           {#if item.baseline_value != null}
-            <dt>Reference period</dt>
-            <dd>{number(item.baseline_value)}</dd>
+            <dt>{periods.baseline}</dt>
+            <dd>{format.value(item.baseline_value)}</dd>
           {/if}
           {#if item.comparison_value != null}
-            <dt>Comparison</dt>
-            <dd>{number(item.comparison_value)}</dd>
+            <dt>{periods.comparison}</dt>
+            <dd>{format.value(item.comparison_value)}</dd>
           {/if}
-          <dt>Change / value</dt>
-          <dd>{number(item.value ?? item.epa ?? item.metric_value)} {item.unit ?? ''}</dd>
+          {#if item.baseline_value != null && item.comparison_value != null}
+            <dt>Change</dt>
+            <dd>{format.change(item.value)}</dd>
+          {:else}
+            <dt>Value</dt>
+            <dd>{number(item.value ?? item.epa ?? item.metric_value)} {(item.unit ?? '').replaceAll('_', ' ')}</dd>
+          {/if}
           <dt>Sample</dt>
           <dd>{item.sample_size != null ? number(item.sample_size) : item.play_id != null ? '1 play' : 'Not recorded'}</dd>
           {#if item.context?.players}

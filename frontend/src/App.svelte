@@ -19,6 +19,7 @@
   import {expandedQuestions} from './expandedQuestions';
   import {initializeBranding} from './sportsBranding';
   import {questionBanks, supplementalQuestionBanks} from './questionCatalog';
+  import {changeVerdict, metricColumns, metricFormatter, periodLabel} from './metricFormat';
   import type {
     AnalysisOptions,
     Capabilities,
@@ -207,6 +208,11 @@
   let metricInfoError = '';
   let metricInfoLoading = false;
   let metricInfoVersion = 0;
+  let metricInfoElement: HTMLElement | null = null;
+  let metricInfoTrigger: HTMLElement | null = null;
+  let playPanelElement: HTMLElement | null = null;
+  let playTrigger: HTMLElement | null = null;
+  let metricDirections: Record<string, boolean | null> = {};
   $: setup = analysisOptions?.data_setup;
   $: requiredSources = (setup?.required_datasets?.length ? setup.required_datasets : ['play_by_play'])
       .filter(source => !(analysisOptions?.automatic_preparation && activeSport === 'nba'
@@ -218,18 +224,22 @@
           || item.partition_key === `team:${resolvedTeam}`))).map(source => `${seasonLabel(season)} · ${datasetLabel(source)}`));
   $: dataReady = activeSport === 'cfb' ? Boolean(analysisOptions && resolvedTeam && !cfbLoading && !cfbError && !cfbHistoryLoading)
       : Boolean(analysisOptions && requiredSeasons.length && (analysisOptions.automatic_preparation || !sourceGaps.length));
+  $: scopeDataSynced = dataReady && !sourceGaps.length;
+  $: dataStatusLabel = scopeDataSynced ? 'Data synced'
+      : activeSport === 'cfb' && !resolvedTeam ? 'Choose a school to check its data'
+          : dataReady ? 'Missing data will prepare when you run' : 'Sync required data';
+  $: dataStatusDetail = activeSport === 'cfb' && !resolvedTeam ? 'Choose a school above to see the data this analysis needs.'
+      : scopeDataSynced ? 'Required data is synced for the selected seasons.'
+          : dataReady ? `${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source is' : 'sources are'} not synced yet. Sync now, or anything missing prepares when you run the analysis.`
+              : `Sync ${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source' : 'sources'} to run this analysis.`;
+  $: periodBlocker = !windowsDiffer
+      ? analysisDesign === 'full_seasons' ? 'Choose an end season after the start season' : 'Choose two different periods'
+      : !hasSubjectData ? `${selectedPlayer?.name ?? 'This player'} has no recorded data for ${missingPlayerSeasons.map(seasonLabel).join(', ')}`
+          : !hasRequiredData ? `Sync ${missingRequiredSeasons.map(seasonLabel).join(', ')} before running` : '';
   $: readinessSteps = [
-    {
-      ready: dataReady,
-      label: activeSport === 'cfb' || analysisOptions?.automatic_preparation ? 'Missing data prepares automatically; coverage is checked' : dataReady ? 'Required data downloaded' : 'Prepare required data',
-      target: 'data-setup'
-    },
+    {ready: dataReady, label: dataStatusLabel, target: 'data-setup'},
     {ready: Boolean(resolvedSubject), label: resolvedSubject ? 'Subject selected' : 'Choose a team or player', target: 'scope-heading'},
-    {
-      ready: windowsDiffer && hasSubjectData && hasRequiredData,
-      label: windowsDiffer && hasSubjectData && hasRequiredData ? 'Comparison periods selected' : 'Choose available, different periods',
-      target: 'comparison-heading'
-    },
+    {ready: !periodBlocker, label: periodBlocker || 'Comparison periods selected', target: 'comparison-heading'},
     {
       ready: selectedAvailableMetricCount > 0,
       label: selectedAvailableMetricCount ? `${selectedAvailableMetricCount} metrics selected` : 'Choose at least one metric',
@@ -243,7 +253,7 @@
   $: periodBrief = draftPeriodBrief({
     activeSport,
     comparisonMode,
-    baseline,
+    baseline: periodStart,
     comparison,
     baselineSegment,
     comparisonSegment,
@@ -258,12 +268,14 @@
     comparisonEndDate
   });
   $: if (!metricsEdited && analysisOptions) selectedMetrics = availableMetrics.filter(metric => recommendedMetricIds.includes(metric.value)).map(metric => metric.value);
-  $: if (analysisOptions && !workspaceLoading) updateReadiness(`${activeSport}:${selectedCompetition}:${requiredSeasons.join(',')}:${sourceGaps.join(',')}`, dataReady);
+  $: if (analysisOptions && !workspaceLoading) updateReadiness(`${activeSport}:${selectedCompetition}:${requiredSeasons.join(',')}:${sourceGaps.join(',')}`, scopeDataSynced);
 
   function updateReadiness(key: string, ready: boolean) {
     if (key === readinessKey) return;
     readinessKey = key;
+    // Setup stays open until this scope is synced, then folds into its status line.
     if (!ready) dataManagerOpen = true;
+    else if (!syncComplete) dataManagerOpen = false;
   }
 
   function dismissGuidance() {
@@ -291,11 +303,21 @@
     syncDatasets = suggestedSources.filter(source => packageEligible(source));
   }
 
+  // Keep the opened panel on screen; its trigger can be far above it.
+  async function revealPanel(panel: () => HTMLElement | null, block: ScrollLogicalPosition) {
+    await tick();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    panel()?.scrollIntoView?.({block, behavior: reduceMotion ? 'auto' : 'smooth'});
+    panel()?.focus({preventScroll: true});
+  }
+
   async function explainMetric(metric: MetricOption) {
     const version = ++metricInfoVersion;
     metricInfo = null;
     metricInfoError = '';
     metricInfoLoading = true;
+    metricInfoTrigger = document.activeElement as HTMLElement | null;
+    void revealPanel(() => metricInfoElement, 'nearest');
     try {
       const response = await fetch(`/api/sports/${activeSport}/metrics/${encodeURIComponent(metric.value)}`);
       if (!response.ok) throw new Error('Metric explanation unavailable. Try again.');
@@ -308,9 +330,29 @@
     }
   }
 
-  function numberLabel(value: number | undefined) {
-    return value == null || !Number.isFinite(value) ? 'Not available' : new Intl.NumberFormat(undefined, {maximumFractionDigits: 3}).format(value);
+  function closeMetricInfo() {
+    metricInfoVersion += 1;
+    metricInfo = null;
+    metricInfoError = '';
+    metricInfoLoading = false;
+    metricInfoTrigger?.focus();
   }
+
+  async function loadMetricDirections(result: Investigation) {
+    const sport = result.run.sport ?? 'nfl';
+    const missing = keyMetrics(result).map(item => item.metric ?? '').filter(metric => metric && !(`${sport}:${metric}` in metricDirections));
+    await Promise.all(missing.map(async metric => {
+      try {
+        const response = await fetch(`/api/sports/${sport}/metrics/${encodeURIComponent(metric)}`);
+        if (!response.ok) return;
+        const definition = await response.json();
+        metricDirections = {...metricDirections, [`${sport}:${metric}`]: definition.higher_is_better ?? null};
+      } catch { /* The direction cue is optional. */
+      }
+    }));
+  }
+
+  $: if (active) void loadMetricDirections(active);
 
   function draftPeriodBrief(context: {
     activeSport: string;
@@ -346,6 +388,7 @@
       comparisonStartDate,
       comparisonEndDate
     } = context;
+    if (comparisonMode === 'season_vs_prior') return `${seasonLabel(comparison)}, measured against ${seasonLabel(baseline)}`;
     if (comparisonMode === 'full_seasons') return `${seasonLabel(baseline)} → ${seasonLabel(comparison)} · every season in this range`;
     if (comparisonMode === 'before_after_milestone') return `${seasonLabel(baseline)} · before vs. after the All-Star break`;
     if (comparisonMode === 'before_after') return `${seasonLabel(baseline)} · weeks 1–${splitWeek - 1} vs. ${splitWeek}–22`;
@@ -359,11 +402,17 @@
     return result.aggregate_evidence.filter(item => item.baseline_value != null && item.comparison_value != null && (!selected.size || selected.has(item.metric ?? ''))).slice(0, 6);
   }
 
-  $: requiredSeasons = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
+  // One season is reported against the season before it, as a two-season range.
+  $: analysisDesign = comparisonMode === 'season_vs_prior' ? 'full_seasons' : comparisonMode;
+  $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : baseline;
+  $: comparisonOptions = (analysisOptions?.comparison_windows ?? []).flatMap(option => option.value === 'full_seasons'
+      ? [option, {value: 'season_vs_prior', label: 'One season vs. the season before', description: 'Analyze one season, using the season before it as the reference point.'}]
+      : [option]);
+  $: requiredSeasons = analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
       ? [baseline]
-      : comparisonMode === 'full_seasons' && baseline < comparison
-          ? Array.from({length: comparison - baseline + 1}, (_, index) => baseline + index)
-          : [baseline, comparison];
+      : analysisDesign === 'full_seasons' && periodStart < comparison
+          ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index)
+          : [periodStart, comparison];
   $: resolvedTeam = resolveTeam(teamInput);
   $: selectedPlayer = players.find((player) => player.player_id === selectedPlayerId) ?? null;
   $: {
@@ -397,8 +446,8 @@
   });
   $: playerNamesById = new Map(players.map((player) => [player.player_id, player.name]));
   $: visibleDomains = (analysisOptions?.analysis_domains ?? []).filter((domain) => domainAvailableForSubject(domain, subjectType, selectedPlayer));
-  $: windowsDiffer = comparisonMode === 'before_after' || comparisonMode === 'before_after_milestone'
-      || (comparisonMode === 'full_seasons' ? baseline < comparison : activeSport === 'nba'
+  $: windowsDiffer = analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
+      || (analysisDesign === 'full_seasons' ? periodStart < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
           : ['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges'
               ? baseline !== comparison || baselineStartDate !== comparisonStartDate || baselineEndDate !== comparisonEndDate
@@ -416,13 +465,13 @@
       resolvedSubject && question.trim().length >= 3 && windowsDiffer && hasRequiredData && hasSubjectData
       && selectedAvailableMetricCount > 0 && dataReady
   );
-  $: indexedSeasonCount = new Set(datasets.filter((dataset) => dataset.dataset === 'play_by_play').map((dataset) => dataset.season)).size;
+  $: syncedSeasonCount = new Set(datasets.filter((dataset) => dataset.season > 0 && dataset.row_count !== 0).map((dataset) => dataset.season)).size;
   $: domainMetrics = (analysisOptions?.metrics ?? []).filter((metric) =>
       metric.analysis_domain === analysisDomain && (!metric.subject_types?.length || metric.subject_types.includes(subjectType))
   );
   $: metricCategories = [...new Set(domainMetrics.map((metric) => metric.category))];
   $: availableMetrics = domainMetrics.filter(metric => metricAvailable(metric, requiredSeasons, analysisOptions?.automatic_preparation)
-      && !(activeSport === 'soccer' && metric.value.startsWith('season_') && comparisonMode !== 'full_seasons'));
+      && !(activeSport === 'soccer' && metric.value.startsWith('season_') && analysisDesign !== 'full_seasons'));
   $: availableMetricIds = new Set(availableMetrics.map(metric => metric.value));
   $: selectedAvailableMetricCount = availableMetrics.filter((metric) => selectedMetrics.includes(metric.value)).length;
   $: allAvailableMetricsSelected = availableMetrics.length > 0 && selectedAvailableMetricCount === availableMetrics.length;
@@ -447,8 +496,8 @@
       try {
         if (syncing) {
           await streamDatasetSync(pollingStream(pending));
-          await refresh();
           syncComplete = true;
+          await refresh();
           notifyCompletion('Data Sync Complete', 'Your data library has been refreshed.');
         } else {
           await streamInvestigation(pollingStream(pending));
@@ -1255,10 +1304,15 @@
     return play.evidence_role ? labels[play.evidence_role] : play.supporting ? 'Support' : 'Counter';
   }
 
-  function evidenceGroups(plays: Evidence[]) {
+  function reportPeriods(result: Investigation) {
+    const {baseline: start, comparison: end, comparison_design: design} = result.run.scope;
+    return {baseline: periodLabel(start, design, seasonLabel), comparison: periodLabel(end, design, seasonLabel)};
+  }
+
+  function evidenceGroups(plays: Evidence[], periods: { baseline: string; comparison: string }) {
     const definitions = [
-      {key: 'baseline', label: 'Reference period'},
-      {key: 'comparison', label: 'Comparison window'},
+      {key: 'baseline', label: periods.baseline},
+      {key: 'comparison', label: periods.comparison},
       {key: 'legacy', label: 'Selected evidence'}
     ];
     return definitions.map((definition) => ({
@@ -1571,7 +1625,16 @@
         if (!thread.some((turn) => turn.run.investigation_id === investigationId)) {
           throw new Error('The completed investigation thread was incomplete.');
         }
-        active = result;
+        // A follow-up joins the thread; the report the reader is on stays as written.
+        if (followupBusy && active) {
+          conversationThread = thread;
+          void loadHistory();
+          await tick();
+          [...document.querySelectorAll('.analyst-row')].at(-1)?.scrollIntoView?.({block: 'nearest'});
+          notifyCompletion('Follow-up Answered', 'Your answer is in the thread below the report.');
+          return true;
+        }
+        active = result.run.parent_investigation_id && thread[0] ? thread[0] : result;
         conversationThread = thread;
         await refresh();
         dismissGuidance();
@@ -1709,7 +1772,7 @@
     progress = 0.03;
     stage = 'Starting investigation';
     try {
-      let baselineWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: baseline, weeks: [1, 22]};
+      let baselineWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: periodStart, weeks: [1, 22]};
       let comparisonWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {
         season: comparison,
         weeks: [1, 22]
@@ -1727,7 +1790,7 @@
         baselineWindow = {season: baseline, weeks: [1, 22], segment: 'pre_all_star'};
         comparisonWindow = {season: baseline, weeks: [1, 22], segment: 'post_all_star'};
       } else if (activeSport === 'nba') {
-        baselineWindow = {season: baseline, weeks: [1, 22], segment: 'full_season'};
+        baselineWindow = {season: periodStart, weeks: [1, 22], segment: 'full_season'};
         comparisonWindow = {season: comparison, weeks: [1, 22], segment: 'full_season'};
       } else if (['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges') {
         baselineWindow = {...baselineWindow, ...(baselineStartDate ? {start_date: baselineStartDate} : {}), ...(baselineEndDate ? {end_date: baselineEndDate} : {})};
@@ -1758,7 +1821,7 @@
           baseline: baselineWindow,
           comparison: comparisonWindow,
           season_type: seasonType,
-          comparison_design: comparisonMode
+          comparison_design: analysisDesign
         },
         metrics,
         splits
@@ -1824,8 +1887,8 @@
           activeSport === 'cfb' ? [resolvedTeam] : downloadScope.team_ids,
           activeSport === 'cfb' ? undefined : {conference_id: downloadScope.conference_id, division_id: downloadScope.division_id});
       await streamDatasetSync(stream);
-      await refresh();
       syncComplete = true;
+      await refresh();
       busy = false;
       syncing = false;
       notifyCompletion('Data Sync Complete', activeSport === 'cfb' ? 'Your data library has been refreshed.'
@@ -1872,8 +1935,16 @@
   }
 
   function openPlay(play: Evidence) {
+    playTrigger = document.activeElement as HTMLElement | null;
     selectedPlay = play;
     void inspect(play.evidence_id);
+    void revealPanel(() => playPanelElement, 'start');
+  }
+
+  async function closePlay() {
+    selectedPlay = null;
+    await tick();
+    playTrigger?.focus();
   }
 
   function rootIdFor(investigation: Investigation | InvestigationSummary) {
@@ -1978,7 +2049,6 @@
     followupBusy = true;
     pendingFollowup = question;
     followup = '';
-    clearEvidenceSelection();
     try {
       const body = await api.followUpStream(root.run.investigation_id, question);
       await streamInvestigation(body);
@@ -2110,7 +2180,7 @@
         <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
       </div>
       <div class="status-chip">
-        <Icon name="database" size={16}/>{indexedSeasonCount} seasons · {datasets.length} data packages
+        <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} synced · {datasets.length} local files
       </div>
     </header>
 
@@ -2132,25 +2202,11 @@
           <div class="scope-heading">
             <div><span class="eyebrow">01 · Subject</span>
               <h3 id="scope-heading" tabindex="-1">{activeSport === 'cfb' ? 'Choose Your Subject' : 'Who do you want to understand?'}</h3></div>
-            <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons available'}</span></div>
+            <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons to choose from'}</span></div>
           {#if activeSport === 'cfb'}
             <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
                           initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
             {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
-          {/if}
-          {#if activeSport === 'soccer'}
-            <div class="soccer-competition-bar subject-competition-bar">
-              <label for="subject-soccer-competition">Competition / League</label>
-              <span class="soccer-competition-select">
-                    <select id="subject-soccer-competition" value={selectedCompetition} disabled={busy}
-                            on:change={(event) => void selectCompetition(event.currentTarget.value)}>
-                      {#each soccerCompetitions as competition}
-                        <option value={competition.value}>{competition.label}</option>
-                      {/each}
-                    </select>
-                    <Icon name="chevron-down" size={17}/>
-                  </span>
-            </div>
           {/if}
           {#if activeSport === 'cfb' && subjectType === 'player' && !resolvedTeam}
             <p class="section-help">Choose a school above to browse its players. Full analysis datasets are not required to select your subject.</p>
@@ -2280,8 +2336,8 @@
               <ol class="guide-steps">
                 <li>
                   <span class="guide-icon"><Icon name={activeSport === 'cfb' ? 'clipboard-plus' : 'database'} size={22}/></span>
-                  <div><small>Step 1</small><b>{activeSport === 'cfb' ? 'Choose Your Subject' : 'Prepare the Right Data'}</b>
-                    <p>{activeSport === 'cfb' ? 'Browse a season, subdivision, conference, and school, then choose a team or player. Selecting a conference filters schools; it does not download them.' : 'Download both seasons and the recommended sources. Required sources unlock the analysis; recommended sources add player names and context.'}</p>
+                  <div><small>Step 1</small><b>{activeSport === 'cfb' ? 'Choose Your Subject' : 'Set Up and Sync Data'}</b>
+                    <p>{activeSport === 'cfb' ? 'Browse a season, subdivision, conference, and school, then choose a team or player. Selecting a conference filters schools; it does not download them.' : 'Sync the seasons you want to analyze. Required sources power the analysis; recommended sources add player names and context. Anything still missing prepares when you run.'}</p>
                     <button type="button" class="guide-step-action" on:click={() => focusSection(activeSport === 'cfb' ? 'scope-heading' : 'data-setup')}>
                       {activeSport === 'cfb' ? 'Choose a subject' : 'Open Data Setup'}
                       <Icon name="arrow-right" size={15}/>
@@ -2291,7 +2347,7 @@
                 <li>
                   <span class="guide-icon"><Icon name="clipboard-plus" size={22}/></span>
                   <div><small>Step 2</small><b>{activeSport === 'cfb' ? 'Prepare Your Comparison' : 'Define a Focused Comparison'}</b>
-                    <p>{activeSport === 'cfb' ? 'Review data for your selected school, then choose two periods and the metrics to compare. Missing investigation data prepares automatically; manual downloads are optional.' : 'Choose one team or player, two distinct periods, and the metrics that best match what you want to understand.'}</p>
+                    <p>{activeSport === 'cfb' ? 'Review data for your selected school, then choose two periods and the metrics to compare. Sync now, or missing data prepares when you run.' : 'Choose one team or player, two distinct periods, and the metrics that best match what you want to understand.'}</p>
                     <button type="button" class="guide-step-action" on:click={() => focusSection(activeSport === 'cfb' ? 'data-setup' : 'scope-heading')}>
                       {activeSport === 'cfb' ? 'Open Data Setup' : 'Choose a subject'}
                       <Icon name="arrow-right" size={15}/>
@@ -2317,11 +2373,25 @@
             </section>
           {/if}
           {#if activeSport === 'cfb'}{@render subjectCard()}{/if}
+          {#if activeSport === 'soccer'}
+            <div class="soccer-competition-bar">
+              <label for="soccer-competition">Competition</label>
+              <span class="soccer-competition-select">
+                <select id="soccer-competition" value={selectedCompetition} disabled={busy}
+                        on:change={(event) => void selectCompetition(event.currentTarget.value)}>
+                  {#each soccerCompetitions as competition}
+                    <option value={competition.value}>{competition.label}</option>
+                  {/each}
+                </select>
+                <Icon name="chevron-down" size={17}/>
+              </span>
+            </div>
+          {/if}
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
               <span>{#if activeSport === 'cfb'}<span class="eyebrow">02 · Data</span>{/if}
-                <strong>{dataReady && !sourceGaps.length ? 'Data Ready · Manage Data' : 'Prepare Data'}</strong><small>{activeSport === 'cfb' ? 'Downloads follow your subject selection above. Missing investigation data prepares automatically.' : analysisOptions?.automatic_preparation ? 'Missing investigation data prepares automatically; explicit downloads remain available.' : dataReady ? 'Required sources are downloaded for these periods.' : 'Start with the essentials. Add more detail whenever you need it.'}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
+                <strong>{scopeDataSynced ? 'Data Ready · Manage Data' : 'Sync Data'}</strong><small>{dataStatusDetail}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' && resolvedTeam ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
               </i></b></summary>
@@ -2339,10 +2409,6 @@
                       <button type="button" aria-pressed={!customizeSources} on:click={chooseQuickSetup}>Recommended setup</button>
                       <button type="button" aria-expanded={customizeSources} on:click={() => customizeSources = !customizeSources}>Customize data sources</button>
                     </div>
-                    <button type="button" class="reset-synced-data-button" disabled={busy} on:click={clearDownloadedData}>
-                      <Icon name="trash" size={16}/>
-                      {busy && stage === 'Clearing downloaded data' ? 'Resetting Synced Data…' : 'Reset Synced Data'}
-                    </button>
                   </div>
                 {/if}
               </div>
@@ -2355,20 +2421,6 @@
                   {#if !resolvedTeam}
                     <button type="button" on:click={() => focusSection('scope-heading')}>Choose a School</button>
                   {/if}
-                </div>
-              {/if}
-              {#if activeSport === 'soccer'}
-                <div class="soccer-competition-bar">
-                  <label for="soccer-competition">Competition</label>
-                  <span class="soccer-competition-select">
-                    <select id="soccer-competition" value={selectedCompetition} disabled={busy}
-                            on:change={(event) => void selectCompetition(event.currentTarget.value)}>
-                      {#each soccerCompetitions as competition}
-                        <option value={competition.value}>{competition.label}</option>
-                      {/each}
-                    </select>
-                    <Icon name="chevron-down" size={17}/>
-                  </span>
                 </div>
               {/if}
               {#if activeSport !== 'cfb' && analysisOptions}
@@ -2474,6 +2526,15 @@
                     </button>
                   </div>
                 {/if}
+                {#if datasets.length}
+                  <div class="reset-data-zone">
+                    <p><strong>Reset synced data</strong><span>Removes every downloaded file for this {activeSport === 'soccer' ? 'competition' : 'sport'}. Saved analyses stay.</span></p>
+                    <button type="button" class="reset-synced-data-button" disabled={busy} on:click={clearDownloadedData}>
+                      <Icon name="trash" size={16}/>
+                      {busy && stage === 'Clearing downloaded data' ? 'Resetting Synced Data…' : 'Reset Synced Data'}
+                    </button>
+                  </div>
+                {/if}
               {/if}
             </div>
           </details>
@@ -2490,9 +2551,9 @@
               <div class="scope-controls">
                 <label>Comparison type
                   <select bind:value={comparisonMode}>
-                    {#each analysisOptions?.comparison_windows ?? [] as option}
+                    {#each comparisonOptions as option}
                       <option value={option.value}
-                              disabled={option.value === 'full_seasons' && scopeSeasons.length < 2}>{option.label}</option>
+                              disabled={['full_seasons', 'season_vs_prior'].includes(option.value) && scopeSeasons.length < 2}>{option.label}</option>
                     {/each}
                   </select>
                 </label>
@@ -2505,9 +2566,19 @@
                 </label>{/if}
               </div>
 
-              <p class="section-help">{analysisOptions?.comparison_windows.find(option => option.value === comparisonMode)?.description ?? ''}</p>
+              <p class="section-help">{comparisonOptions.find(option => option.value === comparisonMode)?.description ?? ''}</p>
               {#if scopeSeasons.length}
-                {#if activeSport === 'soccer' || (activeSport === 'cfb' && comparisonMode === 'date_ranges')}
+                {#if comparisonMode === 'season_vs_prior'}
+                  <div class="window-grid before-after">
+                    <label>Season<select bind:value={comparison}>
+                      {#each scopeSeasons as season}
+                        <option value={season}>{seasonLabel(season)}</option>
+                      {/each}
+                    </select></label>
+                    <div class="window-summary"><span>Measured against</span><strong>{seasonLabel(periodStart)}</strong></div>
+                  </div>
+                  {#if periodBlocker}<p class="validation">{periodBlocker}</p>{/if}
+                {:else if activeSport === 'soccer' || (activeSport === 'cfb' && comparisonMode === 'date_ranges')}
                   <div class="window-grid">
                     <fieldset>
                       <legend>Reference period</legend>
@@ -2710,8 +2781,8 @@
                 {/each}
               </div>
               {#if metricInfoLoading || metricInfo || metricInfoError}
-                <section class="metric-info" aria-label="Metric explanation" aria-live="polite">
-                  <button type="button" on:click={() => { metricInfoVersion += 1; metricInfo = null; metricInfoError = ''; metricInfoLoading = false; }}>Close
+                <section class="metric-info" bind:this={metricInfoElement} tabindex="-1" aria-label="Metric explanation" aria-live="polite">
+                  <button type="button" on:click={closeMetricInfo}>Close
                     explanation
                   </button>
                   {#if metricInfoLoading}<p>Loading metric explanation…</p>{:else if metricInfoError}<p role="alert">{metricInfoError}</p>{:else if metricInfo}
@@ -2785,37 +2856,41 @@
             </div>
           </div>
           <aside class="analysis-brief" aria-label="Analysis brief">
-            <span class="eyebrow">Your Analysis</span>
-            <h3>Analysis brief</h3>
-            <dl>
-              <dt>Subject</dt>
-              <dd>
-                {#if subjectType === 'player' && selectedPlayer}
-                  <PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>
-                {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : teamInput || 'Choose a team'}</dd>
-              <dt>Periods</dt>
-              <dd>{periodBrief}</dd>
-              <dt>Focus</dt>
-              <dd>{displayDomain(analysisDomain)}</dd>
-              <dt>Metrics</dt>
-              <dd>{availableMetrics.filter(metric => selectedMetrics.includes(metric.value)).map(metric => metric.label).join(', ') || 'Choose metrics'}</dd>
-              <dt>Breakdowns</dt>
-              <dd>{selectedSplits.length ? selectedSplits.map(value => analysisOptions?.split_dimensions.find(item => item.value === value)?.label ?? value).join(', ') : 'Recommended automatically'}</dd>
-            </dl>
-            <h4>Ready to run?</h4>
-            <ul class="readiness">
-              {#each readiness as item}
-                <li>
-                  <button type="button" class:ready={item.ready} on:click={() => focusSection(item.target)}><span
-                      aria-label={item.ready ? 'Complete' : 'Needed'}>{item.ready ? '✓' : '○'}</span>{item.label}</button>
-                </li>
-              {/each}
-            </ul>
-            <p class="readiness-message"
-               aria-live="polite">{firstBlocker ? firstBlocker.label : 'Everything is ready. Your analysis will include supporting evidence.'}</p>
-            <button class="primary" disabled={!canRun} on:click={runAnalysis}>Run analysis
-              <Icon name="player-play" size={19}/>
-            </button>
+            <div class="brief-details">
+              <span class="eyebrow">Your Analysis</span>
+              <h3>Analysis brief</h3>
+              <dl>
+                <dt>Subject</dt>
+                <dd>
+                  {#if subjectType === 'player' && selectedPlayer}
+                    <PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>
+                  {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : resolvedTeam ? teamInput : 'Choose a team'}</dd>
+                <dt>Periods</dt>
+                <dd>{periodBrief}</dd>
+                <dt>Focus</dt>
+                <dd>{displayDomain(analysisDomain)}</dd>
+                <dt>Metrics</dt>
+                <dd>{availableMetrics.filter(metric => selectedMetrics.includes(metric.value)).map(metric => metric.label).join(', ') || 'Choose metrics'}</dd>
+                <dt>Breakdowns</dt>
+                <dd>{selectedSplits.length ? selectedSplits.map(value => analysisOptions?.split_dimensions.find(item => item.value === value)?.label ?? value).join(', ') : 'Recommended automatically'}</dd>
+              </dl>
+              <h4>Ready to run?</h4>
+              <ul class="readiness">
+                {#each readiness as item}
+                  <li>
+                    <button type="button" class:ready={item.ready} on:click={() => focusSection(item.target)}><span
+                        aria-label={item.ready ? 'Complete' : 'Needed'}>{item.ready ? '✓' : '○'}</span>{item.label}</button>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+            <div class="brief-run">
+              <p class="readiness-message"
+                 aria-live="polite">{firstBlocker ? firstBlocker.label : 'Everything is ready. Your analysis will include supporting evidence.'}</p>
+              <button class="primary" disabled={!canRun} on:click={runAnalysis}>Run analysis
+                <Icon name="player-play" size={19}/>
+              </button>
+            </div>
           </aside>
         </div>
       </section>
@@ -2852,7 +2927,14 @@
     {:else if active}
       <section class="report-hero">
         <div class="report-summary">
+          {#if active.run.parent_investigation_id && conversationThread[0]}
+            <div class="followup-view">
+              <strong>Follow-up answer</strong>
+              <button type="button" on:click={() => openInvestigation(conversationThread[0])}>Back to the original report</button>
+            </div>
+          {/if}
           <span class="eyebrow">Final Read · {active.fallback_used ? 'Deterministic' : active.model_id}</span>
+          <p class="report-question"><span>Your question</span>{active.run.question}</p>
           <h2>The answer</h2>
           {#if active.run.subject?.type === 'player'}
             <PlayerPortrait id={active.run.subject.id} sport={active.run.sport ?? 'nfl'} name={investigationSubject(active, playerNamesById)}
@@ -2866,18 +2948,35 @@
             <span>{active.claims.length} evidence-bound findings</span>
           </div>
         </div>
-        <a class="export" href={`/api/investigations/${active.run.investigation_id}/export?format=html`}>Export Report
-          <Icon name="file-download" size={17}/>
-        </a>
+        <div class="report-actions">
+          <a class="export" href={`/api/investigations/${active.run.investigation_id}/export?format=html`}>Export Report
+            <Icon name="file-download" size={17}/>
+          </a>
+          <button type="button" class="export" on:click={() => focusSection('followup-question')}>Ask a Follow-up
+            <Icon name="send" size={17}/>
+          </button>
+        </div>
       </section>
-      <section class="key-metrics" aria-label="Key metric changes">
-        {#each keyMetrics(active) as metric}
-          <article><h3>{metric.label}</h3>
-            <div><span>Reference period <b>{numberLabel(metric.baseline_value)}</b></span><span>Comparison <b>{numberLabel(metric.comparison_value)}</b></span></div>
-            <p>Change: <strong>{numberLabel(metric.value)}</strong> {metric.unit ?? ''}</p>
-            <small>Sample: {metric.sample_size == null ? 'Not recorded' : metric.sample_size.toLocaleString()}</small></article>
-        {:else}<p>No comparable metric values are available for these periods. Review the limitations below or adjust your periods and data sources.</p>{/each}
-      </section>
+      {#if !active.run.parent_investigation_id}
+        <section class="key-metrics" aria-label="Key metric changes">
+          {#each keyMetrics(active) as metric}
+            {@const period = metricColumns(metric, active.aggregate_evidence, active.run.scope, seasonLabel)}
+            {@const format = metricFormatter(metric, period.columns.map(column => column.value))}
+            {@const verdict = changeVerdict(metric.value, metricDirections[`${active.run.sport ?? 'nfl'}:${metric.metric}`])}
+            <article><h3>{metric.label}</h3>
+              <div class:many-periods={period.columns.length > 2}>
+                {#each period.columns as column}
+                  <span>{column.label} <b>{format.value(column.value)}</b>
+                    {#if column.sample != null}<small>Sample {column.sample.toLocaleString()}</small>{/if}</span>
+                {/each}
+              </div>
+              <p>Change{period.columns.length > 2 ? `, ${period.columns[0].label} to ${period.columns.at(-1)?.label}` : ''}: <strong>{format.change(metric.value)}</strong>
+                {#if verdict}<em class:worse={verdict === 'Worse'}>{verdict}</em>{/if}</p>
+              {#if period.middleSeasonsMissing}<small>Middle seasons aren't recorded for this metric.</small>{/if}
+            </article>
+          {:else}<p>No comparable metric values are available for these periods. Review the limitations below or adjust your periods and data sources.</p>{/each}
+        </section>
+      {/if}
       <div class="report-grid">
         <section class="findings">
           <div class="section-title"><span>Core Findings</span><small>{active.claims.length} evidence-bound claims</small></div>
@@ -2906,7 +3005,8 @@
             </button>
             {#if selectedClaimId === claim.claim_id}
               <div class="mobile-evidence">
-                <SupportingEvidence items={selectedEvidenceItems} loading={evidenceLoading} error={evidenceError} retry={() => inspectFinding(claim)}/>
+                <SupportingEvidence items={selectedEvidenceItems} loading={evidenceLoading} error={evidenceError} retry={() => inspectFinding(claim)}
+                                    periods={reportPeriods(active)}/>
               </div>
             {/if}
           {:else}<p class="empty-state">No findings could be supported by these data. Check the methodology below, then try different periods or download additional
@@ -2917,7 +3017,7 @@
         <aside class="evidence-panel desktop-evidence" class:empty-evidence-panel={!selectedClaim}>
           {#if selectedClaim}<p class="selected-finding-label">Finding {active.claims.indexOf(selectedClaim) + 1}</p>
             <SupportingEvidence items={selectedEvidenceItems} loading={evidenceLoading} error={evidenceError}
-                                retry={() => selectedClaim && inspectFinding(selectedClaim)}/>
+                                retry={() => selectedClaim && inspectFinding(selectedClaim)} periods={reportPeriods(active)}/>
           {:else}<p class="evidence-panel-empty">Select a finding to see its supporting evidence.</p>{/if}
         </aside>
       </div>
@@ -2963,7 +3063,7 @@
           outcomes that run against the overall trend.</p>
         {#if !active.play_evidence.length}<p class="empty-state">No representative plays are available for this analysis. Review the numerical evidence and source
           limitations above.</p>{/if}
-        {#each evidenceGroups(active.play_evidence) as group}
+        {#each evidenceGroups(active.play_evidence, reportPeriods(active)) as group}
           <div class="evidence-window-group">
             <div class="evidence-window-heading">
               <strong>{group.label}</strong>
@@ -2988,14 +3088,16 @@
           </div>
         {/each}
         {#if selectedPlay}
-          <TabletPanel play={selectedPlay} investigationId={active.run.investigation_id} onclose={() => selectedPlay = null}/>
+          <div class="play-panel" bind:this={playPanelElement} tabindex="-1" role="region" aria-label="Selected play details">
+            <TabletPanel play={selectedPlay} investigationId={active.run.investigation_id} onclose={closePlay}/>
+          </div>
         {/if}
       </section>
       <details class="methodology">
         <summary>How this analysis was calculated</summary>
         <h3>Methodology and limitations</h3>
         {#each active.methodological_caveats as caveat}<p>{caveat}</p>{/each}
-        <p>Reference period means the baseline used to calculate change. Measured findings come from recorded data; interpretations describe possible
+        <p>Change is measured from the earlier period to the later one. Measured findings come from recorded data; interpretations describe possible
           explanations.</p>
         <h3>Sources</h3>
         {#each active.dataset_manifests ?? [] as manifest}<p>{datasetLabel(manifest.dataset)} · {manifest.season} · {manifest.row_count.toLocaleString()}
@@ -3058,7 +3160,7 @@
           {/if}
         </div>
         <div class="chat-composer">
-                    <textarea bind:value={followup} rows="2" disabled={followupBusy}
+                    <textarea id="followup-question" bind:value={followup} rows="2" disabled={followupBusy}
                               aria-label="Ask a follow-up question"
                               placeholder="Ask a follow-up about this investigation…"
                               on:keydown={(event) => {

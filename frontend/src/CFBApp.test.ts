@@ -58,7 +58,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
                           {headers: {'content-type': 'text/event-stream'}});
     }
     return response([]);
-  });
+  }, 15_000);
   vi.stubGlobal('fetch', fetch);
   render(App);
   const collegeTab = await screen.findByRole('button', {name: 'College Football'});

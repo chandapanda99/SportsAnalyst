@@ -49,6 +49,20 @@ export function comparisonRows(spec: Record<string, unknown>) {
   });
 }
 
+/** Small season ranges label every season; Vega's overlap pruning otherwise drops middle years. */
+export function showEverySeason(spec: Record<string, unknown>) {
+  const seasons = new Set(((spec.data as {values?: Record<string, unknown>[]})?.values ?? []).map(row => row.season).filter(season => season != null));
+  if (seasons.size < 2 || seasons.size > 6) return spec;
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit);
+    if (!node || typeof node !== 'object') return node;
+    return Object.fromEntries(Object.entries(node).map(([key, value]) =>
+      [key, key === 'x' && (value as {field?: string})?.field === 'season'
+        ? {...value as object, axis: {...(value as {axis?: object}).axis, labelOverlap: false}} : visit(value)]));
+  };
+  return visit(spec) as Record<string, unknown>;
+}
+
 export function filterMetric(spec: Record<string, unknown>, metric: string) {
   if (!metric) return spec;
   return {...spec, data: {...spec.data as object, values: ((spec.data as {values?: MetricValue[]})?.values ?? []).filter(row => row.metric === metric)},

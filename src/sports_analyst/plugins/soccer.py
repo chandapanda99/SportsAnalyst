@@ -128,6 +128,10 @@ def _match_window(frame: pl.DataFrame, start: str | None, end: str | None) -> pl
     return frame
 
 
+HIGHER_IS_BETTER = {"points_per_match": True, "win_rate": True, "goals_for_per_match": True,
+                    "goals_against_per_match": False, "loss_rate": False, "cards": False}
+
+
 class SoccerPlugin:
     sport_id = "soccer"
     display_name = "Soccer"
@@ -258,6 +262,7 @@ class SoccerPlugin:
         return MetricDefinition(value=metric, label=label, category=domain.title(), description=description,
                                 formula=description, qualifying_plays=f"Completed matches with {source} coverage.",
                                 interpretation="Compare both windows and their sample sizes.",
+                                higher_is_better=HIGHER_IS_BETTER.get(metric),
                                 limitations=["ESPN match sections may be absent or incomplete for some competitions and seasons."]
                                 + (["xG measures chance quality before shot outcome; xG on target is a different statistic.",
                                     "Missing xG is excluded rather than counted as zero. Compare the reported covered-match samples.",

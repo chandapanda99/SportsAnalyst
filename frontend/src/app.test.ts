@@ -293,10 +293,28 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.focus(team);
     await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getByText('Missing data prepares automatically; coverage is checked')).toBeTruthy();
+    expect(screen.getByText('Missing data will prepare when you run')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/sync-stream'))).toBe(false);
+  });
+
+  it('runs one season against the season before it and explains blocked periods', async () => {
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.change(screen.getByLabelText('From season'), {target: {value: '2025'}});
+    expect((await screen.findAllByText('Choose an end season after the start season')).length).toBeGreaterThan(0);
+    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'season_vs_prior'}});
+    await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText('Measured against')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
+    const [, request] = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/investigations/stream'))!;
+    expect(JSON.parse(String(request?.body)).scope).toMatchObject({
+      comparison_design: 'full_seasons', baseline: {season: 2024}, comparison: {season: 2025}
+    });
   });
 
   it('guides an empty library through explicit quick setup and remembers onboarding dismissal', async () => {
@@ -515,7 +533,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByText('Basketball analysis')).toBeTruthy();
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
-    await fireEvent.click(screen.getByText(/Data Ready · Manage Data|Prepare Data/, {selector: 'strong'}));
+    await fireEvent.click(screen.getByText(/Data Ready · Manage Data|Sync Data/, {selector: 'strong'}));
     await fireEvent.click(await screen.findByRole('button', {name: 'Customize data sources'}));
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
@@ -689,6 +707,84 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByText('Analysis Deleted')).toBeTruthy();
   });
 
+  it('keeps the report in place when a follow-up is answered', async () => {
+    const root = {
+      run: {
+        investigation_id: 'investigation-root', sport: 'nfl', question: 'How did the passing game change?', created_at: '2026-08-21T12:00:00Z', metrics: ['success_rate'],
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 22] }, comparison: { season: 2025, weeks: [1, 22] }
+        }
+      },
+      summary: 'The original report answer.', claims: [], play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true,
+      aggregate_evidence: [{evidence_id: 'success', metric: 'success_rate', label: 'Success rate', unit: 'rate', value: 0.0443,
+        baseline_value: 0.3884, comparison_value: 0.4327, sample_size: 594, context: {baseline_sample: 636, comparison_sample: 594}}]
+    };
+    const answer = {...root, summary: 'The third-down answer.', aggregate_evidence: [],
+      run: {...root.run, investigation_id: 'investigation-answer', parent_investigation_id: 'investigation-root', question: 'What about third down?', created_at: '2026-08-21T13:00:00Z'}};
+    mockInvestigations = [root];
+    render(App);
+    await fireEvent.click(await screen.findByText('How did the passing game change?'));
+    expect(await screen.findByText('Your question')).toBeTruthy();
+    expect(screen.getByText('38.8%')).toBeTruthy();
+    expect(screen.getByText('+4.4 pct pts')).toBeTruthy();
+    expect(screen.getByText('Sample 636')).toBeTruthy();
+
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST' && url.includes('investigation-root')) {
+        mockInvestigations = [answer, root];
+        return new Response('data: {"stage":"complete","message":"Done","progress":1,"investigation_id":"investigation-answer"}\n\n',
+                            {headers: {'content-type': 'text/event-stream'}});
+      }
+      if (url.endsWith('/investigations/investigation-answer')) return new Response(JSON.stringify(answer));
+      if (url.includes('investigation-answer') || url.includes('investigation-root/thread')) return new Response(JSON.stringify([root, answer]));
+      return baseFetch(input, init);
+    });
+    const scrollTo = vi.fn();
+    vi.stubGlobal('scrollTo', scrollTo);
+    await fireEvent.input(screen.getByRole('textbox', {name: 'Ask a follow-up question'}), {target: {value: 'What about third down?'}});
+    await fireEvent.click(screen.getByRole('button', {name: 'Send'}));
+
+    expect(await screen.findByText('The third-down answer.')).toBeTruthy();
+    expect(screen.getAllByText('The original report answer.').length).toBeGreaterThan(0);
+    expect(document.querySelector('.report-summary')?.textContent).toContain('The original report answer.');
+    expect(screen.getByText('38.8%')).toBeTruthy();
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByText('The third-down answer.'));
+    expect(await screen.findByRole('button', {name: 'Back to the original report'})).toBeTruthy();
+    expect(document.querySelector('.key-metrics')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', {name: 'Back to the original report'}));
+    await waitFor(() => expect(document.querySelector('.key-metrics')).toBeTruthy());
+  });
+
+  it('moves to a selected play and returns focus when it closes', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mockInvestigations = [{
+      run: {
+        investigation_id: 'investigation-play', sport: 'nfl', question: 'Which play mattered?', created_at: '2026-08-21T12:00:00Z',
+        scope: {
+          team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+          baseline: { season: 2024, weeks: [1, 22] }, comparison: { season: 2025, weeks: [1, 22] }
+        }
+      },
+      summary: 'Summary', claims: [], aggregate_evidence: [], charts: [], methodological_caveats: [], fallback_used: true,
+      play_evidence: [{evidence_id: 'play-one', game_id: '2025_02_BUF_KC', play_id: 24, description: 'A key play.', epa: 1.1, supporting: true, window: 'comparison'}]
+    }];
+    render(App);
+    await fireEvent.click(await screen.findByText('Which play mattered?'));
+    const play = await screen.findByRole('button', {name: /Inspect .* evidence from 2025_02_BUF_KC/});
+    play.focus();
+    await fireEvent.click(play);
+    const panel = await screen.findByRole('region', {name: 'Selected play details'});
+    await waitFor(() => expect(document.activeElement).toBe(panel));
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({block: 'start'}));
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
   it('shows diversified representative evidence by comparison window and selection role', async () => {
     mockInvestigations = [{
       run: {
@@ -716,8 +812,8 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     await fireEvent.click(await screen.findByText('Which plays explain the change?'));
 
-    expect(await screen.findByText('Reference period')).toBeTruthy();
-    expect(screen.getByText('Comparison window')).toBeTruthy();
+    expect(await screen.findByText('2024', {selector: '.evidence-window-heading strong'})).toBeTruthy();
+    expect(screen.getByText('2025', {selector: '.evidence-window-heading strong'})).toBeTruthy();
     expect(screen.getByText('1 of 160 qualifying plays selected')).toBeTruthy();
     expect(screen.getByText('Typical')).toBeTruthy();
     expect(screen.getByText('Counterexample')).toBeTruthy();
@@ -793,16 +889,8 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
       String(input) === '/api/sports/soccer/options?competition=uefa.champions')).toBe(true));
     await fireEvent.change(competition, {target: {value: 'eng.1'}});
-    const dataCard = document.getElementById('data-setup');
-    expect(dataCard?.contains(competition)).toBe(true);
-    const subjectCard = screen.getByRole('heading', {name: 'Who do you want to understand?'}).closest('.scope-card');
-    expect(subjectCard?.contains(competition)).toBe(false);
-    const subjectCompetition = screen.getByLabelText('Competition / League');
-    expect(subjectCard?.contains(subjectCompetition)).toBe(true);
-    await fireEvent.change(subjectCompetition, {target: {value: 'uefa.champions'}});
-    await waitFor(() => expect((competition as HTMLSelectElement).value).toBe('uefa.champions'));
-    await fireEvent.change(subjectCompetition, {target: {value: 'eng.1'}});
-    await waitFor(() => expect((competition as HTMLSelectElement).value).toBe('eng.1'));
+    expect(screen.getAllByRole('option', {name: 'UEFA Champions League'})).toHaveLength(1);
+    expect(document.getElementById('data-setup')?.contains(competition)).toBe(false);
     await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
     const playerInput = screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement;
     await fireEvent.focus(playerInput);

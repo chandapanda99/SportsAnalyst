@@ -7,10 +7,6 @@
     line-height: 1.5;
 }
 
-.subject-competition-bar {
-    margin-block: 1rem;
-}
-
 .soccer-competition-bar {
     display: grid;
     gap: 8px;
@@ -306,8 +302,21 @@
 .analysis-brief {
     position: sticky;
     top: 1.25rem;
+    display: flex;
+    flex-direction: column;
     max-height: calc(100vh - 2.5rem);
+    overflow: hidden;
+}
+
+/* The details scroll; the Run action stays in view. */
+.brief-details {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
+}
+
+.brief-run {
+    flex: none;
 }
 
 .analysis-brief h3 {
@@ -533,6 +542,31 @@ summary {
     max-width: 100%;
 }
 
+.reset-data-zone {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem 1.25rem;
+    margin-top: .5rem;
+    padding-top: .9rem;
+    border-top: 1px solid var(--line);
+}
+
+.reset-data-zone p {
+    flex: 1 1 18rem;
+    display: grid;
+    gap: .2rem;
+    min-width: 0;
+    margin: 0;
+    font-size: .85rem;
+    color: var(--color-text-secondary);
+}
+
+.reset-data-zone strong {
+    color: var(--color-text-primary);
+}
+
 .reset-synced-data-button {
     display: inline-flex;
     align-items: center;
@@ -599,8 +633,33 @@ summary {
 }
 
 .key-metrics article > div {
-    display: flex;
-    gap: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+    gap: 1rem 1.5rem;
+}
+
+.key-metrics article > div.many-periods {
+    grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
+    gap: 1rem;
+}
+
+.key-metrics article > div.many-periods b {
+    font-size: 1.2rem;
+}
+
+.key-metrics p em {
+    margin-left: .35rem;
+    padding: .1rem .45rem;
+    border: 1px solid var(--mint);
+    border-radius: 999px;
+    color: var(--mint);
+    font-size: .78rem;
+    font-style: normal;
+}
+
+.key-metrics p em.worse {
+    border-color: var(--color-status-warning);
+    color: var(--color-status-warning);
 }
 
 .key-metrics span {
@@ -616,7 +675,63 @@ summary {
 }
 
 .key-metrics small {
+    display: block;
+    margin-top: .25rem;
     color: var(--color-text-secondary);
+}
+
+.report-actions {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+}
+
+.report-question {
+    margin: .6rem 0 0;
+    color: var(--color-text-primary);
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.report-summary > .report-question {
+    font-size: 1rem;
+}
+
+.report-question span {
+    display: block;
+    color: var(--color-text-secondary);
+    font-size: .8rem;
+    font-weight: 400;
+}
+
+.followup-view {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem 1rem;
+    margin-bottom: 1rem;
+    padding: .6rem .8rem;
+    border: 1px solid var(--mint);
+    border-radius: .5rem;
+}
+
+.followup-view button {
+    min-height: 2.5rem;
+    padding: .45rem .75rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: .45rem;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    cursor: pointer;
+}
+
+.play-panel {
+    scroll-margin-top: 1rem;
+}
+
+.play-panel:focus, .metric-info:focus {
+    outline: none;
 }
 
 .methodology {
@@ -679,7 +794,7 @@ summary {
 
 .supporting-evidence dl {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(6.5rem, 1fr) minmax(0, auto);
     gap: .35rem .8rem;
     margin-top: .65rem;
     padding-top: .65rem;
@@ -765,9 +880,46 @@ button:disabled {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .guided-workbench {
+        padding-bottom: 6rem;
+    }
+
     .analysis-brief {
         position: static;
         max-height: none;
+        overflow: visible;
+    }
+
+    .brief-details {
+        overflow: visible;
+    }
+
+    .brief-run {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: clamp(240px, var(--rail-width, 300px), min(34vw, 26rem));
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: .75rem max(1rem, env(safe-area-inset-right)) max(.75rem, env(safe-area-inset-bottom)) 1rem;
+        border-top: 1px solid var(--color-border-strong);
+        background: var(--color-surface);
+    }
+
+    .brief-run .readiness-message {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+    }
+
+    .analysis-brief .brief-run .primary {
+        flex: none;
+        width: auto;
+        margin: 0;
     }
 
     .getting-started .guide-steps {
@@ -797,6 +949,10 @@ button:disabled {
 @media (max-width: 900px) {
     .rail {
         padding: 1rem;
+    }
+
+    .brief-run {
+        left: 0;
     }
 
     .rail nav {
