@@ -1,4 +1,5 @@
 <script lang="ts">
+    import {gameLabel} from './reportText';
     import type {Evidence} from './types';
     import FootballSchematic from './FootballSchematic.svelte';
     import FootballTablet from './FootballTablet.svelte';
@@ -51,10 +52,10 @@
 
 </script>
 
-<FootballTablet label={`Play schematic for ${play.game_id}, play ${play.play_id}`}>
+<FootballTablet label={`Play schematic for ${gameLabel(play)}, play ${play.play_id}`}>
     <header>
         <div><span>PLAY-BY-PLAY SCHEMATIC</span>
-            <h3>{play.game_id} · Play #{play.play_id}</h3></div>
+            <h3>{gameLabel(play)} · Play #{play.play_id}</h3></div>
         <div class="tablet-actions">
             <span>Recorded Play Context</span>
             <button type="button" aria-label="Close play schematic" on:click={onclose}>×</button>

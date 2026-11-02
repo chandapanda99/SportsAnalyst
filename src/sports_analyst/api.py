@@ -22,6 +22,7 @@ from sports_analyst import __version__
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.datasets.errors import safe_sync_message
 from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
+from sports_analyst.jobs.common import TERMINAL_STAGES, JobCancelled
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -148,7 +149,7 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
                 active_work = service.jobs.has_active_work()
             else:
                 record = service.jobs._read_json("jobs/active.json") or {}
-                active_work = any((service.jobs.status(key) or {}).get("stage") not in {"complete", "failed"}
+                active_work = any((service.jobs.status(key) or {}).get("stage") not in TERMINAL_STAGES
                                   for key in record.get("jobs", []))
             if active_work:
                 raise HTTPException(409, "Wait for queued or running jobs to finish before clearing data")
@@ -376,6 +377,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         def execute() -> None:
             try:
                 service.investigate(request, investigation_id)
+            except JobCancelled:
+                logger.info("investigation_cancelled investigation_id=%s", investigation_id)
             except Exception as error:
                 logger.error("investigation_failed investigation_id=%s error_type=%s", investigation_id, type(error).__name__)
                 logger.debug("investigation_failed_details investigation_id=%s", investigation_id, exc_info=True)
@@ -462,6 +465,11 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     def investigation_status(investigation_id: str) -> dict[str, Any]:
         return job_status(investigation_id)
 
+    @api.post("/api/investigations/{investigation_id}/cancel")
+    def cancel_investigation(investigation_id: str) -> dict[str, bool]:
+        """Stop an analysis; False means it had already finished."""
+        return {"cancelled": (service.jobs or service.events).cancel(investigation_id)}
+
     @api.post("/api/investigations/{investigation_id}/follow-ups", status_code=202)
     def follow_up(investigation_id: str, request: FollowUpRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
         try:
@@ -479,6 +487,8 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
         def execute() -> None:
             try:
                 service.follow_up(investigation_id, request.question, child_id)
+            except JobCancelled:
+                logger.info("follow_up_cancelled investigation_id=%s", child_id)
             except Exception as error:
                 logger.error("follow_up_failed investigation_id=%s error_type=%s", child_id, type(error).__name__)
                 logger.debug("follow_up_failed_details investigation_id=%s", child_id, exc_info=True)
@@ -647,13 +657,13 @@ async def _event_stream(
                 for event in events:
                     after = event["sequence"]
                     yield f"id: {after}\n" + _sse(event)
-                    if event["stage"] in {"complete", "failed"}:
+                    if event["stage"] in TERMINAL_STAGES:
                         return
                 if events:
                     deadline = loop.time() + timeout
                 if not events:
                     status = await asyncio.to_thread(service.jobs.status, key)
-                    if status and status.get("stage") in {"complete", "failed"}:
+                    if status and status.get("stage") in TERMINAL_STAGES:
                         yield _sse(status)
                         return
             except Exception as error:
@@ -668,7 +678,7 @@ async def _event_stream(
             after = int(event["sequence"])
             yield f"id: {after}\n" + _sse(event)
             deadline = loop.time() + timeout
-            if event["stage"] in {"complete", "failed"}:
+            if event["stage"] in TERMINAL_STAGES:
                 return
         if loop.time() >= next_heartbeat:
             yield ": keep-alive\n\n"
@@ -723,6 +733,8 @@ async def _investigation_work_stream(service: AnalystApplication, investigation_
     def execute_safely() -> None:
         try:
             execute()
+        except JobCancelled:
+            logger.info("%s_cancelled investigation_id=%s", operation, investigation_id)
         except Exception as error:
             logger.error(
                 "%s_failed investigation_id=%s error_type=%s",

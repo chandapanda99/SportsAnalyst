@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 from sports_analyst.api import _event_stream, create_app
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import Settings
+from sports_analyst.jobs.common import JobCancelled
 from sports_analyst.jobs.local import LeaseLost, QueueFull, SQLiteJobStore
 from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.models import AnalysisRequest, AnalysisScope
+from sports_analyst.storage.local import EventRegistry
 from sports_analyst.worker import execute_job
 
 
@@ -304,6 +306,57 @@ def test_worker_dispatch_reuses_saved_results_and_handles_failures(tmp_path, mon
     application.investigate.side_effect = ValueError("bad request")
     execute_job(settings, job)
     queue.fail.assert_called_with("job", "attempt", False)
+
+
+def test_cancelling_a_local_run_ends_its_stream_and_stops_its_work():
+    events = EventRegistry()
+    events.emit("run", "planning", "Planning", 0.1)
+    assert events.cancel("run") is True
+    assert events.events("run")[-1]["stage"] == "cancelled"
+    assert not events.has_active_work()
+    # The checkpoint before saving raises even inside a broad `except Exception`.
+    with pytest.raises(JobCancelled):
+        try:
+            events.emit("run", "saving", "Saving your report", 0.97)
+        except Exception:  # noqa: BLE001
+            pytest.fail("cancellation must not be swallowed by model fallbacks")
+    assert events.cancel("run") is False
+
+
+def test_cancelling_a_desktop_job_drops_its_lease_and_prevents_recovery(tmp_path):
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+    store.enqueue("job", "investigation", {"sport": "nfl"})
+    job = store.claim(300)
+    assert store.cancel("job") is True
+    assert store.status("job")["stage"] == "cancelled"
+    assert store.heartbeat("job", job["lease_token"], 300) is False
+    with pytest.raises(LeaseLost):
+        store.emit_owned("job", job["lease_token"], "saving", "Saving your report", 0.97)
+    assert store.release("job", job["lease_token"]) is False
+    assert store.claim(300) is None
+    assert store.has_active_work() is False
+    assert store.cancel("job") is False
+
+
+def test_cancelling_a_cloud_job_reaches_its_worker_and_blocks_dispatch():
+    store = ObjectJobStore(MemoryPersistence())
+    store.enqueue("job", "investigation", {"sport": "nfl"})
+    assert store.cancel("job") is True
+    with pytest.raises(JobCancelled):
+        store.emit("job", "saving", "Saving your report", 0.97)
+    assert store.status("job")["stage"] == "cancelled"
+    assert store.reserve_dispatch("job") is None
+    assert store.cancel("job") is False
+
+
+def test_cancel_endpoint_reports_whether_the_run_was_stopped(tmp_path, monkeypatch):
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, job_backend="local"))
+    monkeypatch.setattr(application.store, "_restore_durable_index", lambda: None)
+    client = TestClient(create_app(application))
+    application.events.emit("run", "planning", "Planning", 0.1)
+    assert client.post("/api/investigations/run/cancel").json() == {"cancelled": True}
+    assert client.post("/api/investigations/run/cancel").json() == {"cancelled": False}
+    assert client.get("/api/investigations/run/status").json()["stage"] == "cancelled"
 
 
 def test_sqlite_queue_survives_restart_recovers_leases_and_replays_progress(tmp_path):

@@ -8,6 +8,8 @@
   export let markers: {id: string; label: string}[] = [];
   export let selectedMarker = '';
   export let onselect: (id: string) => void = () => {};
+  export let focusable = true;
+  export let onexpand: (expanded: boolean) => void = () => {};
   let expanded = false;
   let zoom = 1;
   let viewport: HTMLDivElement;
@@ -15,6 +17,7 @@
   let expandButton: HTMLButtonElement;
   let closeButton: HTMLButtonElement;
   let previousOverflow = '';
+  const touchScreen = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   const pointers = new Map<number, {x: number; y: number}>();
   let distance = 0;
   let dragged = false;
@@ -23,11 +26,13 @@
     previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     expanded = true;
+    onexpand(true);
     await tick();
     closeButton.focus();
   }
   async function close() {
     expanded = false;
+    onexpand(false);
     zoom = 1;
     pointers.clear();
     document.body.style.overflow = previousOverflow;
@@ -95,7 +100,7 @@
       <button type="button" aria-label="Zoom out" disabled={zoom <= 1} on:click={() => scale(zoom - .5)}>−</button>
       <output aria-label="Zoom level">{Math.round(zoom * 100)}%</output>
       <button type="button" aria-label="Zoom in" disabled={zoom >= 4} on:click={() => scale(zoom + .5)}>+</button>
-      <button type="button" on:click={focusPlay}>Focus play</button>
+      {#if focusable}<button type="button" on:click={focusPlay}>Focus play</button>{/if}
       <button type="button" on:click={() => scale(1)}>Full view</button>
     {:else}
       <button bind:this={expandButton} type="button" on:click={expand}>Expand {label}</button>
@@ -108,7 +113,7 @@
       </select>
     </label>
   {/if}
-  {#if expanded}<p class="viewer-help">Swipe to pan; pinch or use the buttons to zoom. Tap a marker for details.</p>{/if}
+  {#if expanded}<p class="viewer-help">{touchScreen ? 'Swipe to pan; pinch or use the buttons to zoom.' : 'Use the buttons to zoom, and scroll to move around.'}{markers.length ? ` ${touchScreen ? 'Tap' : 'Select'} a marker for details.` : ''}</p>{/if}
   <!-- Keyboard focus permits arrow-key scrolling; click capture only suppresses clicks after a drag. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
   <div bind:this={viewport} class="schematic-scroll" role="region" aria-label="Scrollable schematic" tabindex="0" on:pointerdown={pointerDown} on:click|capture={(event) => {if (expanded && dragged) {event.preventDefault(); event.stopPropagation(); dragged = false;}}}>
@@ -133,5 +138,7 @@
   .expanded {position:fixed; inset:0; z-index:1000; background:var(--color-surface-panel,#071724); padding: max(.75rem, env(safe-area-inset-top)) max(.75rem, env(safe-area-inset-right)) max(.75rem, env(safe-area-inset-bottom)) max(.75rem, env(safe-area-inset-left)); display:flex; flex-direction:column; box-sizing:border-box;}
   .expanded .schematic-scroll {flex:1; min-height:0; touch-action:none; overscroll-behavior:contain;}
   .expanded .schematic-canvas :global(svg) {display:block; width:100%; height:auto; max-height:none;}
+  .expanded .schematic-canvas :global(.chart.chart) {height:auto; min-height:0; max-height:none; aspect-ratio:auto; overflow:visible;}
+  .expanded .schematic-canvas :global(.chart .vega-embed), .expanded .schematic-canvas :global(.chart .vega-embed > div) {height:auto;}
   .viewer-help {font-size:.85rem; margin:.25rem 0 .75rem;}
 </style>

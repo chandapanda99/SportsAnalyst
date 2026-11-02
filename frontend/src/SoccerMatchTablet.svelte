@@ -83,7 +83,7 @@
     <div>
       <small>RECORDED MATCH CONTEXT</small>
       <h3>{match?.home_team_name ?? 'Home'} vs {match?.away_team_name ?? 'Away'}</h3>
-      <p>{match?.game_date ?? ''} · Match {play.game_id}</p>
+      <p>{match?.game_date ?? 'Recorded match'}</p>
     </div>
     <button type="button" aria-label="Close match detail" on:click={onclose}>×</button>
   </header>

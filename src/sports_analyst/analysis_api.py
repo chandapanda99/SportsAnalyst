@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from sports_analyst.application.service import AnalystApplication
 from sports_analyst.config import get_settings
-from sports_analyst.jobs.common import retryable_job_error
+from sports_analyst.jobs.common import JobCancelled, retryable_job_error
 from sports_analyst.jobs.object_store import ObjectJobStore
 from sports_analyst.observability.logging import configure_logging
 from sports_analyst.storage.persistence import PersistenceBackend, create_persistence_backend
@@ -49,6 +49,8 @@ def execute_analysis(job_id: str, request: Request) -> dict[str, str]:
     status = jobs.status(job_id)
     if status and status.get("stage") == "complete":
         return {"status": "complete"}
+    if status and status.get("stage") == "cancelled":
+        return {"status": "cancelled"}
     jobs.emit(job_id, "preparing", "Preparing analysis data", 0.03)
     logger.info("analysis_task_accepted job_id=%s kind=%s", job_id, kind)
     try:
@@ -58,6 +60,9 @@ def execute_analysis(job_id: str, request: Request) -> dict[str, str]:
         jobs.emit(job_id, "starting", "Starting your analysis", 0.05)
         logger.info("analysis_task_started job_id=%s kind=%s", job_id, kind)
         run_object_analysis(application, job_id, kind, job["payload"])
+    except JobCancelled:
+        logger.info("analysis_task_cancelled job_id=%s", job_id)
+        return {"status": "cancelled"}
     except Exception as error:
         logger.error("analysis_task_failed job_id=%s error_type=%s", job_id, type(error).__name__)
         logger.debug("analysis_task_failed_details job_id=%s", job_id, exc_info=True)

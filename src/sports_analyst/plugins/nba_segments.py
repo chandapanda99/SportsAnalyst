@@ -81,7 +81,7 @@ def _segment_game_ids(frame: pl.DataFrame, season: int, segment: str) -> set[str
         return set()
     segment = segment.lower()
     if segment == "full_season":
-        selected = frame.filter(pl.col("season_type").is_in([2, 3]))
+        selected = frame.filter(pl.col("season_type").cast(pl.Int64, strict=False).is_in([2, 3]))
     elif segment == "regular_season":
         selected = frame.filter(pl.col("season_type") == 2)
     elif segment == "playoffs":

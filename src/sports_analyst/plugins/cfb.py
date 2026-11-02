@@ -122,6 +122,16 @@ class CFBResult:
     caveats: list[str]
 
 
+# Only rates and per-game outcomes: season totals also depend on games played.
+HIGHER_IS_BETTER = {
+    "win_rate": True, "points_per_game": True, "points_allowed_per_game": False, "total_yards_per_game": True,
+    "passing_yards_per_game": True, "net_yards_per_pass_attempt": True, "rushing_yards_per_game": True, "yards_per_rush": True,
+    "third_down_rate": True, "fourth_down_rate": True, "turnovers_per_game": False, "completion_rate": True,
+    "passing_yards_per_attempt": True, "rushing_yards_per_attempt": True, "yards_per_reception": True,
+}
+NEUTRAL_ADVANCED_METRICS = {"pass_over_expected", "expected_pass_rate"}
+
+
 class CFBPlugin:
     sport_id = "cfb"
     display_name = "College Football"
@@ -239,7 +249,7 @@ class CFBPlugin:
                 + (f" and ESPN structured {role}" if role else " and verified possession team"),
                 interpretation="EPA is modeled efficiency; WPA is game-state leverage, not causal individual credit or opponent adjustment. "
                 "CPOE = 100*(completion - modeled completion probability); pass-over-expected = 100*(pass - modeled pass probability).",
-                higher_is_better=True,
+                higher_is_better=None if metric in NEUTRAL_ADVANCED_METRICS else True,
                 limitations=[
                     "Partial source/pipeline coverage is reported; missing plays are not zero.",
                     "WPA uses the spread-free model; no missing betting spread is substituted.",
@@ -262,7 +272,7 @@ class CFBPlugin:
             formula=formula,
             qualifying_plays="Completed games with the required attributed numerator and denominator.",
             interpretation="Descriptive comparison, not opponent-adjusted or a causal estimate.",
-            higher_is_better=None,
+            higher_is_better=HIGHER_IS_BETTER.get(metric),
             limitations=[
                 "Missing values are excluded, never replaced with zero.",
                 "Unequal schedules, FBS/FCS opposition and transfers can affect comparisons.",
@@ -388,9 +398,9 @@ class CFBPlugin:
                     evidence_id=stable_id("evidence", {**parameters, "metric": metric, "rows": rows_hash}),
                     metric=metric,
                     label=METRICS[metric][0],
-                    value=round(after - before, 4),
-                    baseline_value=round(before, 4),
-                    comparison_value=round(after, 4),
+                    value=round(after - before, 6),
+                    baseline_value=round(before, 6),
+                    comparison_value=round(after, 6),
                     sample_size=after_n,
                     unit=METRICS[metric][5],
                     row_set_sha256=sha(

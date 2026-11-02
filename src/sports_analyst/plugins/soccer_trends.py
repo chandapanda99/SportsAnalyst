@@ -89,7 +89,7 @@ def seasonal_evidence(plugin, request, frames, supplemental, aggregates, metrics
             identity = {"execution": execution_id, "metric": source.metric, "season": window.season,
                         "value": round(value, 4), "games": sorted(r["game_id"] for r in sample), "manifests": sorted(manifest_ids)}
             item = AggregateEvidence(evidence_id=stable_id("evidence", identity), metric=f"seasonal_{source.metric}",
-                label=f"{season_label} · {source.label}", value=round(value, 4), unit=source.unit, sample_size=count,
+                label=f"{season_label} · {source.label}", value=round(value, 6), unit=source.unit, sample_size=count,
                 row_set_sha256=hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest(),
                 dataset_manifest_ids=manifest_ids, tool_execution_id=execution_id,
                 caveats=[f"{season_label}: {count} metric-specific qualifying observations.",

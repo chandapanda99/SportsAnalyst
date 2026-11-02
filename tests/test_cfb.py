@@ -1108,3 +1108,13 @@ def test_on_demand_modeled_plays_preserve_attribution_coverage_and_weighting(tmp
     with pytest.raises(ValueError, match="model identity"):
         CFBPlugin().analyze(request, schedules, manifests,
                             {"enriched_plays": {2024: modeled[2024], 2025: modeled[2025].drop("model_identity")}})
+
+
+def test_metric_direction_covers_rates_but_not_totals_or_neutral_tendencies():
+    plugin = CFBPlugin()
+    assert plugin.explain_metric("win_rate").higher_is_better is True
+    assert plugin.explain_metric("points_allowed_per_game").higher_is_better is False
+    assert plugin.explain_metric("turnovers_per_game").higher_is_better is False
+    assert plugin.explain_metric("passing_yards").higher_is_better is None
+    assert plugin.explain_metric("expected_pass_rate").higher_is_better is None
+    assert plugin.explain_metric("epa_per_play").higher_is_better is True

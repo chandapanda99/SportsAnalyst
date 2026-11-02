@@ -29,7 +29,7 @@ export function pollingStream(job: PendingJob, timeoutSeconds?: number): EventSt
             const status = await json<{stage: string; message: string; progress: number}>(`/api/${path}/${encodeURIComponent(job.id)}/status`);
             if (stopped) return;
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(status)}\n\n`));
-            if (['complete', 'failed'].includes(status.stage)) {
+            if (['complete', 'failed', 'cancelled'].includes(status.stage)) {
               try { sessionStorage.removeItem(pendingKey); } catch { /* Optional storage. */ }
               controller.close();
               return;
@@ -164,6 +164,7 @@ export const api = {
     `/api/dataset-jobs/${id}/status`
   ),
   investigationThread: (id: string) => json<Investigation[]>(`/api/investigations/${id}/thread`),
+  cancelInvestigation: (id: string) => json<{ cancelled: boolean }>(`/api/investigations/${id}/cancel`, {method: 'POST'}),
   deleteInvestigation: (id: string) => empty(`/api/investigations/${id}`, { method: 'DELETE' }),
   evidence: (id: string, evidence: string) => json(`/api/investigations/${id}/evidence/${evidence}`),
   evidenceBatch: (id: string, evidenceIds: string[]) => json<Evidence[]>(`/api/investigations/${id}/evidence/batch`, {

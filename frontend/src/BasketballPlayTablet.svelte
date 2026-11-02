@@ -1,4 +1,5 @@
 <script lang="ts">
+    import {gameLabel} from './reportText';
     import type {Evidence} from './types';
     import PlayerPortrait from './PlayerPortrait.svelte';
     import {nbaCourt, nbaCenterToTablet} from './surfaceGeometry';
@@ -135,9 +136,9 @@
 </script>
 
 <section class="tablet basketball" style={`--nba-primary:${teamPalette[0]};--nba-secondary:${teamPalette[1]};--home-primary:${homeVenuePalette[0]};--home-secondary:${homeVenuePalette[1]}`}
-         aria-label={`Basketball play for ${play.game_id}, event ${play.play_id}`}>
+         aria-label={`Basketball play for ${gameLabel(play)}, event ${play.play_id}`}>
     <header>
-        <div><span>NBA PLAY-BY-PLAY{gameDate ? ` · ${gameDate.toUpperCase()}` : ''}</span><h3>{play.game_id} · Event #{play.play_id}</h3></div>
+        <div><span>NBA PLAY-BY-PLAY{gameDate ? ` · ${gameDate.toUpperCase()}` : ''}</span><h3>{gameLabel(play)} · Event #{play.play_id}</h3></div>
         <button type="button" aria-label="Close basketball play" on:click={onclose}>×</button>
     </header>
     <div class="scorebar">

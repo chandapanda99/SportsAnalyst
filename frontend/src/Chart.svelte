@@ -12,9 +12,10 @@
         team: string;
         sport?: string;
         season?: number;
+        title?: string;
     }
 
-    let {specification, team, sport = 'nfl', season}: Props = $props();
+    let {specification, team, sport = 'nfl', season, title}: Props = $props();
     let target = $state<HTMLDivElement>();
     let visibleTarget = $state<HTMLDivElement>();
     let renderError = $state('');
@@ -26,6 +27,7 @@
     let missingPeriods = $derived((specification.usermeta as {missingPeriods?: string[]})?.missingPeriods ?? []);
     let hasPlot = $derived(((filterMetric(specification, metric).vconcat as unknown[] | undefined)?.length ?? 0) > 0);
     let chartWidth = $state(0);
+    let expanded = $state(false);
     let rows = $derived(comparisonRows(specification));
     let visibleRows = $derived(rows.filter(row => !metric || row.metric === metric));
     let series = $derived(chartSeriesStyles(specification, team, sport, season));
@@ -67,13 +69,15 @@
         if (matrixMode && (!showChart || !hasPlot)) return;
         const host = target;
         if (!host || visibleTarget !== host) return;
+        // Expanded size is fixed: following a scrollbar here would redraw and clear the plot endlessly.
+        const plotWidth = expanded ? window.innerWidth - 56 : chartWidth || 640;
         const themedSpecification = applyTeamChartPalette(showEverySeason(filterMetric(specification, metric)), team, sport, season);
         // Vega's concatenated plots do not reliably resolve a hidden container's
         // width. Give each metric plot a measured width, including after expand.
         if (Array.isArray(themedSpecification.vconcat)) {
             themedSpecification.vconcat = themedSpecification.vconcat.map(plot => {
                 const categoryRows = (specification.usermeta as {categoryLayout?: string})?.categoryLayout === 'rows';
-                const width = Math.max(120, (chartWidth || 640) - (categoryRows ? 240 : 72));
+                const width = Math.max(120, plotWidth - (categoryRows ? 240 : 72));
                 const values = (plot.data as {values?: unknown[]} | undefined)?.values ?? [];
                 return {...plot, width, layer: plot.layer?.map((layer: Record<string, unknown>) => {
                     const mark = layer.mark as {type?: string} | undefined;
@@ -84,6 +88,17 @@
                 })};
             });
         }
+        if (expanded) {
+            // Spend the fullscreen height on the plot instead of stretching its width alone.
+            const height = Math.max(260, window.innerHeight - 280);
+            if (Array.isArray(themedSpecification.vconcat)) {
+                const rowHeight = Math.max(180, Math.floor(height / themedSpecification.vconcat.length));
+                themedSpecification.vconcat = themedSpecification.vconcat.map(plot => ({...plot, height: rowHeight}));
+            } else {
+                themedSpecification.width = Math.max(320, plotWidth - 96);
+                themedSpecification.height = height;
+            }
+        }
         let cancelled = false;
         let resizeFrame = 0;
         let view: {finalize: () => void; resize: () => {runAsync: () => Promise<unknown>}} | undefined;
@@ -92,6 +107,7 @@
             : new ResizeObserver(() => {
                 cancelAnimationFrame(resizeFrame);
                 resizeFrame = requestAnimationFrame(() => {
+                    if (expanded) return;
                     const width = Math.round(host.clientWidth);
                     if (width > 0 && width !== chartWidth) chartWidth = width;
                     else void view?.resize().runAsync();
@@ -179,8 +195,8 @@
 {:else if rows.length}<button class="chart-toggle" type="button" aria-expanded={showChart} onclick={() => showChart = !showChart}>{showChart ? 'Hide comparison chart' : 'Show comparison chart'}</button>{/if}
 {#if !matrixMode || (showChart && hasPlot)}
 <div class="chart-visual" class:compact={rows.length > 0 && !showChart}>
-<SchematicViewport label="chart">
-<div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} bind:this={target}>
+<SchematicViewport label="chart" focusable={false} onexpand={value => expanded = value}>
+<div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} bind:this={target} role="img" aria-label={title ?? 'Chart'}>
     {#if renderError}<p class="chart-error">{renderError}</p>{/if}
 </div>
 </SchematicViewport>

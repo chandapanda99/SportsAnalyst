@@ -22,6 +22,13 @@ def accounting_sample():
     return frame, comparison
 
 
+def test_epa_accounting_accepts_float_flags_as_recorded_by_nflverse():
+    flags = ("sack", "interception", "fumble_lost")
+    baseline, comparison = (frame.with_columns(pl.col(flag).cast(pl.Float64) for flag in flags) for frame in accounting_sample())
+    evidence, _, _, gap = phase_accounting(baseline, comparison, [])
+    assert gap is None and evidence
+
+
 def test_epa_accounting_reconciles_unequal_samples_and_preserves_missingness():
     baseline, comparison = accounting_sample()
     sources = [manifest(2024, baseline.columns), manifest(2025, comparison.columns)]

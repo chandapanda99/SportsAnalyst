@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {windowLabel} from './reportText';
   import {onMount, onDestroy} from 'svelte';
   import type {Evidence} from './types';
   import {api} from './api';
@@ -46,7 +47,7 @@
 </script>
 <section class="cfb-game" aria-label="College-football game evidence">
   <header><div><small>COLLEGE FOOTBALL · RECORDED GAME CONTEXT</small><h3>{play.description}</h3>
-    <p>{context?.game_date?.slice(0, 10)} · {play.window} · Game {play.game_id}</p></div>
+    <p>{[context?.game_date?.slice(0, 10), windowLabel(play.window)].filter(Boolean).join(' · ')}</p></div>
     <button type="button" aria-label="Close game evidence" on:click={onclose}>×</button></header>
   <p>Box scores and scoring events are recorded game context. Selected-play schematics use explicitly illustrative formations, not tracking data.</p>
   {#if play.play_id !== 0}

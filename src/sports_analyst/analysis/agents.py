@@ -14,6 +14,7 @@ from sports_analyst.analysis.instructions import (
     PROMPT_VERSION,
     REVIEW_CONTRACT,
     analysis_guidance,
+    season_trajectories,
 )
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
@@ -403,6 +404,8 @@ def _fallback_synthesis(
         seasonal.sort(key=season_year)
         trajectory = ", ".join(f"{item.context.get('season_label') or item.label.split(' ·', 1)[0]}: {float(item.value):.3f}"
                                for item in seasonal)
+        if any(path["reverses_direction"] for path in season_trajectories(seasonal)):
+            summary += f" The path between those seasons was not steady: {trajectory}."
         missing_seasons = sorted(set(analysis_seasons) - {season_year(item) for item in seasonal})
         coverage_note = f" No usable recorded measurement for season IDs {missing_seasons}; these are gaps, not zeroes." if missing_seasons else ""
         claims.append(

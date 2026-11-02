@@ -5,7 +5,7 @@
   export let items: Evidence[] = [];
   export let loading = false;
   export let error = '';
-  export let periods = {baseline: 'Earlier period', comparison: 'Later period'};
+  export let periods = {baseline: 'First period', comparison: 'Second period'};
   export let retry: () => void = () => {
   };
   const number = (value: number | undefined) => value == null ? 'Not recorded' : new Intl.NumberFormat(undefined, {maximumFractionDigits: 3}).format(value);

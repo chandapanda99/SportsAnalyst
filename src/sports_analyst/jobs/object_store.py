@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from sports_analyst.jobs.common import QueueFull
+from sports_analyst.jobs.common import TERMINAL_STAGES, JobCancelled, QueueFull
 from sports_analyst.storage.persistence import PersistenceBackend, normalize_object_key
 
 
@@ -73,7 +73,7 @@ class ObjectJobStore:
             active = {
                 candidate
                 for candidate in candidates
-                if (status := self.status(candidate)) is not None and status.get("stage") not in {"complete", "failed"}
+                if (status := self.status(candidate)) is not None and status.get("stage") not in TERMINAL_STAGES
             }
             if add:
                 if limit and key not in active and len(active) >= limit:
@@ -132,7 +132,7 @@ class ObjectJobStore:
 
     def emit(self, key: str, stage: str, message: str, progress: float, **extra: object) -> None:
         now = time.monotonic()
-        force = stage in {"queued", "dispatching", "provisioning", "retrying", "complete", "failed"}
+        force = stage in {"queued", "dispatching", "provisioning", "retrying", *TERMINAL_STAGES}
         with self._status_lock:
             previous_time, previous_progress = self._last_status.get(key, (float("-inf"), -1.0))
             if (
@@ -143,6 +143,9 @@ class ObjectJobStore:
             ):
                 return
             self._last_status[key] = now, progress
+        # The worker runs in another process, so the ledger carries the cancel.
+        if stage != "cancelled" and (self.status(key) or {}).get("stage") == "cancelled":
+            raise JobCancelled(key)
         sequence = time.time_ns()
         event = {
             **extra,
@@ -155,12 +158,19 @@ class ObjectJobStore:
         if self.record_events:
             self._write_json(self._event_key(key, sequence), event)
         self._write_json(self._status_key(key), event)
-        if stage in {"complete", "failed"}:
+        if stage in TERMINAL_STAGES:
             self._mutate_active(key, add=False)
+
+    def cancel(self, key: str) -> bool:
+        status = self.status(key)
+        if status is None or status.get("stage") in TERMINAL_STAGES:
+            return False
+        self.emit(key, "cancelled", "Analysis cancelled", float(status.get("progress", 0)))
+        return True
 
     def reserve_dispatch(self, key: str, startup_seconds: int = 900) -> int | None:
         status = self.status(key)
-        if status is None or status.get("stage") in {"complete", "failed"}:
+        if status is None or status.get("stage") in TERMINAL_STAGES:
             return None
         # Once a worker has begun, Cloud Run or Cloud Tasks owns retries. Only
         # the pre-start stages are eligible for dispatch recovery.

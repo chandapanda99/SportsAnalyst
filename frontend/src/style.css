@@ -301,7 +301,7 @@ button, input, textarea, select {
     border: 1px solid color-mix(in srgb, var(--mint) 28%, var(--line));
     border-radius: 999px;
     color: var(--mint);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     letter-spacing: .04em
 }
 
@@ -585,7 +585,7 @@ main.soccer-background {
 
 .sport-tabs small {
     color: var(--color-text-tertiary);
-    font: 9px var(--font-mono)
+    font: 11px var(--font-mono)
 }
 
 .topbar {
@@ -727,7 +727,7 @@ main.soccer-background {
 .subject-toggle > span {
     margin-right: 4px;
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     text-transform: uppercase
 }
 
@@ -1603,7 +1603,7 @@ main.soccer-background {
 .season-options small {
     justify-self: end;
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     letter-spacing: 0;
     text-transform: none;
     white-space: nowrap
@@ -1681,7 +1681,7 @@ main.soccer-background {
     border-radius: 999px;
     background: color-mix(in srgb, var(--mint) 10%, transparent);
     color: var(--mint);
-    font: 600 8px var(--font-mono);
+    font: 600 11px var(--font-mono);
     letter-spacing: .04em;
     line-height: 1.4;
     text-transform: uppercase
@@ -1695,7 +1695,7 @@ main.soccer-background {
 
 .dataset-options label small {
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     line-height: 1.25;
     white-space: normal
 }
@@ -1842,7 +1842,7 @@ main.soccer-background {
 
 .progress-message small {
     color: var(--color-text-tertiary);
-    font: 500 10px var(--font-mono);
+    font: 500 11px var(--font-mono);
     letter-spacing: .1em
 }
 
@@ -1940,7 +1940,7 @@ main.soccer-background {
     display: flex;
     justify-content: space-between;
     color: var(--color-text-tertiary);
-    font: 500 10px var(--font-mono);
+    font: 500 11px var(--font-mono);
     letter-spacing: .12em
 }
 
@@ -2080,7 +2080,7 @@ main.soccer-background {
     height: 40px;
     place-items: center;
     border-radius: 50%;
-    font: 600 10px var(--font-mono)
+    font: 600 11px var(--font-mono)
 }
 
 .user-avatar {
@@ -2105,7 +2105,7 @@ main.soccer-background {
     display: block;
     margin: 0;
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     letter-spacing: .08em;
     text-transform: uppercase
 }
@@ -2121,7 +2121,7 @@ main.soccer-background {
 .chat-message-meta time {
     flex: 0 0 auto;
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono);
+    font: 11px var(--font-mono);
     letter-spacing: .04em
 }
 
@@ -2264,7 +2264,7 @@ button.analyst-bubble:focus-visible,
 .chat-composer > small {
     grid-column: 1/-1;
     color: var(--color-text-tertiary);
-    font: 10px var(--font-mono)
+    font: 11px var(--font-mono)
 }
 
 .report-hero h2 {
@@ -2326,9 +2326,11 @@ button.analyst-bubble:focus-visible,
     color: var(--color-text-soft)
 }
 
-.section-title > span {
+.section-title > span, .section-title > h2 {
     flex: 0 0 auto;
+    margin: 0;
     color: var(--color-text-primary);
+    font-family: inherit;
     font-size: 14px;
     font-weight: 600;
     letter-spacing: .1em
@@ -2446,7 +2448,7 @@ button.analyst-bubble:focus-visible,
 
 .citations > span {
     font: 12px var(--font-mono);
-    color: var(--chart-series-3);
+    color: var(--color-text-secondary);
     background: var(--color-surface-chip);
     border: 1px solid var(--color-border-strong);
     padding: 5px 7px;

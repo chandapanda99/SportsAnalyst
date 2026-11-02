@@ -307,6 +307,19 @@ class SQLiteJobStore:
                 **(details or {}),
             )
 
+    def cancel(self, key: str) -> bool:
+        """Drop the lease so the worker's next write or heartbeat stops the attempt."""
+        with self._transaction() as db:
+            row = db.execute("SELECT progress FROM jobs WHERE job_id = ? AND status IN ('queued', 'running')", (key,)).fetchone()
+            if row is None:
+                return False
+            db.execute(
+                "UPDATE jobs SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ?",
+                (_timestamp(), key),
+            )
+            self._event(db, key, "cancelled", "Analysis cancelled", row["progress"])
+            return True
+
     def release(self, key: str, token: str) -> bool:
         """Immediately recover a child that exited before publishing a terminal state."""
         with self._transaction() as db:

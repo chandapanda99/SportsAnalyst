@@ -2,7 +2,7 @@ import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/svel
 import {afterEach, expect, it, vi} from 'vitest';
 import App from './App.svelte';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState({}, '', '/'); });
 
 it.each(['analysis', 'school download', 'conference download', 'conference download with school', 'player selection'])(
   'keeps CFB subject selection first and scopes the %s workflow', async (workflow) => {
@@ -58,7 +58,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
                           {headers: {'content-type': 'text/event-stream'}});
     }
     return response([]);
-  }, 15_000);
+  });
   vi.stubGlobal('fetch', fetch);
   render(App);
   const collegeTab = await screen.findByRole('button', {name: 'College Football'});
@@ -152,4 +152,4 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   expect(submitted.subject).toMatchObject({type: 'team', id: '1'});
   expect(submitted.scope).toMatchObject({team: '1', baseline: {season: 2024}, comparison: {season: 2025}});
   expect(fetch.mock.calls.some(([url]) => String(url).includes('/sync') || String(url).includes('/players'))).toBe(false);
-});
+}, 15_000);

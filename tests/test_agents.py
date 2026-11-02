@@ -8,10 +8,11 @@ from sports_analyst.analysis.agents import (
     SynthesisDraft,
     _citation_ledger,
     _citation_response_model,
+    _fallback_synthesis,
     _formulate_user_message,
     _resolve_citation_draft,
 )
-from sports_analyst.analysis.instructions import PROMPT_VERSION, evidence_brief
+from sports_analyst.analysis.instructions import PROMPT_VERSION, evidence_brief, season_trajectories
 from sports_analyst.config import Settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, DatasetManifest, MetricDefinition, PlayEvidence
 
@@ -233,3 +234,31 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         assert "do not invent a threshold" in " ".join(prompt.lower().split())
     assert "Verify every material sentence" in captured["system_prompt"]
     assert captured["config"]["metadata"]["prompt_version"] == PROMPT_VERSION
+
+
+def seasonal(season: int, value: float, metric: str = "seasonal_epa_per_play") -> AggregateEvidence:
+    return AggregateEvidence(
+        evidence_id=f"evidence-{metric}-{season}", metric=metric, label=f"{season} · EPA/play", value=value,
+        sample_size=1000, row_set_sha256="rows", dataset_manifest_ids=["dataset-1"], tool_execution_id="execution-1",
+    )
+
+
+def test_season_trajectories_flag_a_reversal_hidden_by_the_endpoints():
+    reversal = season_trajectories([seasonal(2025, 0.079), seasonal(2023, -0.049), seasonal(2024, -0.082)])
+    assert reversal == [{
+        "metric": "epa_per_play", "label": "EPA/play", "unit": None, "reverses_direction": True,
+        "path": [{"season": 2023, "value": -0.049}, {"season": 2024, "value": -0.082}, {"season": 2025, "value": 0.079}],
+    }]
+    steady = [seasonal(2023, 0.01, "seasonal_success"), seasonal(2024, 0.02, "seasonal_success"), seasonal(2025, 0.03, "seasonal_success")]
+    assert season_trajectories(steady)[0]["reverses_direction"] is False
+    assert season_trajectories(steady[:2]) == []
+    assert evidence_brief(steady, [], [])["season_trajectories"][0]["metric"] == "success"
+
+
+def test_fallback_summary_reports_a_reversal_instead_of_only_the_endpoints():
+    primary = aggregate_evidence().model_copy(update={"metric": "epa_per_play", "label": "EPA/play", "value": 0.128,
+                                                      "baseline_value": -0.049, "comparison_value": 0.079})
+    draft = _fallback_synthesis("What changed?", "CHI", AnalysisWindow(season=2023), AnalysisWindow(season=2025),
+                                [primary, seasonal(2023, -0.049), seasonal(2024, -0.082), seasonal(2025, 0.079)],
+                                [2023, 2024, 2025], analysis_domain="offense")
+    assert "not steady: 2023: -0.049, 2024: -0.082, 2025: 0.079" in draft.summary

@@ -58,7 +58,7 @@ class NFLTrendMixin:
                         evidence_id=stable_id("evidence", payload),
                         metric=f"seasonal_{metric}",
                         label=f"{season} · {label}",
-                        value=round(value, 4),
+                        value=round(value, 6),
                         unit="percentage_points" if metric == "cpoe" else "rate" if "rate" in metric else "per play",
                         sample_size=frame.height,
                         confidence_low=round(low, 4) if low is not None else None,

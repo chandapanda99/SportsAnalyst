@@ -215,6 +215,7 @@ describe('Open Sports Analyst workbench', () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    window.history.replaceState({}, '', '/');
   });
 
   it('opens the desktop workspace while history is stalled and offers a separate retry on failure', async () => {
@@ -227,7 +228,7 @@ describe('Open Sports Analyst workbench', () => {
     });
     try {
       render(App);
-      await screen.findByText('Loading recent analyses…');
+      await screen.findByText('Loading the Film Room…');
       expect(document.querySelector('.desktop-startup-overlay')).toBeNull();
       failHistory(new Error('Investigation history timed out.'));
       await screen.findByRole('button', {name: 'Retry History'});
@@ -261,7 +262,7 @@ describe('Open Sports Analyst workbench', () => {
   it('renders the scoped investigation entry point without model credentials', async () => {
     render(App);
     expect(await screen.findByText('Football analysis')).toBeTruthy();
-    expect(screen.getByText('Deterministic Mode')).toBeTruthy();
+    expect(await screen.findByText('No AI model set up')).toBeTruthy();
     expect(screen.getByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.getByLabelText('NFL team')).toBeTruthy();
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
@@ -292,6 +293,7 @@ describe('Open Sports Analyst workbench', () => {
     const team = await screen.findByRole('combobox', {name: 'NFL team'});
     await fireEvent.focus(team);
     await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'What changed in the passing game?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByText('Missing data will prepare when you run')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
@@ -307,6 +309,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.change(screen.getByLabelText('From season'), {target: {value: '2025'}});
     expect((await screen.findAllByText('Choose an end season after the start season')).length).toBeGreaterThan(0);
     await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'season_vs_prior'}});
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'What changed in the passing game?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByText('Measured against')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
@@ -361,6 +364,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.focus(team);
     await fireEvent.keyDown(team, {key: 'ArrowDown'});
     await fireEvent.keyDown(team, {key: 'Enter'});
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'What changed in the passing game?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', {name: 'Dismiss guide'}));
     cleanup();
@@ -469,13 +473,14 @@ describe('Open Sports Analyst workbench', () => {
     const team = await screen.findByRole('combobox', {name: 'NFL team'});
     await fireEvent.focus(team);
     await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'What changed in the passing game?'}});
     await fireEvent.click(screen.getByRole('button', {name: /Run analysis/i}));
 
     expect((await screen.findAllByText('The completed analysis response is now visible.')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
     expect(resultAttempts).toBeGreaterThanOrEqual(2);
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
-    expect(await screen.findByText('Analysis Complete')).toBeTruthy();
+    expect(await screen.findByText('Report Ready')).toBeTruthy();
   });
 
   it('offers the 2026 NFL season and syncs its current snapshot', async () => {
@@ -695,16 +700,16 @@ describe('Open Sports Analyst workbench', () => {
     expect(messageTimes).toHaveLength(4);
     expect([...messageTimes].every((time) => /^\d{2}:\d{2}$/.test(time.textContent ?? ''))).toBe(true);
     expect(screen.getAllByText('1 follow-up').length).toBeGreaterThan(0);
-    const deleteButton = screen.getByRole('button', { name: 'Delete investigation thread: Which games changed the most?' });
+    const deleteButton = screen.getByRole('button', { name: 'Delete saved report: Which games changed the most?' });
     expect(deleteButton.classList.contains('delete-report')).toBe(true);
-    expect(screen.getAllByRole('button', { name: /Delete investigation thread/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Delete saved report/ })).toHaveLength(1);
 
     await fireEvent.click(deleteButton);
 
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', expect.objectContaining({method: 'DELETE'}));
     await waitFor(() => expect(screen.queryAllByText('Which games changed the most?')).toHaveLength(0));
     expect(screen.queryAllByText('Was it consistent across the sample?')).toHaveLength(0);
-    expect(await screen.findByText('Analysis Deleted')).toBeTruthy();
+    expect(await screen.findByText('Report Deleted')).toBeTruthy();
   });
 
   it('keeps the report in place when a follow-up is answered', async () => {
@@ -760,6 +765,160 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(document.querySelector('.key-metrics')).toBeTruthy());
   });
 
+  const savedReport = (id: string, question: string, sport = 'nfl') => ({
+    run: {
+      investigation_id: id, sport, question, created_at: '2026-08-21T12:00:00Z',
+      scope: {
+        team: 'KC', comparison_design: 'full_seasons', season_type: 'REG',
+        baseline: { season: 2024, weeks: [1, 22] }, comparison: { season: 2025, weeks: [1, 22] }
+      }
+    },
+    summary: `Answer for ${question}`, claims: [], aggregate_evidence: [], play_evidence: [], charts: [], methodological_caveats: [], fallback_used: true
+  });
+
+  it('starts with an empty question and suggests examples as a placeholder', async () => {
+    render(App);
+    const field = await screen.findByLabelText('Your Question:') as HTMLTextAreaElement;
+    expect(field.value).toBe('');
+    expect(field.placeholder).toMatch(/^For example: /);
+    expect((await screen.findAllByText('Add your question')).length).toBeGreaterThan(0);
+  });
+
+  it('lists every saved report behind a toggle and explains an empty Film Room', async () => {
+    render(App);
+    expect(await screen.findByText(/No saved reports for this sport yet/)).toBeTruthy();
+    cleanup();
+    mockInvestigations = Array.from({length: 10}, (_, index) => savedReport(`investigation-${index}`, `Saved question ${index}`));
+    render(App);
+    await screen.findByText('Saved question 0');
+    expect(screen.queryByText('Saved question 9')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', {name: 'Show all 10'}));
+    expect(screen.getByText('Saved question 9')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Show fewer'}));
+    expect(screen.queryByText('Saved question 9')).toBeNull();
+  });
+
+  it('renders model markdown as text and hides technical identifiers', async () => {
+    mockInvestigations = [{...savedReport('investigation-plain', 'What changed?'), model_id: 'azure_foundry:test', fallback_used: false,
+      summary: 'Across *all qualifying plays*, EPA **rose**.',
+      claims: [{claim_id: 'claim-one', claim_type: 'measured', statement: 'A *measured* gain.', confidence: 'high', evidence_ids: ['evidence-abcdef0123456789', 'evidence-second']}],
+      play_evidence: [{evidence_id: 'play-one', game_id: '2023_14_DET_CHI', play_id: 210, description: 'A play.', epa: 1.1, supporting: true, window: 'baseline', candidate_pool_size: 1089}]}];
+    render(App);
+    await fireEvent.click(await screen.findByText('What changed?'));
+    await screen.findByText('Week 14 · DET at CHI');
+    const page = document.querySelector('main')?.textContent ?? '';
+    expect(page).not.toContain('*');
+    expect(page).not.toContain('2023_14_DET_CHI');
+    expect(page).not.toContain('evidence-abcdef');
+    expect(document.querySelector('.report-summary')?.textContent).not.toContain('azure_foundry');
+    expect(screen.getByText('2 sources')).toBeTruthy();
+    expect(screen.getByText('1 of 1,089 qualifying plays selected')).toBeTruthy();
+  });
+
+  it('gives each report a URL that reloads and follows browser history', async () => {
+    mockInvestigations = [savedReport('investigation-linked', 'What changed for Kansas City?')];
+    window.history.replaceState({}, '', '/#/reports/investigation-linked');
+    const {unmount} = render(App);
+    expect((await screen.findAllByText('Answer for What changed for Kansas City?')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(document.title).toContain('report'));
+    unmount();
+
+    window.history.replaceState({}, '', '/');
+    render(App);
+    await fireEvent.click(await screen.findByText('What changed for Kansas City?'));
+    await waitFor(() => expect(window.location.hash).toBe('#/reports/investigation-linked'));
+    await fireEvent.click(screen.getByRole('button', {name: 'New Analysis'}));
+    await waitFor(() => expect(window.location.hash).toBe(''));
+    expect(await screen.findByText('Who do you want to understand?')).toBeTruthy();
+    window.history.replaceState({}, '', '/#/reports/investigation-linked');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect((await screen.findAllByText('Answer for What changed for Kansas City?')).length).toBeGreaterThan(0);
+  });
+
+  it('explains a report link that no longer exists', async () => {
+    window.history.replaceState({}, '', '/#/reports/investigation-deleted');
+    render(App);
+    expect(await screen.findByText('That report could not be found. It may have been deleted.')).toBeTruthy();
+    expect(window.location.hash).toBe('');
+    expect(screen.getByText('Who do you want to understand?')).toBeTruthy();
+  });
+
+  it('cancels a running analysis and returns to the selections', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    let finish: (() => void) | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('data: {"stage":"planning","message":"Planning analysis","progress":0.1}\n\n'));
+        finish = () => {
+          controller.enqueue(encoder.encode('data: {"stage":"cancelled","message":"Analysis cancelled","progress":0.1}\n\n'));
+          controller.close();
+        };
+      }
+    });
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST' && url.endsWith('/investigations/stream')) {
+        return new Response(body, {headers: {'content-type': 'text/event-stream', 'x-investigation-id': 'investigation-running'}});
+      }
+      if (url.endsWith('/investigations/investigation-running/cancel')) {
+        finish?.();
+        return new Response(JSON.stringify({cancelled: true}));
+      }
+      return baseFetch(input, init);
+    });
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'What changed in the passing game?'}});
+    const run = screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(false));
+    await fireEvent.click(run);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Cancel Analysis'}));
+    expect(await screen.findByText('Analysis Cancelled')).toBeTruthy();
+    expect((screen.getByRole('combobox', {name: 'NFL team'}) as HTMLInputElement).value).toContain('Kansas City');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', {name: 'Run analysis'})));
+  });
+
+  it('says plainly when the analysis service is not running', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.useFakeTimers({shouldAdvanceTime: true});
+    let online = false;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!online) throw new TypeError('Failed to fetch');
+      return baseFetch(input, init);
+    });
+    try {
+      render(App);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(await screen.findByText("The analysis service isn't running. Start it, then try again.")).toBeTruthy();
+      expect(screen.getByText('Service offline')).toBeTruthy();
+      expect(screen.queryByText('No AI model set up')).toBeNull();
+      expect((screen.getByRole('button', {name: 'NBA'}) as HTMLButtonElement).disabled).toBe(true);
+      online = true;
+      await fireEvent.click(screen.getByRole('button', {name: 'Try Again'}));
+      expect(await screen.findByText('Football analysis')).toBeTruthy();
+      await waitFor(() => expect(screen.queryByText("The analysis service isn't running. Start it, then try again.")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exposes finding text to assistive technology and offers a skip link', async () => {
+    mockInvestigations = [{...savedReport('investigation-a11y', 'What changed?'), claims: [{
+      claim_id: 'claim-one', claim_type: 'measured', statement: 'EPA rose by 0.128.', confidence: 'high', evidence_ids: ['evidence-one']
+    }]}];
+    render(App);
+    await fireEvent.click(await screen.findByText('What changed?'));
+    const finding = await screen.findByRole('button', {name: /Inspect evidence for finding 1: .*EPA rose by 0\.128/});
+    expect(finding.getAttribute('aria-label')).toBeNull();
+    expect(screen.getByRole('heading', {level: 2, name: 'Core Findings'})).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', {name: 'The answer'})));
+    await fireEvent.click(screen.getByRole('button', {name: 'Skip to main content'}));
+    expect(document.activeElement?.tagName).toBe('MAIN');
+  });
+
   it('moves to a selected play and returns focus when it closes', async () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
@@ -776,7 +935,7 @@ describe('Open Sports Analyst workbench', () => {
     }];
     render(App);
     await fireEvent.click(await screen.findByText('Which play mattered?'));
-    const play = await screen.findByRole('button', {name: /Inspect .* evidence from 2025_02_BUF_KC/});
+    const play = await screen.findByRole('button', {name: /Inspect .* evidence from Week 2 · BUF at KC/});
     play.focus();
     await fireEvent.click(play);
     const panel = await screen.findByRole('region', {name: 'Selected play details'});
@@ -838,8 +997,8 @@ describe('Open Sports Analyst workbench', () => {
 
     render(App);
     await fireEvent.click(await screen.findByText('What changed?'));
-    const first = await screen.findByRole('button', { name: 'Inspect evidence for finding 1' });
-    const second = screen.getByRole('button', { name: 'Inspect evidence for finding 2' });
+    const first = await screen.findByRole('button', { name: /^Inspect evidence for finding 1:/ });
+    const second = screen.getByRole('button', { name: /^Inspect evidence for finding 2:/ });
 
     const evidencePanel = within(document.querySelector('.desktop-evidence') as HTMLElement);
     expect(await evidencePanel.findByText('Evidence evidence-shared')).toBeTruthy();
@@ -942,10 +1101,12 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.change(competition, {target: {value: 'eng.1'}});
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
     expect(document.querySelector('.recent-subject-name')?.textContent).toBe('Home FC');
-    await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from 501/}));
+    await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from/}));
     // The saved report has no shots. The tablet must consume the enriched
     // evidence response, not remain attached to the stale saved example.
+    await fireEvent.click(await screen.findByRole('button', {name: 'Open shot detail'}));
     expect(await screen.findByText('Where the goal crossed the line')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: '← Back to pitch'}));
     expect(screen.getByRole('option', {name:'FotMob'})).toBeTruthy();
     expect((await screen.findAllByText('Alex scores')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Expected goals (ESPN): 1.57 : 0.00')).toBeTruthy();

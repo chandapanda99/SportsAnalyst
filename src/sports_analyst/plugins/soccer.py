@@ -505,7 +505,7 @@ class SoccerPlugin:
                     metric_caveats.append("Goals and xG use the same covered matches; their difference is descriptive, not a finishing-skill forecast.")
             aggregates.append(AggregateEvidence(
                 evidence_id=stable_id("evidence", payload), metric=name, label=METRICS[name][0],
-                value=round(after - before, 4), baseline_value=round(before, 4), comparison_value=round(after, 4),
+                value=round(after - before, 6), baseline_value=round(before, 6), comparison_value=round(after, 6),
                 unit=METRICS[name][4], sample_size=after_n, row_set_sha256=_sha(payload), dataset_manifest_ids=ids,
                 tool_execution_id=execution_id,
                 caveats=metric_caveats,

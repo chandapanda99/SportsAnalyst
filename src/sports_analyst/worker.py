@@ -12,7 +12,7 @@ from typing import Any
 
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.datasets.errors import safe_sync_message
-from sports_analyst.jobs.common import retryable_job_error
+from sports_analyst.jobs.common import JobCancelled, retryable_job_error
 
 logger = logging.getLogger("sports_analyst.worker")
 
@@ -182,8 +182,8 @@ def execute_object_job(settings: Settings, key: str) -> None:
     if request is None:
         raise KeyError(f"job not found: {key}")
     status = jobs.status(key)
-    if status and status.get("stage") == "complete":
-        logger.info("object_job_already_complete job_id=%s", key)
+    if status and status.get("stage") in {"complete", "cancelled"}:
+        logger.info("object_job_already_finished job_id=%s", key)
         return
     kind, payload = request["kind"], request["payload"]
     application.jobs = jobs
@@ -199,6 +199,9 @@ def execute_object_job(settings: Settings, key: str) -> None:
                                 if payload.get(name) and (payload["sport"] != "cfb" or name == "team_ids")})
         else:
             raise ValueError(f"unsupported job kind: {kind}")
+    except JobCancelled:
+        logger.info("object_job_cancelled job_id=%s", key)
+        return
     except Exception as error:
         logger.error("object_job_failed job_id=%s error_type=%s", key, type(error).__name__)
         logger.debug("object_job_failed_details job_id=%s", key, exc_info=True)

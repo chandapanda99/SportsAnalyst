@@ -6,7 +6,7 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.6"
+PROMPT_VERSION = "1.7"
 
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
@@ -53,6 +53,8 @@ Establish subject, competition, comparison windows, snapshot dates and actual co
 Full-season ranges include every season between the selected start and end. Inspect per-season and
 monthly evidence for intermediate years before describing the trajectory; an endpoint delta alone
 does not establish steady improvement. Disclose missing intermediate coverage without zero-filling it.
+Read season_trajectories in the analysis context. When a path relevant to the question reverses direction,
+say so in the opening answer: name the season it turned and never present the endpoints as steady change.
 Prioritize measurements that answer the question across the full range before adding granular breakdowns.
 Whole-period summaries, venue splits and opponent-specific samples are distinct populations. A home-team-ID
 breakdown is not a venue comparison. A lone recorded value supports a descriptive statement, not a trend.
@@ -154,10 +156,40 @@ missing-versus-zero. Challenge unequal-opportunity totals, partial snapshots des
 seasons, unsupported trends, tactical/causal claims and representative events presented as typical.
 Distinguish percentage points from relative change. Retain contradictions and source limitations.
 Remove or narrow claims whose evidence does not support them. Never invent evidence to repair a claim.
+Reject a summary that reports only endpoints when a relevant season_trajectories path reverses direction.
 Check that the answer covers the material parts of the question, gives numbers their sporting meaning,
 and distinguishes a supported explanation from an unresolved one. Remove repetitive findings and empty analyst language, 
 but do not delete a material qualification merely to make the story smoother.
 """.strip()
+
+
+def _evidence_season(item: AggregateEvidence) -> int | None:
+    season = item.context.get("season") or item.label.split(" ·", 1)[0]
+    return int(season) if str(season).isdigit() else None
+
+
+def season_trajectories(aggregate: list[AggregateEvidence]) -> list[dict[str, Any]]:
+    """Expose season-by-season paths so a reversal cannot hide behind an endpoint change."""
+    paths: dict[str, list[tuple[int, AggregateEvidence]]] = {}
+    for item in aggregate:
+        season = _evidence_season(item)
+        if item.metric.startswith("seasonal_") and season is not None and isinstance(item.value, int | float):
+            paths.setdefault(item.metric, []).append((season, item))
+    trajectories = []
+    for metric, entries in paths.items():
+        entries.sort(key=lambda entry: entry[0])
+        if len(entries) < 3:
+            continue
+        values = [float(item.value) for _, item in entries]
+        steps = [after - before for before, after in zip(values, values[1:], strict=False) if after != before]
+        trajectories.append({
+            "metric": metric.removeprefix("seasonal_"),
+            "label": entries[0][1].label.split(" · ", 1)[-1],
+            "unit": entries[0][1].unit,
+            "path": [{"season": item.context.get("season_label") or season, "value": item.value} for season, item in entries],
+            "reverses_direction": any(before * after < 0 for before, after in zip(steps, steps[1:], strict=False)),
+        })
+    return trajectories
 
 
 def analysis_guidance(sport: str, domain: str) -> str:
@@ -187,6 +219,7 @@ def evidence_brief(
         "scope": scope or {},
         "metric_definitions": [item.model_dump(mode="json") for item in definitions if item.value in used_metrics],
         "supplemental_metric_definitions": list(monthly_definitions.values()),
+        "season_trajectories": season_trajectories(aggregate),
         "undefined_metrics": sorted(used_metrics - {item.value for item in definitions}
                                     - ({"soccer_monthly"} if monthly_definitions else set())),
         "sources": [

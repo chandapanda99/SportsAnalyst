@@ -664,6 +664,8 @@ class AnalystApplication:
                 model_id=model_id,
                 fallback_used=fallback,
             )
+            # Doubles as the last cancellation check before anything is saved.
+            self.events.emit(identifier, "saving", "Saving your report", 0.97)
             self.store.save_investigation(bundle)
             self.telemetry.add_outputs(persist_span, {"investigation_id": identifier, "saved": True})
         self.events.emit(identifier, "complete", "Investigation ready", 1.0, investigation_id=identifier)
@@ -860,6 +862,7 @@ class AnalystApplication:
                 model_id=model_id,
                 fallback_used=fallback,
             )
+            self.events.emit(identifier, "saving", "Saving your answer", 0.97)
             self.store.save_investigation(bundle)
             self.telemetry.add_outputs(persist_span, {"investigation_id": identifier, "saved": True})
         self.events.emit(identifier, "complete", "Follow-up ready", 1.0, investigation_id=identifier)

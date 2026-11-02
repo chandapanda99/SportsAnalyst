@@ -32,7 +32,8 @@ def phase_accounting(baseline, comparison, manifests):
         if not frame["_epa"].is_finite().all() or not frame.height:
             return [], None, None, "EPA phase accounting requires finite EPA and a nonempty sample in both windows."
         for flag in ("sack", "interception", "fumble_lost"):
-            if not frame[flag].is_in([0, 1]).all():
+            # nflverse stores these flags as floats, and Polars no longer coerces is_in operands.
+            if not frame[flag].cast(pl.Float64).is_in([0.0, 1.0]).all():
                 return [], None, None, "EPA phase accounting has invalid recorded classification flags."
         grouped = classified(frame)
         groups = {row["phase"]: {"plays": row["plays"], "epa_total": row["epa_total"]}

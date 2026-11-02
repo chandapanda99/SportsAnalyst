@@ -484,7 +484,7 @@ FastAPI exposes:
 |    Runtime     | `GET /api/capabilities`, `GET /api/sports`                                                                                                                                               |
 |      Data      | `GET /api/datasets?sport={sport}`, `POST /api/datasets/{sport}/sync`, `POST /api/datasets/{sport}/sync-stream`, `GET /api/dataset-jobs/{id}/status`, `GET /api/dataset-jobs/{id}/events` |
 | Sport catalog  | `GET /api/sports/{sport}/options`, `GET /api/sports/{sport}/tools`, `GET /api/sports/{sport}/metrics/{metric}`, `GET /api/sports/{sport}/players`                                        |
-| Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status` |
+| Investigations | `POST /api/investigations`, `GET /api/investigations?sport={sport}`, `GET/DELETE /api/investigations/{id}`, `GET /api/investigations/{id}/events`, `GET /api/investigations/{id}/status`, `POST /api/investigations/{id}/cancel` |
 |  Conversation  | `GET /api/investigations/{id}/thread`, `POST /api/investigations/{id}/follow-ups`                                                                                                        |
 |    Evidence    | `GET /api/investigations/{id}/evidence/{evidence_id}`, `POST /api/investigations/{id}/evidence/batch`                                                                                    |
 |    Reports     | `GET /api/investigations/{id}/export?format=html`, `GET /api/investigations/{id}/export?format=markdown`                                                                                 |

@@ -677,7 +677,23 @@ summary {
 .key-metrics small {
     display: block;
     margin-top: .25rem;
+    font-size: .75rem;
     color: var(--color-text-secondary);
+}
+
+.film-room-empty {
+    margin: .25rem .7rem;
+    color: var(--color-text-secondary);
+    font-size: .85rem;
+    line-height: 1.5;
+}
+
+.rail button.film-room-more {
+    justify-content: center;
+    margin-top: .25rem;
+    border: 1px solid var(--color-border-strong);
+    color: var(--color-text-primary);
+    font-size: .85rem;
 }
 
 .report-actions {
@@ -730,8 +746,63 @@ summary {
     scroll-margin-top: 1rem;
 }
 
-.play-panel:focus, .metric-info:focus {
+/* Programmatic focus targets announce themselves without a stray ring. */
+[tabindex="-1"]:focus {
     outline: none;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+.skip-link {
+    position: fixed;
+    top: .5rem;
+    left: .5rem;
+    z-index: 200;
+    min-height: 2.75rem;
+    padding: .6rem 1rem;
+    border: 1px solid var(--mint);
+    border-radius: .45rem;
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transform: translateY(-200%);
+}
+
+.skip-link:focus {
+    transform: none;
+}
+
+.cancel-run, .retry-workspace {
+    min-height: 2.75rem;
+    padding: .55rem .9rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: .45rem;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    cursor: pointer;
+}
+
+.cancel-run {
+    margin-top: 1rem;
+}
+
+.retry-workspace {
+    margin-bottom: 1rem;
+}
+
+.cancel-run:disabled {
+    cursor: wait;
+    opacity: .7;
 }
 
 .methodology {
@@ -955,6 +1026,15 @@ button:disabled {
         left: 0;
     }
 
+    /* Long saved questions must truncate instead of widening the page. */
+    .app-shell {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .rail, .rail nav > *, .rail .recent-report-link > div {
+        min-width: 0;
+    }
+
     .rail nav {
         display: flex;
         flex-direction: row;
@@ -962,7 +1042,7 @@ button:disabled {
         gap: .4rem;
     }
 
-    .rail .nav-label, .rail .recent-report {
+    .rail .nav-label, .rail .recent-report, .rail .film-room-empty, .rail .film-room-more {
         display: none;
     }
 
@@ -970,7 +1050,8 @@ button:disabled {
         display: block;
     }
 
-    .rail.mobile-history-open .nav-label, .rail.mobile-history-open .recent-report {
+    .rail.mobile-history-open .nav-label, .rail.mobile-history-open .recent-report,
+    .rail.mobile-history-open .film-room-empty, .rail.mobile-history-open .film-room-more {
         display: block;
         width: 100%;
     }
@@ -990,6 +1071,23 @@ button:disabled {
 }
 
 @media (max-width: 650px) {
+    /* All four sports stay visible on one row. */
+    .sport-tabs {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 2px;
+    }
+
+    .sport-tabs button {
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        padding: 8px 2px;
+        font-size: 12px;
+        line-height: 1.2;
+        text-align: center;
+    }
+
     .data-manager .sync-fields, .data-manager.nba-data-manager .sync-fields, .data-manager .dataset-options, .configuration .window-grid, .configuration .window-grid.before-after {
         grid-template-columns: minmax(0, 1fr);
     }

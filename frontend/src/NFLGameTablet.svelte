@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {gameLabel, windowLabel} from './reportText';
   import {onMount, onDestroy} from 'svelte';
   import {api} from './api';
   import type {Evidence} from './types';
@@ -41,7 +42,7 @@
   $: index = visible.findIndex(item => String(item.play_id) === selectedId);
   $: home = play.visualization?.home_team_abbreviation ?? play.game_id?.split('_')[3];
   $: away = play.visualization?.away_team_abbreviation ?? play.game_id?.split('_')[2];
-  $: matchup = home && away ? `${NFL_TEAM_NAMES[away] ?? away} at ${NFL_TEAM_NAMES[home] ?? home}` : `Game ${play.game_id}`;
+  $: matchup = home && away ? `${NFL_TEAM_NAMES[away] ?? away} at ${NFL_TEAM_NAMES[home] ?? home}` : gameLabel(play);
   $: metrics = [
     {label: 'Down', value: selected.visualization?.down},
     {label: 'Yards to go', value: selected.visualization?.yards_to_go},
@@ -57,7 +58,7 @@
 <section class="nfl-game-browser" aria-label="NFL game play browser">
   <header><div><small>NFL · RECORDED GAME CONTEXT</small><h3>{matchup}</h3>
     <p>{play.season ?? ''}{play.visualization?.week != null ? ` · Week ${play.visualization.week}` : ''}
-      {play.window ? ` · ${play.window}` : ''} · Game {play.game_id}</p></div>
+      {windowLabel(play.window) ? ` · ${windowLabel(play.window)}` : ''}</p></div>
     <button class="close-browser" type="button" on:click={onclose} aria-label="Close NFL game browser">×</button></header>
   <p class="context-note">Browse both teams’ recorded plays, including plays outside the analysis filters. The saved report and its evidence stay unchanged.</p>
   {#if visible.length}

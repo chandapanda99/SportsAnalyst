@@ -192,3 +192,10 @@ def test_research_categories_resolve_names_separate_populations_and_survive_save
     assert len(repaired.charts) == 4
     assert next(c for c in repaired.charts if c.chart_id == chart.chart_id).specification["usermeta"]["seriesLabels"] == [
         "Bayern Munich", "Recorded Opponent"]
+
+
+def test_html_export_escapes_model_text_and_shows_its_emphasis():
+    from sports_analyst.presentation.reports import _model_html
+
+    assert _model_html("Across *all plays*, EPA **rose** <b>by</b> 2 * 3") == (
+        "Across <em>all plays</em>, EPA <strong>rose</strong> &lt;b&gt;by&lt;/b&gt; 2 * 3")

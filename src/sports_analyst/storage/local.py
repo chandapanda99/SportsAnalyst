@@ -13,6 +13,7 @@ from threading import RLock
 import duckdb
 
 from sports_analyst.config import Settings, get_settings
+from sports_analyst.jobs.common import TERMINAL_STAGES, JobCancelled
 from sports_analyst.models import DatasetManifest, InvestigationBundle, InvestigationSummary
 from sports_analyst.storage.persistence import PersistenceBackend, create_persistence_backend, normalize_object_key
 
@@ -751,12 +752,26 @@ class EventRegistry:
         self._events: dict[str, list[dict[str, object]]] = {}
         self._sequences: dict[str, int] = {}
         self._completed_at: dict[str, float] = {}
+        self._cancelled: set[str] = set()
         self._lock = RLock()
         self._retention_seconds = 900.0
         self._max_events_per_key = 200
 
+    def cancel(self, key: str) -> bool:
+        """End a stream now; its work stops at the next progress update."""
+        with self._lock:
+            events = self._events.get(key)
+            if events and events[-1]["stage"] in TERMINAL_STAGES:
+                return False
+            progress = float(events[-1]["progress"]) if events else 0.0
+            self.emit(key, "cancelled", "Analysis cancelled", progress)
+            self._cancelled.add(key)
+            return True
+
     def emit(self, key: str, stage: str, message: str, progress: float, **extra: object) -> None:
         with self._lock:
+            if key in self._cancelled:
+                raise JobCancelled(key)
             self._purge_expired()
             events = self._events.setdefault(key, [])
             sequence = self._sequences.get(key, 0) + 1
@@ -765,7 +780,7 @@ class EventRegistry:
                            "progress": progress, **extra, "sequence": sequence})
             if len(events) > self._max_events_per_key:
                 del events[: -self._max_events_per_key]
-            if stage in {"complete", "failed"}:
+            if stage in TERMINAL_STAGES:
                 self._completed_at[key] = time.monotonic()
 
     def events(self, key: str, after: int = 0) -> list[dict[str, object]]:
@@ -775,7 +790,7 @@ class EventRegistry:
 
     def has_active_work(self) -> bool:
         with self._lock:
-            return any(events and events[-1]["stage"] not in {"complete", "failed"}
+            return any(events and events[-1]["stage"] not in TERMINAL_STAGES
                        for events in self._events.values())
 
     def _purge_expired(self) -> None:
@@ -785,3 +800,4 @@ class EventRegistry:
             self._events.pop(key, None)
             self._sequences.pop(key, None)
             self._completed_at.pop(key, None)
+            self._cancelled.discard(key)

@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from copy import deepcopy
 
 from sports_analyst.models import InvestigationBundle
 from sports_analyst.presentation.teams import rgb_csv, team_report_palette
+
+
+def _model_html(text: str) -> str:
+    """Escape model text, then show its Markdown emphasis instead of its punctuation."""
+    escaped = html.escape(re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE))
+    escaped = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<strong>\1</strong>", escaped)
+    return re.sub(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])", r"<em>\1</em>", escaped)
 
 
 def _window_label(window) -> str:
@@ -203,7 +211,7 @@ def render_html(bundle: InvestigationBundle) -> str:
     comparison_label = _scope_label(scope)
     claims = "".join(
         f'<article class="claim"><span>{html.escape(claim.claim_type.value)} · {claim.confidence}</span>'
-        f"<p>{html.escape(claim.statement)}</p><code>{html.escape(', '.join(claim.evidence_ids))}</code></article>"
+        f"<p>{_model_html(claim.statement)}</p><code>{html.escape(', '.join(claim.evidence_ids))}</code></article>"
         for claim in bundle.claims
     )
     charts = "".join(
@@ -250,7 +258,7 @@ footer{{margin-top:36px;padding-top:18px;border-top:2px solid var(--team-accent)
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{html.escape(subject)} {html.escape(domain)} investigation</title><style>{styles}</style></head><body>
 <header><div class="eyebrow">Open Sports Analyst · Evidence-bound report</div>
-<h1>{html.escape(subject)} {html.escape(domain)} analysis</h1><p>{html.escape(bundle.summary)}</p>
+<h1>{html.escape(subject)} {html.escape(domain)} analysis</h1><p>{_model_html(bundle.summary)}</p>
 <small>{comparison_label} · {html.escape(bundle.run.investigation_id)}</small></header>
 <main><h2>Findings</h2>{claims}{charts}<h2>Representative evidence</h2><table><thead>
 <tr><th>Game</th><th>Play</th><th>Value</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>

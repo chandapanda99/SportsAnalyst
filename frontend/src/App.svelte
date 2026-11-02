@@ -20,6 +20,8 @@
   import {initializeBranding} from './sportsBranding';
   import {questionBanks, supplementalQuestionBanks} from './questionCatalog';
   import {changeVerdict, metricColumns, metricFormatter, periodLabel} from './metricFormat';
+  import {gameLabel} from './reportText';
+  import ModelText from './ModelText.svelte';
   import type {
     AnalysisOptions,
     Capabilities,
@@ -40,6 +42,14 @@
     soccer: '/Soccer/Soccer-Ball.png',
     cfb: '/CFB/ncaa-logo.png'
   };
+  class RunCancelled extends Error {}
+
+  function problemMessage(problem: unknown) {
+    return problem instanceof Error ? problem.message : String(problem);
+  }
+
+  const providerLabels: Record<string, string> = {azure_foundry: 'Azure AI Foundry', ollama: 'Ollama'};
+  const filmRoomPreviewCount = 8;
   let capabilities: Capabilities | null = null;
   let completionNotifications: Array<{ id: number; title: string; message: string }> = [];
   let nextNotificationId = 0;
@@ -107,8 +117,8 @@
   }
 
   const initialQuestion = questionBanks.nfl.team.passing[0];
-  let question = initialQuestion;
-  let lastSuggestedQuestion = initialQuestion;
+  let question = '';
+  let lastSuggestedQuestion = '';
   let questionExamples = questionBanks.nfl.team.passing;
   let showAllQuestionExamples = false;
   let previousQuestionContext = '';
@@ -213,7 +223,21 @@
   let playPanelElement: HTMLElement | null = null;
   let playTrigger: HTMLElement | null = null;
   let metricDirections: Record<string, boolean | null> = {};
+  let showFullFilmRoom = false;
+  let runningInvestigationId = '';
+  let cancelling = false;
+  let routeHandled = false;
+  let mainElement: HTMLElement | null = null;
+  let answerHeading: HTMLElement | null = null;
+  let progressHeading: HTMLElement | null = null;
+  const offlineSports: SportOption[] = [['nfl', 'NFL'], ['nba', 'NBA'], ['soccer', 'Soccer'], ['cfb', 'College Football']]
+      .map(([value, label]) => ({value, label, available: false, live_available: false}));
   $: setup = analysisOptions?.data_setup;
+  $: serviceOffline = !backendReady && !workspaceLoading && Boolean(workspaceLoadError);
+  $: sportTabs = sports.length || !serviceOffline ? sports : offlineSports;
+  // The heading mounts only once the loading views are gone.
+  $: answerHeading?.focus({preventScroll: true});
+  $: pageTitle = active ? `${investigationSubject(active, playerNamesById)} report · Open Sports Analyst` : 'Open Sports Analyst';
   $: requiredSources = (setup?.required_datasets?.length ? setup.required_datasets : ['play_by_play'])
       .filter(source => !(analysisOptions?.automatic_preparation && activeSport === 'nba'
           && source === (subjectType === 'player' ? 'team_boxscores' : 'player_boxscores')));
@@ -239,7 +263,7 @@
   $: readinessSteps = [
     {ready: dataReady, label: dataStatusLabel, target: 'data-setup'},
     {ready: Boolean(resolvedSubject), label: resolvedSubject ? 'Subject selected' : 'Choose a team or player', target: 'scope-heading'},
-    {ready: !periodBlocker, label: periodBlocker || 'Comparison periods selected', target: 'comparison-heading'},
+    {ready: !periodBlocker, label: periodBlocker || 'Periods selected', target: 'comparison-heading'},
     {
       ready: selectedAvailableMetricCount > 0,
       label: selectedAvailableMetricCount ? `${selectedAvailableMetricCount} metrics selected` : 'Choose at least one metric',
@@ -324,7 +348,7 @@
       const definition = await response.json();
       if (version === metricInfoVersion) metricInfo = definition;
     } catch (problem) {
-      if (version === metricInfoVersion) metricInfoError = String(problem);
+      if (version === metricInfoVersion) metricInfoError = problemMessage(problem);
     } finally {
       if (version === metricInfoVersion) metricInfoLoading = false;
     }
@@ -488,6 +512,8 @@
       showGuidance = localStorage.getItem('sports-analyst:onboarding:v1') !== 'done';
     } catch { /* Storage is optional. */
     }
+    const followRoute = () => void openRoute();
+    window.addEventListener('popstate', followRoute);
     void refresh().then(async () => {
       const pending = pendingJob();
       if (!pending || busy) return;
@@ -503,12 +529,14 @@
           await streamInvestigation(pollingStream(pending));
         }
       } catch (problem) {
-        error = String(problem);
+        if (problem instanceof RunCancelled) notifyCompletion('Analysis Cancelled', 'The analysis was stopped.');
+        else error = problemMessage(problem);
       } finally {
         busy = false;
         syncing = false;
       }
     });
+    return () => window.removeEventListener('popstate', followRoute);
   });
 
   async function refresh(attempt = 0) {
@@ -573,6 +601,10 @@
       initialWorkspaceError = '';
       void loadHistory();
       if (subjectType === 'player') void loadPlayers();
+      if (!routeHandled) {
+        routeHandled = true;
+        if (!pendingJob()) void openRoute();
+      }
     } catch (problem) {
       if (requestVersion !== workspaceRequestVersion || sport !== activeSport) return;
       const startupAttempt = !backendReady;
@@ -585,7 +617,9 @@
         if (requestVersion === workspaceRequestVersion && sport === activeSport) await refresh(attempt + 1);
         return;
       }
-      workspaceLoadError = String(problem);
+      workspaceLoadError = startupAttempt
+          ? `The analysis service isn't running. ${desktopMode ? 'Restart Open Sports Analyst' : 'Start it'}, then try again.`
+          : problemMessage(problem);
       error = workspaceLoadError;
       initialWorkspaceError = workspaceLoadError;
     } finally {
@@ -612,8 +646,9 @@
     }
   }
 
-  async function switchSport(sport: string) {
+  async function switchSport(sport: string, keepRoute = false) {
     if (sport === activeSport || busy) return;
+    if (!keepRoute) setReportRoute('');
     sportDrafts[activeSport] = captureDraft();
     workspaceRequestVersion += 1;
     historyRequestVersion += 1;
@@ -682,7 +717,8 @@
     baselineSegment = 'regular_season';
     comparisonSegment = 'post_all_star';
     baselineStartDate = baselineEndDate = comparisonStartDate = comparisonEndDate = '';
-    question = examplesFor(sport, subjectType, analysisDomain)[0];
+    question = '';
+    showFullFilmRoom = false;
     selectedMetrics = [];
     selectedSplits = [];
     syncSeasons = [];
@@ -1158,7 +1194,7 @@
 
   function selectAnalysisDomain(domain: string, force = false, player = selectedPlayer) {
     if (analysisDomain === domain && !force) return;
-    const replaceSuggested = question === lastSuggestedQuestion || isCuratedExample(question);
+    const replaceSuggested = question.trim() && (question === lastSuggestedQuestion || isCuratedExample(question));
     analysisDomain = domain;
     metricsEdited = false;
     metricInfoVersion += 1;
@@ -1324,7 +1360,7 @@
   function evidenceCoverage(plays: Evidence[], noun: string) {
     const poolSize = Math.max(0, ...plays.map((play) => play.candidate_pool_size ?? 0));
     return poolSize
-        ? `${plays.length} of ${poolSize} qualifying ${noun} selected`
+        ? `${plays.length} of ${poolSize.toLocaleString()} qualifying ${noun} selected`
         : `${plays.length} ${noun} selected`;
   }
 
@@ -1500,8 +1536,9 @@
     return activeSport === 'nba' ? `${season - 1}–${String(season).slice(-2)}` : String(season);
   }
 
-  async function selectCompetition(competition: string) {
+  async function selectCompetition(competition: string, keepRoute = false) {
     if (competition === selectedCompetition || busy) return;
+    if (!keepRoute) setReportRoute('');
     selectedCompetition = competition;
     workspaceRequestVersion += 1;
     historyRequestVersion += 1;
@@ -1612,7 +1649,7 @@
   async function loadCompletedInvestigation(investigationId: string) {
     stage = 'Loading completed analysis';
     progress = 1;
-    let lastError: unknown = new Error('The completed investigation is not available yet.');
+    let lastError: unknown = new Error('The completed analysis is not available yet.');
     for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
         const [result, thread] = await Promise.all([
@@ -1620,10 +1657,10 @@
           api.investigationThread(investigationId)
         ]);
         if (!isCompleteInvestigation(result, investigationId)) {
-          throw new Error('The completed investigation response was incomplete.');
+          throw new Error('The completed analysis response was incomplete.');
         }
         if (!thread.some((turn) => turn.run.investigation_id === investigationId)) {
-          throw new Error('The completed investigation thread was incomplete.');
+          throw new Error('The completed analysis thread was incomplete.');
         }
         // A follow-up joins the thread; the report the reader is on stays as written.
         if (followupBusy && active) {
@@ -1636,11 +1673,12 @@
         }
         active = result.run.parent_investigation_id && thread[0] ? thread[0] : result;
         conversationThread = thread;
+        setReportRoute(active.run.investigation_id);
         await refresh();
         dismissGuidance();
         if (active.claims[0]) void inspectFinding(active.claims[0]);
         await scrollToPageTop();
-        notifyCompletion('Analysis Complete', 'Your results and supporting evidence are ready to explore.');
+        notifyCompletion('Report Ready', 'Your results and supporting evidence are ready to explore.');
         return true;
       } catch (problem) {
         lastError = problem;
@@ -1653,17 +1691,18 @@
   async function recoverInterruptedInvestigation(investigationId: string, streamProblem: unknown) {
     const deadline = Date.now() + 60 * 60_000;
     let lastError = streamProblem;
-    stage = 'Connection interrupted · checking investigation status';
+    stage = 'Connection interrupted · checking your analysis';
     while (Date.now() < deadline) {
       try {
         const status = await api.investigationStatus(investigationId);
         if (status.stage === 'failed') throw new ReportedInvestigationFailure(status.message);
+        if (status.stage === 'cancelled') throw new RunCancelled();
         if (status.stage !== 'pending' && status.message) {
           stage = `Reconnecting · ${status.message}`;
           progress = Math.max(progress, Number(status.progress || 0));
         }
       } catch (problem) {
-        if (problem instanceof ReportedInvestigationFailure) throw problem;
+        if (problem instanceof ReportedInvestigationFailure || problem instanceof RunCancelled) throw problem;
         lastError = problem;
       }
 
@@ -1680,7 +1719,7 @@
     }
     throw new Error(
         `Live updates could not be restored within an hour. Your job ID is ${investigationId}. ` +
-        `A queued job may still finish; check Recent analyses before submitting again. ${String(lastError)}`
+        `A queued job may still finish; check the Film Room before submitting again. ${String(lastError)}`
     );
   }
 
@@ -1689,6 +1728,7 @@
     const decoder = new TextDecoder();
     let buffer = '';
     let investigationId = stream.investigationId;
+    runningInvestigationId = investigationId ?? '';
     try {
       while (true) {
         const {value, done} = await reader.read();
@@ -1701,8 +1741,9 @@
           const event = JSON.parse(data);
           stage = event.message;
           progress = Math.max(progress, Number(event.progress || 0));
-          if (event.investigation_id) investigationId = String(event.investigation_id);
+          if (event.investigation_id) investigationId = runningInvestigationId = String(event.investigation_id);
           if (event.stage === 'failed') throw new ReportedInvestigationFailure(event.message);
+          if (event.stage === 'cancelled') throw new RunCancelled();
           if (event.stage === 'timeout') throw new Error('The live progress stream timed out.');
           if (event.stage === 'complete') {
             await loadCompletedInvestigation(investigationId!);
@@ -1712,10 +1753,24 @@
         if (done) throw new Error('The analysis connection ended before the result was ready.');
       }
     } catch (problem) {
-      if (problem instanceof ReportedInvestigationFailure || !investigationId) throw problem;
+      if (problem instanceof ReportedInvestigationFailure || problem instanceof RunCancelled || !investigationId) throw problem;
       await recoverInterruptedInvestigation(investigationId, problem);
     } finally {
+      runningInvestigationId = '';
+      cancelling = false;
       reader.releaseLock();
+    }
+  }
+
+  async function cancelRun() {
+    if (!runningInvestigationId || cancelling) return;
+    cancelling = true;
+    try {
+      // The progress stream ends the run; False means a result is already arriving.
+      await api.cancelInvestigation(runningInvestigationId);
+    } catch (problem) {
+      cancelling = false;
+      error = problemMessage(problem);
     }
   }
 
@@ -1770,7 +1825,8 @@
     active = null;
     clearEvidenceSelection();
     progress = 0.03;
-    stage = 'Starting investigation';
+    stage = 'Starting analysis';
+    void tick().then(() => progressHeading?.focus({preventScroll: true}));
     try {
       let baselineWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {season: periodStart, weeks: [1, 22]};
       let comparisonWindow: { season: number; weeks: [number, number]; segment?: string; start_date?: string; end_date?: string } = {
@@ -1829,14 +1885,20 @@
       await streamInvestigation(body);
       busy = false;
     } catch (problem) {
-      error = String(problem);
       busy = false;
+      if (problem instanceof RunCancelled) {
+        notifyCompletion('Analysis Cancelled', 'Your selections are still here, so you can adjust them and run again.');
+        await tick();
+        document.querySelector<HTMLElement>('.brief-run .primary')?.focus();
+      } else {
+        error = problemMessage(problem);
+      }
     }
   }
 
   async function clearDownloadedData() {
     const scope = activeSport === 'soccer' ? soccerCompetitions.find(item => item.value === selectedCompetition)?.label : activeSport.toUpperCase();
-    if (!window.confirm(`Permanently clear all downloaded ${scope} data for every season? Saved investigations and settings stay, but their dataset-backed tools will need a fresh sync. On cloud deployments this clears the shared library for all users.`)) return;
+    if (!window.confirm(`Permanently clear all downloaded ${scope} data for every season? Saved reports and settings stay, but their dataset-backed tools will need a fresh sync. On cloud deployments this clears the shared library for all users.`)) return;
     busy = true;
     stage = 'Clearing downloaded data';
     error = '';
@@ -1851,9 +1913,9 @@
       }
       syncComplete = false;
       await refresh();
-      notifyCompletion('Synced Data Reset', scope + ' synced data has been cleared. Saved investigations and settings are preserved.');
+      notifyCompletion('Synced Data Reset', scope + ' synced data has been cleared. Saved reports and settings are preserved.');
     } catch (problem) {
-      error = String(problem);
+      error = problemMessage(problem);
     } finally {
       busy = false;
     }
@@ -1894,7 +1956,7 @@
       notifyCompletion('Data Sync Complete', activeSport === 'cfb' ? 'Your data library has been refreshed.'
           : `${downloadScope.label} library refreshed. Check the source coverage below before running.`);
     } catch (problem) {
-      error = String(problem);
+      error = problemMessage(problem);
       try {
         await refresh();
       } catch {
@@ -1919,7 +1981,7 @@
       await refresh();
       syncComplete = true;
     } catch (problem) {
-      error = String(problem);
+      error = problemMessage(problem);
     } finally {
       busy = syncing = false;
     }
@@ -1966,12 +2028,42 @@
         .sort((left, right) => new Date(left.run.created_at).getTime() - new Date(right.run.created_at).getTime());
   }
 
+  function reportRoute() {
+    const match = window.location.hash.match(/^#\/reports\/([^/?#]+)$/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
+  // Hash routes work unchanged on every host, including the desktop WebView.
+  function setReportRoute(investigationId: string) {
+    const hash = investigationId ? `#/reports/${encodeURIComponent(investigationId)}` : '';
+    if (window.location.hash === hash) return;
+    window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+  }
+
+  async function openRoute() {
+    const investigationId = reportRoute();
+    // Offline links stay in the address bar; the first successful load opens them.
+    if (!backendReady || busy || investigationId === (active?.run.investigation_id ?? '')) return;
+    if (!investigationId) return openInvestigation(null);
+    try {
+      const report = await api.investigation(investigationId);
+      const sport = report.run.sport ?? 'nfl';
+      await switchSport(sport, true);
+      if (sport === 'soccer' && report.run.scope.competition) await selectCompetition(report.run.scope.competition, true);
+      await openInvestigation(report);
+    } catch {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+      error = 'That report could not be found. It may have been deleted.';
+    }
+  }
+
   async function openInvestigation(investigation: Investigation | InvestigationSummary | null) {
     clearEvidenceSelection();
     if (!investigation) {
       investigationLoading = false;
       active = null;
       conversationThread = [];
+      setReportRoute('');
       return;
     }
     investigationLoading = true;
@@ -1980,12 +2072,13 @@
           ? investigation
           : await api.investigation(investigation.run.investigation_id);
       conversationThread = await api.investigationThread(active.run.investigation_id);
+      setReportRoute(active.run.investigation_id);
       mobileHistoryOpen = false;
       dismissGuidance();
       if (active.claims[0]) void inspectFinding(active.claims[0]);
       await scrollToPageTop();
     } catch (problem) {
-      error = String(problem);
+      error = problemMessage(problem);
     } finally {
       investigationLoading = false;
     }
@@ -2018,7 +2111,7 @@
       // the enriched API response (cached shots, historical context, etc.).
       if (selectedPlay?.evidence_id === identifier) selectedPlay = evidence;
     } catch (problem) {
-      if (requestVersion === evidenceRequestVersion) evidenceError = String(problem);
+      if (requestVersion === evidenceRequestVersion) evidenceError = problemMessage(problem);
     } finally {
       if (requestVersion === evidenceRequestVersion) evidenceLoading = false;
     }
@@ -2036,7 +2129,7 @@
       if (requestVersion !== evidenceRequestVersion) return;
       selectedEvidenceItems = evidence;
     } catch (problem) {
-      if (requestVersion === evidenceRequestVersion) evidenceError = String(problem);
+      if (requestVersion === evidenceRequestVersion) evidenceError = problemMessage(problem);
     } finally {
       if (requestVersion === evidenceRequestVersion) evidenceLoading = false;
     }
@@ -2056,15 +2149,18 @@
       followupBusy = false;
       pendingFollowup = '';
     } catch (problem) {
-      error = String(problem);
       followupBusy = false;
       pendingFollowup = '';
+      if (problem instanceof RunCancelled) followup = question;
+      else error = problemMessage(problem);
     }
+    await tick();
+    document.getElementById('followup-question')?.focus({preventScroll: true});
   }
 
   async function deleteInvestigation(item: Investigation | InvestigationSummary) {
     const identifier = item.run.investigation_id;
-    if (!window.confirm(`Delete the saved ${investigationSubject(item, playerNamesById)} analysis? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete the saved ${investigationSubject(item, playerNamesById)} report? This cannot be undone.`)) return;
     deletingInvestigationId = identifier;
     try {
       const deletedRoot = rootIdFor(item);
@@ -2073,19 +2169,20 @@
       if (active && rootIdFor(active) === deletedRoot) {
         await openInvestigation(null);
       }
-      notifyCompletion('Analysis Deleted', 'The saved analysis and its follow-up conversation have been removed.');
+      notifyCompletion('Report Deleted', 'The saved report and its follow-ups have been removed.');
     } catch (problem) {
-      error = String(problem);
+      error = problemMessage(problem);
     } finally {
       deletingInvestigationId = '';
     }
   }
 </script>
 
-<svelte:head><title>Open Sports Analyst</title></svelte:head>
+<svelte:head><title>{pageTitle}</title></svelte:head>
 
 <div class="app-shell" class:nba-theme={activeSport === 'nba'} class:soccer-theme={activeSport === 'soccer'} bind:this={appShellElement}
      style={`--rail-width: ${railWidth}px`}>
+  <button class="skip-link" type="button" on:click={() => mainElement?.focus()}>Skip to main content</button>
   <aside class="rail" class:mobile-history-open={mobileHistoryOpen}>
     <div class="brand"><img class="mark" src="/favicon.svg" alt="" aria-hidden="true"/>
       <div><strong>Open Sports</strong><span>Analyst</span></div>
@@ -2101,20 +2198,23 @@
         <span class="sidebar-action-icon"><Icon name="book-open" size={20}/></span>
         <span class="sidebar-action-label">Getting Started</span>
       </button>
-      <button class="mobile-history-toggle" type="button" aria-expanded={mobileHistoryOpen} on:click={() => mobileHistoryOpen = !mobileHistoryOpen}>Recent Analyses
+      <button class="mobile-history-toggle" type="button" aria-expanded={mobileHistoryOpen} on:click={() => mobileHistoryOpen = !mobileHistoryOpen}>Film Room
         ({rootHistory.length})
       </button>
       <div class="nav-label">
         <Icon name="history" size={15}/>
-        Film Room Gallery
+        Film Room · {sportTabs.find(sport => sport.value === activeSport)?.label ?? activeSport.toUpperCase()}
       </div>
-      {#if historyLoading}<p role="status"><span class="button-spinner" aria-hidden="true"></span> Loading recent analyses…</p>{/if}
+      {#if historyLoading}<p role="status"><span class="button-spinner" aria-hidden="true"></span> Loading the Film Room…</p>{/if}
       {#if historyLoadError}
-        <div role="alert"><p>Recent analyses couldn't load. {historyLoadError}</p>
+        <div role="alert"><p>The Film Room couldn't load. {historyLoadError}</p>
           <button type="button" on:click={() => loadHistory()}>Retry History</button>
         </div>
       {/if}
-      {#each rootHistory.slice(0, 8) as item}
+      {#if !historyLoading && !historyLoadError && !rootHistory.length}
+        <p class="film-room-empty">No saved {activeSport === 'soccer' ? 'reports for this competition' : 'reports for this sport'} yet. Finished reports appear here.</p>
+      {/if}
+      {#each showFullFilmRoom ? rootHistory : rootHistory.slice(0, filmRoomPreviewCount) as item}
         <div class="recent-report">
           <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
                   on:click={() => openInvestigation(item)}>
@@ -2127,7 +2227,7 @@
                 follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
             </div>
           </button>
-          <button class="delete-report" type="button" aria-label={`Delete investigation thread: ${item.run.question}`} title="Delete investigation thread"
+          <button class="delete-report" type="button" aria-label={`Delete saved report: ${item.run.question}`} title="Delete saved report"
                   disabled={deletingInvestigationId === item.run.investigation_id}
                   on:click={() => deleteInvestigation(item)}>
             {#if deletingInvestigationId === item.run.investigation_id}<span class="button-spinner" aria-label="Deleting investigation"></span>{:else}
@@ -2136,11 +2236,16 @@
           </button>
         </div>
       {/each}
+      {#if rootHistory.length > filmRoomPreviewCount}
+        <button class="film-room-more" type="button" aria-expanded={showFullFilmRoom} on:click={() => showFullFilmRoom = !showFullFilmRoom}>
+          {showFullFilmRoom ? 'Show fewer' : `Show all ${rootHistory.length}`}
+        </button>
+      {/if}
     </nav>
     <div class="runtime">
       <span class="runtime-icon" class:ready={capabilities?.model_configured}><Icon name="brain" size={18}/></span>
       <div>
-        <strong>{capabilities?.configured_provider || 'Loading'}</strong><span>{capabilities?.model_configured ? 'Model READY' : 'Deterministic Mode'}</span>
+        <strong>{capabilities?.configured_provider ? providerLabels[capabilities.configured_provider] ?? capabilities.configured_provider : serviceOffline ? 'Not connected' : 'Connecting…'}</strong><span>{!capabilities ? (serviceOffline ? 'Service offline' : 'Loading') : capabilities.model_configured ? 'AI model ready' : 'No AI model set up'}</span>
       </div>
     </div>
     <button class="rail-resizer" type="button"
@@ -2161,9 +2266,9 @@
             on:keydown={resizeRailFromKeyboard}></button>
   </aside>
 
-  <main class={`sport-background ${activeSport}-background`} data-sport-background={activeSport}>
+  <main class={`sport-background ${activeSport}-background`} data-sport-background={activeSport} bind:this={mainElement} tabindex="-1">
     <nav class="sport-tabs" aria-label="Sports">
-      {#each sports as sport}
+      {#each sportTabs as sport}
         <button type="button" class:active={activeSport === sport.value} aria-pressed={activeSport === sport.value}
                 disabled={!sport.available || busy} on:click={() => switchSport(sport.value)}>
           {#if sportLogos[sport.value]}
@@ -2176,25 +2281,27 @@
       {/each}
     </nav>
     <header class="topbar">
-      <div><span class="eyebrow">{activeSport.toUpperCase()} · Evidence Workbench</span>
-        <h1>{active ? `${investigationSubject(active, playerNamesById)} investigation` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
+      <div><span class="eyebrow">{activeSport.toUpperCase()} · Analysis</span>
+        <h1>{active ? `${investigationSubject(active, playerNamesById)} report` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
       </div>
-      <div class="status-chip">
-        <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} synced · {datasets.length} local files
-      </div>
+      {#if analysisOptions}
+        <div class="status-chip">
+          <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} synced · {datasets.length} local files
+        </div>
+      {/if}
     </header>
 
     {#if error}
       <div class="error" role="alert">{error}</div>
     {/if}
-    {#if workspaceLoadError && !workspaceLoading && initialWorkspaceReady}
-      <button type="button" on:click={() => { error = ''; void refresh(); }}>Retry Workspace Loading</button>
+    {#if workspaceLoadError && !workspaceLoading && (initialWorkspaceReady || serviceOffline)}
+      <button class="retry-workspace" type="button" on:click={() => { error = ''; void refresh(); }}>Try Again</button>
     {/if}
 
     {#if investigationLoading}
       <section class="page-operation-loading" role="status" aria-live="polite" aria-busy="true">
         <span class="library-spinner" aria-hidden="true"></span>
-        <div><strong>Loading saved investigation</strong><small>Retrieving its conversation, report, and evidence references…</small></div>
+        <div><strong>Loading saved report</strong><small>Retrieving its findings, follow-ups and evidence…</small></div>
       </section>
     {:else if !active && !busy}
       {#snippet subjectCard()}
@@ -2328,7 +2435,7 @@
               <div class="section-heading">
                 <div>
                   <span class="eyebrow">Quick Start</span>
-                  <h3>Build an evidence-backed investigation</h3>
+                  <h3>Build an evidence-backed report</h3>
                   <p>Start with a focused comparison. You can refine it or ask follow-up questions after the first answer.</p>
                 </div>
                 <button type="button" on:click={dismissGuidance}>Dismiss guide</button>
@@ -2367,7 +2474,7 @@
               </ol>
               <div class="guide-outcome">
                 <Icon name="sparkles" size={19}/>
-                <p><strong>What a strong investigation includes</strong><span>A direct answer, the most important drivers, counterevidence, charts, and source-backed examples.</span>
+                <p><strong>What a strong report includes</strong><span>A direct answer, the most important drivers, counterevidence, charts, and source-backed examples.</span>
                 </p>
               </div>
             </section>
@@ -2441,7 +2548,7 @@
                 </div>
               {:else if !analysisOptions}
                 <div class="library-load-error" role="alert">
-                  <span><strong>Data catalog unavailable</strong><small>{workspaceLoadError || 'The analysis service did not respond. Try loading the catalog again.'}</small></span>
+                  <span><strong>Data catalog unavailable</strong><small>{serviceOffline ? 'Seasons and sources appear once the analysis service is running.' : workspaceLoadError || 'The analysis service did not respond. Try loading the catalog again.'}</small></span>
                   <button type="button" on:click={() => refresh()}>Retry</button>
                 </div>
               {:else}
@@ -2547,7 +2654,7 @@
                 <div><span class="eyebrow">{activeSport === 'cfb' ? '03' : '02'} · Comparison</span>
                   <h3 id="comparison-heading" tabindex="-1">Choose the periods to compare</h3></div>
               </div>
-              <p>Your reference period is the starting point. The comparison period shows what changed.</p>
+              <p>The first period is your starting point. The second shows what changed.</p>
               <div class="scope-controls">
                 <label>Comparison type
                   <select bind:value={comparisonMode}>
@@ -2581,7 +2688,7 @@
                 {:else if activeSport === 'soccer' || (activeSport === 'cfb' && comparisonMode === 'date_ranges')}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>Reference period</legend>
+                      <legend>First period</legend>
                       <label>Season<select bind:value={baseline}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2594,7 +2701,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>Comparison period</legend>
+                      <legend>Second period</legend>
                       <label>Season<select bind:value={comparison}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2609,7 +2716,7 @@
                 {:else if activeSport === 'nba'}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Reference period'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'First period'}</legend>
                       <label>Season<select bind:value={baseline} on:change={() => {
                                         if (comparisonMode === 'before_after_milestone') comparison = baseline;
                                         if (!availableSegments(baseline).some(segment => segment.value === baselineSegment)) baselineSegment = availableSegments(baseline)[0]?.value ?? 'regular_season';
@@ -2630,7 +2737,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Comparison segment'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Second period'}</legend>
                       <label>Season<select bind:value={comparison} disabled={comparisonMode === 'before_after_milestone'} on:change={() => {
                     if (!availableSegments(comparison).some(segment => segment.value === comparisonSegment)) comparisonSegment = availableSegments(comparison)[0]?.value ?? 'regular_season';
                   }}>
@@ -2664,13 +2771,13 @@
                         <option value={week}>Week {week}</option>
                       {/each}
                     </select></label>
-                    <div class="window-summary"><span>Reference period</span><strong>{baseline} · Weeks 1–{splitWeek - 1}</strong></div>
-                    <div class="window-summary"><span>Comparison</span><strong>{baseline} · Weeks {splitWeek}–22</strong></div>
+                    <div class="window-summary"><span>First period</span><strong>{baseline} · Weeks 1–{splitWeek - 1}</strong></div>
+                    <div class="window-summary"><span>Second period</span><strong>{baseline} · Weeks {splitWeek}–22</strong></div>
                   </div>
                 {:else}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Reference period'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'First period'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2690,7 +2797,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Comparison window'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Second period'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2731,7 +2838,7 @@
               {:else}
                 <p class="empty-state">{subjectType === 'player' && selectedPlayer
                     ? 'No locally synced seasons overlap this player’s recorded career.'
-                    : `Sync at least one ${activeSport === 'nba' ? 'SportsDataverse NBA' : activeSport === 'soccer' ? 'Sports Dataverse soccer' : 'nflverse'} season to configure an investigation.`}</p>
+                    : `Sync at least one ${activeSport === 'nba' ? 'SportsDataverse NBA' : activeSport === 'soccer' ? 'Sports Dataverse soccer' : 'nflverse'} season to set up an analysis.`}</p>
               {/if}
             </section>
 
@@ -2815,7 +2922,7 @@
                   <div class="split-selector player-diagnostic-note">
                     <div><h4>Player Context</h4>
                       <p>Player comparisons use attributed plays plus compatible synced player statistics. Team-oriented diagnostic cuts are disabled for
-                        player investigations.</p></div>
+                        player analyses.</p></div>
                   </div>
                 {:else}
                   <div class="split-selector">
@@ -2852,7 +2959,7 @@
                   </button>
                 {/if}
               </div>
-              <textarea id="investigation-question" bind:value={question} rows="3"></textarea>
+              <textarea id="investigation-question" bind:value={question} rows="3" placeholder={`For example: ${questionExamples[0] ?? ''}`}></textarea>
             </div>
           </div>
           <aside class="analysis-brief" aria-label="Analysis brief">
@@ -2903,11 +3010,16 @@
             <div class="progress-message" class:long-message={stage.length > 44} class:dense-message={stage.length > 88}
                  class:extra-dense-message={stage.length > 140} role="status" aria-live="polite" aria-atomic="true">
               <small>Current Update</small>
-              <h2>{stage}</h2>
+              <h2 bind:this={progressHeading} tabindex="-1">{stage}</h2>
             </div>
-            <div class="progress" role="progressbar" aria-label={syncing ? 'Download progress' : 'Investigation progress'} aria-valuemin="0" aria-valuemax="100"
+            <div class="progress" role="progressbar" aria-label={syncing ? 'Download progress' : 'Analysis progress'} aria-valuemin="0" aria-valuemax="100"
                  aria-valuenow={Math.round(progress * 100)}><i style={`width:${Math.max(4, progress * 100)}%`}></i></div>
             <p>{syncing ? 'Each source is downloaded and checked before it is added to your library.' : progress < 0.1 ? 'Preparing the analysis service and checking your data. The comparison has not started yet.' : 'Comparing your periods and checking the evidence behind each finding.'}</p>
+            {#if !syncing}
+              <button class="cancel-run" type="button" disabled={!runningInvestigationId || cancelling} on:click={cancelRun}>
+                {cancelling ? 'Cancelling…' : 'Cancel Analysis'}
+              </button>
+            {/if}
           </div>
           <div class="play-visual" class:nba-loading={activeSport === 'nba'} class:soccer-loading={activeSport === 'soccer'} aria-hidden="true">
             <div class="play-caption">
@@ -2933,19 +3045,19 @@
               <button type="button" on:click={() => openInvestigation(conversationThread[0])}>Back to the original report</button>
             </div>
           {/if}
-          <span class="eyebrow">Final Read · {active.fallback_used ? 'Deterministic' : active.model_id}</span>
+          <span class="eyebrow">Report · {active.fallback_used ? 'Calculated summary' : 'AI analyst'}</span>
           <p class="report-question"><span>Your question</span>{active.run.question}</p>
-          <h2>The answer</h2>
+          <h2 bind:this={answerHeading} tabindex="-1">The answer</h2>
           {#if active.run.subject?.type === 'player'}
             <PlayerPortrait id={active.run.subject.id} sport={active.run.sport ?? 'nfl'} name={investigationSubject(active, playerNamesById)}
                             historical={active.run.sport === 'cfb'}/>
           {/if}
-          <p>{active.summary}</p>
-          <div class="report-meta" aria-label="Investigation scope">
+          <p><ModelText text={active.summary}/></p>
+          <div class="report-meta" aria-label="Report scope">
             <span>{investigationSubject(active, playerNamesById)}</span>
             <span>{displayDomain(active.run.analysis_domain)}</span>
             <span>{investigationWindow(active)}</span>
-            <span>{active.claims.length} evidence-bound findings</span>
+            <span>{active.claims.length} {active.claims.length === 1 ? 'finding' : 'findings'}</span>
           </div>
         </div>
         <div class="report-actions">
@@ -2959,6 +3071,7 @@
       </section>
       {#if !active.run.parent_investigation_id}
         <section class="key-metrics" aria-label="Key metric changes">
+          <h2 class="sr-only">Key metric changes</h2>
           {#each keyMetrics(active) as metric}
             {@const period = metricColumns(metric, active.aggregate_evidence, active.run.scope, seasonLabel)}
             {@const format = metricFormatter(metric, period.columns.map(column => column.value))}
@@ -2979,7 +3092,7 @@
       {/if}
       <div class="report-grid">
         <section class="findings">
-          <div class="section-title"><span>Core Findings</span><small>{active.claims.length} evidence-bound claims</small></div>
+          <div class="section-title"><h2>Core Findings</h2><small>Each one links to its evidence</small></div>
           <details class="reading-guide">
             <summary>How to read these findings</summary>
             <p>Measured findings are calculated from recorded data. Interpretations describe possible explanations, not proof of cause. Confidence describes how
@@ -2990,17 +3103,16 @@
                 class:selected={selectedClaimId === claim.claim_id}
                 type="button"
                 aria-pressed={selectedClaimId === claim.claim_id}
-                aria-label={`Inspect evidence for finding ${index + 1}`}
                 on:click={() => inspectFinding(claim)}
             >
-              <span class="finding-number">{String(index + 1).padStart(2, '0')}</span>
+              <span class="sr-only">Inspect evidence for finding {index + 1}: </span>
+              <span class="finding-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
               <span class="finding-content"><span class="claim-meta"><span
                   class:interpretation={claim.claim_type === 'interpretation'}
                   title={claim.claim_type === 'measured' ? 'Calculated from recorded data.' : 'An explanation of the evidence, not proof of cause.'}>{claim.claim_type}</span><i
                   title="Confidence describes the strength of the evidence for this finding. It is not a probability or a guarantee.">{claim.confidence}
                 confidence</i></span><span
-                  class="finding-statement">{claim.statement}</span><span class="citations">{#each claim.evidence_ids as id}<span>{id.slice(0, 18)}
-                …</span>{/each}</span></span>
+                  class="finding-statement"><ModelText text={claim.statement}/></span><span class="citations" aria-hidden="true"><span>{claim.evidence_ids.length} {claim.evidence_ids.length === 1 ? 'source' : 'sources'}</span></span></span>
               <span class="finding-inspect"><Icon name="search" size={17}/></span>
             </button>
             {#if selectedClaimId === claim.claim_id}
@@ -3022,7 +3134,7 @@
         </aside>
       </div>
       <section class="charts">
-        <div class="section-title"><span>Performance comparisons</span>
+        <div class="section-title"><h2>Performance comparisons</h2>
           {#if active.charts.length}<small>Season summaries, monthly trends and clearly scoped supporting calculations.</small>{/if}
         </div>
         {#if !active.charts.length}<p class="empty-state">No charts were produced for this analysis. The findings and supporting evidence above contain the available
@@ -3033,7 +3145,7 @@
                      class:chart-metric-group={isMetricRowChart(chart.specification)}><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
               <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
-                     sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season}/>
+                     sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season} title={chart.title}/>
             </article>
           {/each}
         </div>
@@ -3046,7 +3158,7 @@
                 <article use:chartLayout class:chart-trend={isTrendChart(chart.specification)} class:chart-metric-group={isMetricRowChart(chart.specification)}>
                   <h3>{chart.title}</h3>
                   <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
-                    sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season}/>
+                    sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season} title={chart.title}/>
                 </article>
               {/each}
             </div>
@@ -3055,7 +3167,7 @@
       </section>
       <section class="plays">
         <div class="section-title">
-          <span>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : activeSport === 'cfb' && !active.play_evidence.some(play => play.play_id !== 0) ? 'Games' : 'Plays'}</span><small>Examples
+          <h2>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : activeSport === 'cfb' && !active.play_evidence.some(play => play.play_id !== 0) ? 'Games' : 'Plays'}</h2><small>Examples
           from both periods—not the entire
           sample</small>
         </div>
@@ -3073,11 +3185,10 @@
               {#each group.plays as play}
                 <button class:selected={selectedPlay?.evidence_id === play.evidence_id}
                         aria-expanded={selectedPlay?.evidence_id === play.evidence_id}
-                        aria-label={`Inspect ${evidenceRoleLabel(play)} evidence from ${play.game_id ?? 'selected game'}`}
-                        on:click={() => openPlay(play)}><span class="play-tag"
+                        on:click={() => openPlay(play)}><span class="sr-only">Inspect {evidenceRoleLabel(play)} evidence from {gameLabel(play)}: </span><span class="play-tag"
                                                               class:supporting={play.evidence_role ? play.evidence_role !== 'counterexample' : play.supporting}
                                                               class:typical={play.evidence_role === 'typical'}>{evidenceRoleLabel(play)}</span>
-                  <span class="play-reference"><strong>{play.game_id}</strong>
+                  <span class="play-reference"><strong title={play.game_id}>{gameLabel(play)}</strong>
                     {#if activeSport !== 'soccer' && play.play_id !== 0}<small>Play #{activeSport === 'cfb' ? play.visualization?.cfb_statistics?.selected_play?.id ?? play.play_id : play.play_id}</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
@@ -3097,7 +3208,9 @@
         <summary>How this analysis was calculated</summary>
         <h3>Methodology and limitations</h3>
         {#each active.methodological_caveats as caveat}<p>{caveat}</p>{/each}
-        <p>Change is measured from the earlier period to the later one. Measured findings come from recorded data; interpretations describe possible
+        <p>Change is measured from the first period to the second.
+          {active.fallback_used ? 'This summary was calculated without an AI model.' : `Written by the AI model ${active.model_id ?? 'configured for this app'}.`}
+          Measured findings come from recorded data; interpretations describe possible
           explanations.</p>
         <h3>Sources</h3>
         {#each active.dataset_manifests ?? [] as manifest}<p>{datasetLabel(manifest.dataset)} · {manifest.season} · {manifest.row_count.toLocaleString()}
@@ -3114,11 +3227,11 @@
             {/if}<p>Sources: {execution.dataset_manifest_ids?.join(', ') ?? 'See source records above'}</p></details>
         {:else}<p>No separate execution records were saved with this report.</p>{/each}
       </details>
-      <section class="conversation" aria-label="Investigation conversation">
+      <section class="conversation" aria-label="Follow-up questions">
         <div class="conversation-header">
-          <div><span class="eyebrow">Investigation Thread</span>
-            <h2>{investigationSubject(active, playerNamesById)} Film Room</h2>
-            <p>The initial analysis and every follow-up are saved together. Select any analyst response to inspect its report and evidence.</p>
+          <div><span class="eyebrow">Follow-ups</span>
+            <h2>Ask about this report</h2>
+            <p>Your questions and answers are saved with this report. Select an answer to inspect its evidence.</p>
           </div>
           <span class="conversation-count">{Math.max(0, conversationThread.length - 1)} follow-up{conversationThread.length === 2 ? '' : 's'}</span>
         </div>
@@ -3136,11 +3249,11 @@
               <span class="chat-avatar analyst-avatar"><Icon name="sports-analyst" size={24}/></span>
               <button class="chat-bubble analyst-bubble" class:selected={active.run.investigation_id === turn.run.investigation_id}
                       type="button" on:click={() => openInvestigation(turn)}>
-                <div class="chat-message-meta"><small>Open Sports Analyst · {turn.fallback_used ? 'Deterministic' : turn.model_id}</small>
+                <div class="chat-message-meta"><small>Open Sports Analyst</small>
                   <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time>
                 </div>
-                <p>{turn.summary}</p>
-                <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this analysis' : 'View analysis and evidence'}
+                <p><ModelText text={turn.summary}/></p>
+                <span>{active.run.investigation_id === turn.run.investigation_id ? 'Viewing this answer' : 'View answer and evidence'}
                   <Icon name="arrow-right" size={15}/></span>
               </button>
             </div>
@@ -3155,14 +3268,17 @@
               <span class="chat-avatar analyst-avatar"><Icon name="sports-analyst" size={24}/></span>
               <div class="chat-bubble analyst-bubble typing"><small>Open Sports Analyst</small>
                 <span class="typing-dots" aria-label="Analyzing follow-up"><i></i><i></i><i></i></span>
-                <p>{stage || 'Planning the next evidence-backed analysis…'}</p></div>
+                <p>{stage || 'Planning the next evidence-backed analysis…'}</p>
+                <button class="cancel-run" type="button" disabled={!runningInvestigationId || cancelling} on:click={cancelRun}>
+                  {cancelling ? 'Cancelling…' : 'Cancel Follow-up'}
+                </button></div>
             </article>
           {/if}
         </div>
         <div class="chat-composer">
                     <textarea id="followup-question" bind:value={followup} rows="2" disabled={followupBusy}
                               aria-label="Ask a follow-up question"
-                              placeholder="Ask a follow-up about this investigation…"
+                              placeholder="Ask a follow-up about this report…"
                               on:keydown={(event) => {
                                   if (event.key === 'Enter' && !event.shiftKey) {
                                       event.preventDefault();

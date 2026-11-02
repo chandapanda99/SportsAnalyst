@@ -1,6 +1,12 @@
 """Shared durable-job behavior that does not depend on a queue provider."""
 from __future__ import annotations
 
+TERMINAL_STAGES = frozenset({"complete", "failed", "cancelled"})
+
+
+class JobCancelled(BaseException):
+    """Stops cancelled work; a BaseException so model fallbacks cannot swallow it."""
+
 
 class QueueFull(RuntimeError):
     """Raised when the public deployment has reached its admission limit."""
