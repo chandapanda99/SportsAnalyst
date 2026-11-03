@@ -521,8 +521,9 @@ class SportsDataverseCFBConnector:
                 statuses[provider] = "acquired"
             except Exception as error:
                 statuses[provider] = "unavailable; primary ESPN plays retained"
-                logger.warning("cfb_secondary_unavailable provider=%s game_id=%s season=%s error_type=%s",
-                               provider, game, season, type(error).__name__)
+                # The reason is for operators only; provenance and the UI keep the generic status.
+                logger.warning("cfb_secondary_unavailable provider=%s game_id=%s season=%s error_type=%s reason=%s",
+                               provider, game, season, type(error).__name__, str(error)[:200])
         return resolve_game(rows, source_plays, summary, game, season, inputs, statuses, primary_input, policy=plan)
 
     def selected_play_context(self, row, game, season):
@@ -593,7 +594,9 @@ class SportsDataverseCFBConnector:
         except OptionalDependencyError:
             raise
         except Exception as error:
-            missing = getattr(getattr(error, "response", None), "status_code", None) == 404
+            missing = (getattr(getattr(error, "response", None), "status_code", None) == 404
+                       # The provider's NoDataError means a definitive "nothing here" (a 404), not a failed fetch.
+                       or any(kind.__name__ == "NoDataError" for kind in type(error).__mro__))
             result = {"status": "not_recorded" if missing else "unavailable", "source_url": url,
                       "entries": [], "scope": "No verified personnel data for this selected play; not evidence of an empty lineup"}
             if missing:

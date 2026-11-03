@@ -183,7 +183,8 @@ class WhoScoredSource:
                             working_bytes += size
                     except Exception as error:
                         coverage["failed_requests"] += 1
-                        logger.warning("soccer_whoscored_match_failed game=%s error_type=%s", fixture["event_id"], type(error).__name__)
+                        logger.warning("soccer_whoscored_match_failed game=%s error_type=%s reason=%s",
+                                       fixture["event_id"], type(error).__name__, str(error)[:200])
                     if progress:
                         progress(index, fixtures.height)
         except Exception as error:
@@ -191,7 +192,9 @@ class WhoScoredSource:
             status = getattr(error, "code", None)
             reason = f"HTTP {status}" if isinstance(status, int) else type(error).__name__
             message = f"WhoScored acquisition unavailable ({reason}); static recaps remain available."
-            logger.warning("soccer_whoscored_unavailable competition=%s season=%s error_type=%s", competition, season, type(error).__name__)
+            # The reason is for operators only; the saved coverage message keeps the generic one.
+            logger.warning("soccer_whoscored_unavailable competition=%s season=%s error_type=%s reason=%s",
+                           competition, season, type(error).__name__, str(error)[:200])
         finally:
             ACTIVE_BUDGET.reset(token)
         frame = pl.from_dicts(rows, infer_schema_length=None) if rows else pl.DataFrame()

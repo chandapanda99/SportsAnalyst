@@ -329,8 +329,8 @@ class UnderstatSource:
         try:
             prepared = self.prepare(competition, season, fixtures, datasets, refresh, progress)
         except (OSError, SourceUnavailable) as error:
-            logger.warning("soccer_understat_acquisition_unavailable competition=%s season=%s error_type=%s",
-                           competition, season, type(error).__name__)
+            logger.warning("soccer_understat_acquisition_unavailable competition=%s season=%s error_type=%s reason=%s",
+                           competition, season, type(error).__name__, str(error)[:200])
             prepared = [(name, pl.DataFrame(), {"expected_matches": fixtures.height, "recorded_matches": 0,
                 "completed_matches": 0, "failed_requests": int(isinstance(error, OSError)), "matched_matches": 0}) for name in datasets]
         for dataset, frame, coverage in prepared:

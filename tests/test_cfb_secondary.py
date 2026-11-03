@@ -182,3 +182,50 @@ def test_feature_policy_fetches_only_needed_context_and_preserves_cited_facts(tm
     assert "formation" in json.loads(replaced["source_provenance_json"])["rejected"]
     assert resolve_game([primary], plays, summary, "2", 2025, {"ncaa": (ncaa, receipt)},
                         policy={"feature": "analysis"}) == [primary]
+
+
+@pytest.mark.parametrize("change,verified", [
+    # NCAA often gives one side an ESPN ID and abbreviates the other: the other is the remaining team.
+    ({"team": "Team A St.", "espn_team_id": None}, True),
+    ({"team": "Team A St.", "espn_team_id": None, "final": 3}, False),  # The final score must match.
+    ({"team": "Team A St.", "espn_team_id": None, "home_away": "away"}, False),  # So must the side.
+    ({"team": "Team A St.", "espn_team_id": "99"}, False),  # A conflicting ID is never overridden.
+])
+def test_ncaa_second_team_links_only_by_strict_elimination(change, verified):
+    from sports_analyst.datasets.cfb_crosswalk import game_crosswalk
+
+    summary, ncaa, *_ = payloads()
+    ncaa["teams"][0].update(change)
+    result = game_crosswalk(ncaa, summary, "2", 2025)
+    assert result["verified"] is verified
+    if verified:
+        assert result["team_names"] == {"Team A St.": "10", "Team B": "20"}
+
+
+def test_ncaa_file_with_a_wrong_team_id_stays_unverified():
+    from sports_analyst.datasets.cfb_crosswalk import game_crosswalk
+
+    summary, ncaa, *_ = payloads()
+    # As in a real file: the away team carries the home team's ESPN ID, the home team carries none.
+    ncaa["teams"] = [{"team": "Team B", "espn_team_id": "10", "home_away": "away", "final": 7},
+                     {"team": "Team A St.", "espn_team_id": None, "home_away": "home", "final": 0}]
+    assert game_crosswalk(ncaa, summary, "2", 2025)["verified"] is False
+
+
+def test_play_with_no_recorded_personnel_is_remembered(tmp_path, monkeypatch):
+    class NoDataError(Exception):
+        """Stands in for the provider's definitive 'nothing here' response."""
+
+    calls = []
+
+    def collection(self, url, ttl=86400, maximum=500):
+        calls.append(url)
+        raise NoDataError("No data found")
+
+    connector = SportsDataverseCFBConnector(Settings(_env_file=None, data_dir=tmp_path))
+    monkeypatch.setattr(type(connector), "summary", lambda self, game, season: {})
+    monkeypatch.setattr(CFBSource, "collection", collection)
+    first = connector.play_personnel("401756853", 2025, "401756853101849901")
+    second = connector.play_personnel("401756853", 2025, "401756853101849901")
+    assert first["status"] == second["status"] == "not_recorded"
+    assert len(calls) == 1

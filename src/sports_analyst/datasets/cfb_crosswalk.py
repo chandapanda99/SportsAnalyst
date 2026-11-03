@@ -59,6 +59,17 @@ def game_crosswalk(ncaa, summary, game, season):
         if len(candidates) == 1 and row.get("team"):
             links[row["team"]] = str(candidates[0]["team"]["id"])
             team_evidence[row["team"]] = "explicit ESPN ID" if supplied is not None else "game/season, exact name, home/away and final score"
+    # NCAA files often give only one side an ESPN ID and abbreviate the other ("Iowa St."). With one
+    # team linked by its explicit ID, the other may be the remaining ESPN team, but only when it has no
+    # conflicting ID of its own and its home/away side and final score match. Names are never rewritten.
+    unlinked = [row for row in teams if row.get("team") and row["team"] not in links]
+    remaining = [entry for entry in competitors if str((entry.get("team") or {}).get("id")) not in set(links.values())]
+    if (len(links) == 1 and set(team_evidence.values()) == {"explicit ESPN ID"} and len(unlinked) == len(remaining) == 1
+            and unlinked[0].get("espn_team_id") is None and unlinked[0].get("home_away") == remaining[0].get("homeAway")
+            and _score(unlinked[0].get("final")) is not None
+            and _score(unlinked[0].get("final")) == _score(remaining[0].get("score"))):
+        links[unlinked[0]["team"]] = str(remaining[0]["team"]["id"])
+        team_evidence[unlinked[0]["team"]] = "the other team of an ESPN-ID-verified game, matching home/away and final score"
     verified = (str(ncaa.get("espn_game_id")) == str(game) and str(header.get("id")) == str(game)
                 and ncaa.get("season") == season and ncaa.get("academic_year") == season + 1
                 and (header.get("season") or {}).get("year") == season
