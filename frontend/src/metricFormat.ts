@@ -57,9 +57,11 @@ function evidenceSeason(item: Evidence) {
 
 /** Every period a metric was measured in; season ranges include their middle seasons. */
 export function metricColumns(metric: Evidence, evidence: Evidence[], scope: Scope, seasonLabel: (season: number) => string) {
-  const first: MetricColumn = {label: periodLabel(scope.baseline, scope.comparison_design, seasonLabel), value: metric.baseline_value,
+  // Head-to-head columns are the two subjects, not two periods.
+  const subjects = scope.comparison_design === 'head_to_head' && Array.isArray(metric.context?.subjects) ? metric.context.subjects : null;
+  const first: MetricColumn = {label: subjects?.[0] ?? periodLabel(scope.baseline, scope.comparison_design, seasonLabel), value: metric.baseline_value,
     sample: finite(metric.context?.baseline_sample) ? metric.context.baseline_sample : undefined};
-  const last: MetricColumn = {label: periodLabel(scope.comparison, scope.comparison_design, seasonLabel), value: metric.comparison_value,
+  const last: MetricColumn = {label: subjects?.[1] ?? periodLabel(scope.comparison, scope.comparison_design, seasonLabel), value: metric.comparison_value,
     sample: finite(metric.context?.comparison_sample) ? metric.context.comparison_sample : metric.sample_size};
   const start = scope.baseline.season, end = scope.comparison.season;
   if (scope.comparison_design !== 'full_seasons' || end - start < 2) return {columns: [first, last], middleSeasonsMissing: false};
@@ -72,6 +74,12 @@ export function metricColumns(metric: Evidence, evidence: Evidence[], scope: Sco
       value: item?.value, sample: item?.sample_size};
   });
   return {columns: [first, ...columns, last], middleSeasonsMissing: false};
+}
+
+/** Who leads a head-to-head metric: the difference is second minus first. */
+export function headToHeadLeader(difference: number | undefined, higherIsBetter: boolean | null | undefined, names: [string, string]) {
+  const verdict = changeVerdict(difference, higherIsBetter);
+  return verdict === 'Better' ? names[1] : verdict === 'Worse' ? names[0] : '';
 }
 
 export function changeVerdict(change: number | undefined, higherIsBetter: boolean | null | undefined) {

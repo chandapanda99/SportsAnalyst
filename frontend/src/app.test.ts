@@ -176,6 +176,7 @@ describe('Open Sports Analyst workbench', () => {
               default_metrics: ['epa_per_dropback'], week_values: [1, 2, 3, 4, 5],
               subject_types: [{ value: 'team', label: 'Team' }, { value: 'player', label: 'Player' }],
               comparison_windows: [
+                { value: 'head_to_head', label: 'Head-to-head', description: 'Compare two teams or two players over the same season.' },
                 { value: 'full_seasons', label: 'Full seasons', description: 'Compare seasons.' },
                 { value: 'week_ranges', label: 'Custom week ranges', description: 'Compare ranges.' }
               ],
@@ -815,6 +816,95 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('1 of 1,089 qualifying plays selected')).toBeTruthy();
   });
 
+  it('finds players beyond the downloaded list by searching the server', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    const brady = {player_id: '00-0019596', name: 'Tom Brady', teams: ['TB'], positions: ['QB'], seasons: [2025],
+      seasons_by_domain: {quarterback: [2025]}};
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/sports/nfl/players?query=Brady')) return new Response(JSON.stringify([brady]));
+      return baseFetch(input, init);
+    });
+    render(App);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
+    const player = await screen.findByRole('combobox', {name: 'Player'});
+    await fireEvent.focus(player);
+    await fireEvent.input(player, {target: {value: 'Brady'}});
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Tom Brady/}));
+    expect((player as HTMLInputElement).value).toContain('Tom Brady');
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('query=Brady'))).toBe(true);
+  });
+
+  it('searches the server for a head-to-head opponent', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    const allen = {player_id: '00-0034857', name: 'Josh Allen', teams: ['BUF'], positions: ['QB'], seasons: [2024, 2025],
+      seasons_by_domain: {quarterback: [2024, 2025]}};
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/sports/nfl/players?query=Allen')) return new Response(JSON.stringify([allen]));
+      return baseFetch(input, init);
+    });
+    render(App);
+    await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
+    const player = await screen.findByRole('combobox', {name: 'Player'});
+    await fireEvent.focus(player);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Patrick Mahomes/}));
+    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+    const compare = await screen.findByRole('combobox', {name: 'Compare with'});
+    await fireEvent.focus(compare);
+    await fireEvent.input(compare, {target: {value: 'Allen'}});
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Josh Allen/}));
+    expect((await screen.findAllByText('Subjects selected')).length).toBeGreaterThan(0);
+  });
+
+  it('compares two teams head-to-head in one season', async () => {
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+    expect((await screen.findAllByText('Choose who to compare with')).length).toBeGreaterThan(0);
+    const compare = screen.getByRole('combobox', {name: 'Compare with'});
+    await fireEvent.focus(compare);
+    expect(screen.queryByRole('option', {name: /Kansas City Chiefs/})).toBeNull();
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Buffalo Bills/}));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'Which offense passed better?'}});
+    await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
+    expect(document.querySelector('.analysis-brief')?.textContent).toContain('Kansas City Chiefs (KC) vs Buffalo Bills');
+    await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
+    const [, request] = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/investigations/stream'))!;
+    const body = JSON.parse(String(request?.body));
+    expect(body.comparison_subject).toMatchObject({type: 'team', id: 'BUF', display_name: 'Buffalo Bills'});
+    expect(body.scope.comparison_design).toBe('head_to_head');
+    expect(body.scope.baseline).toEqual(body.scope.comparison);
+  });
+
+  it('shows a head-to-head report with both names and who leads', async () => {
+    const season = {season: 2025, weeks: [1, 22]};
+    mockInvestigations = [{
+      ...savedReport('investigation-h2h', 'Which offense passed better?'),
+      run: {...savedReport('investigation-h2h', 'Which offense passed better?').run,
+        subject: {type: 'team', id: 'KC', display_name: 'Kansas City Chiefs'}, comparison_subject: {type: 'team', id: 'BUF', display_name: 'Buffalo Bills'},
+        metrics: ['epa_per_dropback'], scope: {team: 'KC', comparison_design: 'head_to_head', season_type: 'REG', baseline: season, comparison: season}},
+      aggregate_evidence: [{evidence_id: 'h2h-epa', metric: 'epa_per_dropback', label: 'EPA/dropback', unit: 'per play', value: -0.2,
+        baseline_value: 0.058, comparison_value: -0.142, sample_size: 160,
+        context: {comparison_kind: 'head_to_head', subjects: ['Kansas City Chiefs', 'Buffalo Bills'], baseline_sample: 160, comparison_sample: 170}}]
+    }];
+    render(App);
+    await fireEvent.click(await screen.findByText('Which offense passed better?'));
+    expect(await screen.findByRole('heading', {level: 1, name: 'Kansas City Chiefs vs Buffalo Bills report'})).toBeTruthy();
+    const card = await waitFor(() => {
+      const article = document.querySelector('.key-metrics article');
+      expect(article).toBeTruthy();
+      return article!;
+    });
+    expect(card.textContent).toContain('Kansas City Chiefs');
+    expect(card.textContent).toContain('Buffalo Bills');
+    expect(card.textContent).toContain('Difference');
+    await waitFor(() => expect(card.textContent).toContain('Kansas City Chiefs ahead'));
+    expect(card.textContent).not.toContain('Better');
+    expect(screen.getAllByText('2025 · Head-to-head').length).toBeGreaterThan(0);
+  });
+
   it('gives each report a URL that reloads and follows browser history', async () => {
     mockInvestigations = [savedReport('investigation-linked', 'What changed for Kansas City?')];
     window.history.replaceState({}, '', '/#/reports/investigation-linked');
@@ -1104,7 +1194,8 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from/}));
     // The saved report has no shots. The tablet must consume the enriched
     // evidence response, not remain attached to the stale saved example.
-    await fireEvent.click(await screen.findByRole('button', {name: 'Open shot detail'}));
+    // The soccer tablet loads lazily; give a cold module load time to finish.
+    await fireEvent.click(await screen.findByRole('button', {name: 'Open shot detail'}, {timeout: 5000}));
     expect(await screen.findByText('Where the goal crossed the line')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', {name: '← Back to pitch'}));
     expect(screen.getByRole('option', {name:'FotMob'})).toBeTruthy();

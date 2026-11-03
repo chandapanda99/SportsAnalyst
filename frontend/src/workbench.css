@@ -648,6 +648,8 @@ summary {
 }
 
 .key-metrics p em {
+    display: inline-block;
+    white-space: nowrap;
     margin-left: .35rem;
     padding: .1rem .45rem;
     border: 1px solid var(--mint);

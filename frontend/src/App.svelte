@@ -19,7 +19,8 @@
   import {expandedQuestions} from './expandedQuestions';
   import {initializeBranding} from './sportsBranding';
   import {questionBanks, supplementalQuestionBanks} from './questionCatalog';
-  import {changeVerdict, metricColumns, metricFormatter, periodLabel} from './metricFormat';
+  import {changeVerdict, headToHeadLeader, metricColumns, metricFormatter, periodLabel} from './metricFormat';
+  import SubjectSearch from './SubjectSearch.svelte';
   import {gameLabel} from './reportText';
   import ModelText from './ModelText.svelte';
   import type {
@@ -159,6 +160,11 @@
   let cfbSeasons: number[] = [];
   let cfbTeams: Array<{ value: string; label: string }> = [];
   let cfbSearchTimer: ReturnType<typeof setTimeout>;
+  // The downloaded player list is capped, so typed searches also ask the server and merge in its matches.
+  let searchedPlayers: PlayerOption[] = [];
+  let playerSearching = false;
+  let playerQueryVersion = 0;
+  let playerQueryTimer: ReturnType<typeof setTimeout>;
   let scopeSeasons: number[] = [];
   let seasonType: 'REG' | 'POST' | 'ALL' = 'REG';
   let selectedMetrics: string[] = [];
@@ -195,7 +201,7 @@
     comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string; playerInput: string;
     playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
     selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[]; dataManagerOpen: boolean;
-    customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean;
+    customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean; compareSubjectId: string;
     selectedCompetition: string; baselineStartDate: string; baselineEndDate: string; comparisonStartDate: string; comparisonEndDate: string;
   };
   const sportDrafts: Record<string, DraftState> = {};
@@ -224,6 +230,7 @@
   let playTrigger: HTMLElement | null = null;
   let metricDirections: Record<string, boolean | null> = {};
   let showFullFilmRoom = false;
+  let compareSubjectId = '';
   let runningInvestigationId = '';
   let cancelling = false;
   let routeHandled = false;
@@ -262,7 +269,11 @@
           : !hasRequiredData ? `Sync ${missingRequiredSeasons.map(seasonLabel).join(', ')} before running` : '';
   $: readinessSteps = [
     {ready: dataReady, label: dataStatusLabel, target: 'data-setup'},
-    {ready: Boolean(resolvedSubject), label: resolvedSubject ? 'Subject selected' : 'Choose a team or player', target: 'scope-heading'},
+    {
+      ready: Boolean(resolvedSubject) && (!headToHead || Boolean(compareSubjectId)),
+      label: !resolvedSubject ? 'Choose a team or player' : headToHead ? compareSubjectId ? 'Subjects selected' : 'Choose who to compare with' : 'Subject selected',
+      target: headToHead && resolvedSubject ? 'comparison-heading' : 'scope-heading'
+    },
     {ready: !periodBlocker, label: periodBlocker || 'Periods selected', target: 'comparison-heading'},
     {
       ready: selectedAvailableMetricCount > 0,
@@ -413,6 +424,7 @@
       comparisonEndDate
     } = context;
     if (comparisonMode === 'season_vs_prior') return `${seasonLabel(comparison)}, measured against ${seasonLabel(baseline)}`;
+    if (comparisonMode === 'head_to_head') return `${seasonLabel(comparison)} · head-to-head`;
     if (comparisonMode === 'full_seasons') return `${seasonLabel(baseline)} → ${seasonLabel(comparison)} · every season in this range`;
     if (comparisonMode === 'before_after_milestone') return `${seasonLabel(baseline)} · before vs. after the All-Star break`;
     if (comparisonMode === 'before_after') return `${seasonLabel(baseline)} · weeks 1–${splitWeek - 1} vs. ${splitWeek}–22`;
@@ -428,17 +440,19 @@
 
   // One season is reported against the season before it, as a two-season range.
   $: analysisDesign = comparisonMode === 'season_vs_prior' ? 'full_seasons' : comparisonMode;
-  $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : baseline;
+  $: headToHead = comparisonMode === 'head_to_head';
+  $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : headToHead ? comparison : baseline;
   $: comparisonOptions = (analysisOptions?.comparison_windows ?? []).flatMap(option => option.value === 'full_seasons'
       ? [option, {value: 'season_vs_prior', label: 'One season vs. the season before', description: 'Analyze one season, using the season before it as the reference point.'}]
       : [option]);
-  $: requiredSeasons = analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
+  $: requiredSeasons = headToHead ? [comparison] : analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
       ? [baseline]
       : analysisDesign === 'full_seasons' && periodStart < comparison
           ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index)
           : [periodStart, comparison];
   $: resolvedTeam = resolveTeam(teamInput);
-  $: selectedPlayer = players.find((player) => player.player_id === selectedPlayerId) ?? null;
+  $: knownPlayers = mergePlayers(players, searchedPlayers);
+  $: selectedPlayer = knownPlayers.find((player) => player.player_id === selectedPlayerId) ?? null;
   $: {
     // Keep question cards reactive to every piece of context read by examplesFor.
     activeSport;
@@ -463,14 +477,14 @@
     const query = teamFilter.trim().toUpperCase();
     return !query || option.value.includes(query) || option.label.toUpperCase().includes(query);
   });
-  $: filteredPlayers = players.filter((player) => {
+  $: filteredPlayers = knownPlayers.filter((player) => {
     const query = playerFilter.trim().toLowerCase();
     return !query || player.name.toLowerCase().includes(query) || player.player_id.toLowerCase().includes(query)
         || player.teams.some((value) => value.toLowerCase().includes(query));
   });
-  $: playerNamesById = new Map(players.map((player) => [player.player_id, player.name]));
+  $: playerNamesById = new Map(knownPlayers.map((player) => [player.player_id, player.name]));
   $: visibleDomains = (analysisOptions?.analysis_domains ?? []).filter((domain) => domainAvailableForSubject(domain, subjectType, selectedPlayer));
-  $: windowsDiffer = analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
+  $: windowsDiffer = headToHead || analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
       || (analysisDesign === 'full_seasons' ? periodStart < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
           : ['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges'
@@ -485,8 +499,15 @@
       ? requiredSeasons.filter((season) => !scopeSeasons.includes(season))
       : [];
   $: hasSubjectData = missingPlayerSeasons.length === 0;
+  // Head-to-head candidates are the same kind of subject with recorded data in the chosen season.
+  $: compareOptions = !headToHead ? [] : subjectType === 'team'
+      ? (analysisOptions?.teams ?? []).filter(option => option.value !== resolvedTeam).map(option => ({value: option.value, label: option.label, detail: option.value}))
+      : knownPlayers.filter(player => player.player_id !== selectedPlayerId && playerSeasonsForDomain(player).map(Number).includes(comparison))
+          .map(player => ({value: player.player_id, label: player.name, detail: [player.positions.join('/'), player.teams.join('/')].filter(Boolean).join(' · ')}));
+  $: if (compareSubjectId && compareOptions.length && !compareOptions.some(option => option.value === compareSubjectId)) compareSubjectId = '';
+  $: compareSubjectLabel = compareOptions.find(option => option.value === compareSubjectId)?.label ?? '';
   $: canRun = Boolean(
-      resolvedSubject && question.trim().length >= 3 && windowsDiffer && hasRequiredData && hasSubjectData
+      resolvedSubject && (!headToHead || compareSubjectId) && question.trim().length >= 3 && windowsDiffer && hasRequiredData && hasSubjectData
       && selectedAvailableMetricCount > 0 && dataReady
   );
   $: syncedSeasonCount = new Set(datasets.filter((dataset) => dataset.season > 0 && dataset.row_count !== 0).map((dataset) => dataset.season)).size;
@@ -663,6 +684,7 @@
     datasets = [];
     history = [];
     players = [];
+    searchedPlayers = [];
     playersLoading = false;
     playerLoadError = '';
     error = '';
@@ -682,7 +704,7 @@
       selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
       selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
       syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets], dataManagerOpen,
-      customizeSources, customizeMetrics, metricsEdited,
+      customizeSources, customizeMetrics, metricsEdited, compareSubjectId,
       selectedCompetition, baselineStartDate, baselineEndDate, comparisonStartDate, comparisonEndDate
     };
   }
@@ -719,6 +741,7 @@
     baselineStartDate = baselineEndDate = comparisonStartDate = comparisonEndDate = '';
     question = '';
     showFullFilmRoom = false;
+    compareSubjectId = '';
     selectedMetrics = [];
     selectedSplits = [];
     syncSeasons = [];
@@ -749,6 +772,7 @@
     customizeSources = draft.customizeSources;
     customizeMetrics = draft.customizeMetrics;
     metricsEdited = draft.metricsEdited;
+    compareSubjectId = draft.compareSubjectId ?? '';
     selectedCompetition = draft.selectedCompetition;
     baselineStartDate = draft.baselineStartDate;
     baselineEndDate = draft.baselineEndDate;
@@ -814,6 +838,7 @@
 
   function selectSubjectType(type: 'team' | 'player') {
     subjectType = type;
+    compareSubjectId = '';
     if (type === 'team') {
       playerSearchVersion += 1;
       playersLoading = false;
@@ -849,6 +874,31 @@
     } finally {
       if (version === playerSearchVersion && sport === activeSport) playersLoading = false;
     }
+  }
+
+  function mergePlayers(loaded: PlayerOption[], extra: PlayerOption[]) {
+    if (!extra.length) return loaded;
+    const known = new Set(loaded.map(player => player.player_id));
+    return [...loaded, ...extra.filter(player => !known.has(player.player_id))];
+  }
+
+  function searchPlayers(query: string) {
+    const term = query.trim();
+    clearTimeout(playerQueryTimer);
+    if (activeSport === 'cfb' || term.length < 2) return;
+    const version = ++playerQueryVersion;
+    const sport = activeSport;
+    const competition = selectedCompetition;
+    playerQueryTimer = setTimeout(async () => {
+      playerSearching = true;
+      try {
+        const matches = await api.players(sport, term, sport === 'soccer' ? competition : undefined);
+        if (sport === activeSport && competition === selectedCompetition) searchedPlayers = mergePlayers(searchedPlayers, matches);
+      } catch { /* The downloaded list still works when a search fails. */
+      } finally {
+        if (version === playerQueryVersion) playerSearching = false;
+      }
+    }, 250);
   }
 
   function playerDisplay(player: PlayerOption) {
@@ -921,6 +971,8 @@
       cfbSearchTimer = setTimeout(() => {
         if (activeSport === 'cfb') void loadPlayers();
       }, 250);
+    } else {
+      searchPlayers(playerInput);
     }
   }
 
@@ -1342,6 +1394,9 @@
 
   function reportPeriods(result: Investigation) {
     const {baseline: start, comparison: end, comparison_design: design} = result.run.scope;
+    if (result.run.comparison_subject) {
+      return {baseline: subjectName(result, result.run.subject), comparison: subjectName(result, result.run.comparison_subject)};
+    }
     return {baseline: periodLabel(start, design, seasonLabel), comparison: periodLabel(end, design, seasonLabel)};
   }
 
@@ -1550,6 +1605,7 @@
     datasets = [];
     history = [];
     players = [];
+    searchedPlayers = [];
     active = null;
     clearEvidenceSelection();
     await refresh();
@@ -1563,7 +1619,11 @@
   }
 
   function investigationSubject(item: Investigation | InvestigationSummary, playerNames = playerNamesById) {
-    const subject = item.run.subject;
+    const first = subjectName(item, item.run.subject, playerNames);
+    return item.run.comparison_subject ? `${first} vs ${subjectName(item, item.run.comparison_subject, playerNames)}` : first;
+  }
+
+  function subjectName(item: Investigation | InvestigationSummary, subject: Investigation['run']['subject'], playerNames = playerNamesById) {
     if (subject?.type === 'player') {
       return subject.display_name || playerNames.get(subject.id) || subject.id;
     }
@@ -1588,6 +1648,7 @@
   }
 
   function investigationWindow(item: Investigation | InvestigationSummary) {
+    if (item.run.scope.comparison_design === 'head_to_head') return `${seasonLabel(item.run.scope.baseline.season)} · Head-to-head`;
     const baselineWindow = item.run.scope.baseline;
     const comparisonWindow = item.run.scope.comparison;
     if (item.run.sport === 'soccer') {
@@ -1833,7 +1894,10 @@
         season: comparison,
         weeks: [1, 22]
       };
-      if (comparisonMode === 'week_ranges') {
+      if (headToHead) {
+        baselineWindow = {season: comparison, weeks: [1, 22]};
+        comparisonWindow = {season: comparison, weeks: [1, 22]};
+      } else if (comparisonMode === 'week_ranges') {
         baselineWindow = {season: baseline, weeks: [baselineStartWeek, baselineEndWeek]};
         comparisonWindow = {season: comparison, weeks: [comparisonStartWeek, comparisonEndWeek]};
       } else if (comparisonMode === 'before_after') {
@@ -1869,6 +1933,7 @@
           ...(subjectType === 'player' && selectedPlayer ? {display_name: selectedPlayer.name} : {}),
           ...(subjectType === 'player' && playerTeamId ? {team_id: playerTeamId} : {})
         },
+        ...(headToHead ? {comparison_subject: {type: subjectType, id: compareSubjectId, display_name: compareSubjectLabel}} : {}),
         question: question.trim(),
         analysis_domain: analysisDomain,
         scope: {
@@ -2372,7 +2437,7 @@
                             <b>{player.teams.map(team => playerTeamLabel(team)).join('/')}</b>
                           </button>
                         {:else}
-                          <div class="no-team-results">No players match “{playerFilter}”</div>
+                          <div class="no-team-results">{playerSearching ? 'Searching all players…' : `No players match “${playerFilter}”`}</div>
                         {/each}
                       {/if}
                     </div>
@@ -2675,7 +2740,21 @@
 
               <p class="section-help">{comparisonOptions.find(option => option.value === comparisonMode)?.description ?? ''}</p>
               {#if scopeSeasons.length}
-                {#if comparisonMode === 'season_vs_prior'}
+                {#if headToHead}
+                  <div class="window-grid before-after">
+                    <label>Season<select bind:value={comparison}>
+                      {#each scopeSeasons as season}
+                        <option value={season}>{seasonLabel(season)}</option>
+                      {/each}
+                    </select></label>
+                    <SubjectSearch id="compare-subject" label="Compare with" options={compareOptions} value={compareSubjectId}
+                                   placeholder={subjectType === 'player' ? 'Search players…' : 'Search teams…'}
+                                   emptyMessage={subjectType === 'player' ? 'No other players with data in this season' : 'No other teams'}
+                                   onsearch={subjectType === 'player' ? searchPlayers : undefined} searching={playerSearching}
+                                   onselect={(value) => compareSubjectId = value}/>
+                  </div>
+                  {#if !resolvedSubject}<p class="section-help">Choose the first {subjectType} above, then who to compare with.</p>{/if}
+                {:else if comparisonMode === 'season_vs_prior'}
                   <div class="window-grid before-after">
                     <label>Season<select bind:value={comparison}>
                       {#each scopeSeasons as season}
@@ -2971,7 +3050,7 @@
                 <dd>
                   {#if subjectType === 'player' && selectedPlayer}
                     <PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>
-                  {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : resolvedTeam ? teamInput : 'Choose a team'}</dd>
+                  {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : resolvedTeam ? teamInput : 'Choose a team'}{headToHead && compareSubjectLabel ? ` vs ${compareSubjectLabel}` : ''}</dd>
                 <dt>Periods</dt>
                 <dd>{periodBrief}</dd>
                 <dt>Focus</dt>
@@ -3070,12 +3149,14 @@
         </div>
       </section>
       {#if !active.run.parent_investigation_id}
-        <section class="key-metrics" aria-label="Key metric changes">
-          <h2 class="sr-only">Key metric changes</h2>
+        <section class="key-metrics" aria-label={active.run.comparison_subject ? 'Key metric comparison' : 'Key metric changes'}>
+          <h2 class="sr-only">{active.run.comparison_subject ? 'Key metric comparison' : 'Key metric changes'}</h2>
           {#each keyMetrics(active) as metric}
             {@const period = metricColumns(metric, active.aggregate_evidence, active.run.scope, seasonLabel)}
             {@const format = metricFormatter(metric, period.columns.map(column => column.value))}
-            {@const verdict = changeVerdict(metric.value, metricDirections[`${active.run.sport ?? 'nfl'}:${metric.metric}`])}
+            {@const direction = metricDirections[`${active.run.sport ?? 'nfl'}:${metric.metric}`]}
+            {@const verdict = active.run.comparison_subject ? '' : changeVerdict(metric.value, direction)}
+            {@const leader = active.run.comparison_subject ? headToHeadLeader(metric.value, direction, [period.columns[0].label, period.columns[1].label]) : ''}
             <article><h3>{metric.label}</h3>
               <div class:many-periods={period.columns.length > 2}>
                 {#each period.columns as column}
@@ -3083,8 +3164,12 @@
                     {#if column.sample != null}<small>Sample {column.sample.toLocaleString()}</small>{/if}</span>
                 {/each}
               </div>
-              <p>Change{period.columns.length > 2 ? `, ${period.columns[0].label} to ${period.columns.at(-1)?.label}` : ''}: <strong>{format.change(metric.value)}</strong>
-                {#if verdict}<em class:worse={verdict === 'Worse'}>{verdict}</em>{/if}</p>
+              {#if active.run.comparison_subject}
+                <p>Difference: <strong>{format.change(metric.value)}</strong>{#if leader}<em>{leader} ahead</em>{/if}</p>
+              {:else}
+                <p>Change{period.columns.length > 2 ? `, ${period.columns[0].label} to ${period.columns.at(-1)?.label}` : ''}: <strong>{format.change(metric.value)}</strong>
+                  {#if verdict}<em class:worse={verdict === 'Worse'}>{verdict}</em>{/if}</p>
+              {/if}
               {#if period.middleSeasonsMissing}<small>Middle seasons aren't recorded for this metric.</small>{/if}
             </article>
           {:else}<p>No comparable metric values are available for these periods. Review the limitations below or adjust your periods and data sources.</p>{/each}
@@ -3144,7 +3229,7 @@
             <article use:chartLayout class:chart-trend={isTrendChart(chart.specification)}
                      class:chart-metric-group={isMetricRowChart(chart.specification)}><h3>{chart.title}</h3>
               {#if chartGuidance(chart.specification)}<p class="chart-note">{chartGuidance(chart.specification)}</p>{/if}
-              <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
+              <Chart specification={chart.specification} team={active.run.comparison_subject ? '' : active.run.subject?.team_id ?? active.run.scope.team}
                      sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season} title={chart.title}/>
             </article>
           {/each}
@@ -3157,7 +3242,7 @@
               {#each orderedCharts(active.charts.filter(supplementalChart)) as chart}
                 <article use:chartLayout class:chart-trend={isTrendChart(chart.specification)} class:chart-metric-group={isMetricRowChart(chart.specification)}>
                   <h3>{chart.title}</h3>
-                  <Chart specification={chart.specification} team={active.run.subject?.team_id ?? active.run.scope.team}
+                  <Chart specification={chart.specification} team={active.run.comparison_subject ? '' : active.run.subject?.team_id ?? active.run.scope.team}
                     sport={active.run.sport ?? 'nfl'} season={active.run.scope.comparison.season} title={chart.title}/>
                 </article>
               {/each}
@@ -3168,7 +3253,7 @@
       <section class="plays">
         <div class="section-title">
           <h2>Representative {activeSport === 'nba' ? 'Possessions' : activeSport === 'soccer' ? 'Matches' : activeSport === 'cfb' && !active.play_evidence.some(play => play.play_id !== 0) ? 'Games' : 'Plays'}</h2><small>Examples
-          from both periods—not the entire
+          from {active.run.comparison_subject ? 'each subject' : 'both periods'}—not the entire
           sample</small>
         </div>
         <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it. Counterexamples show

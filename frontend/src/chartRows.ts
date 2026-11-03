@@ -16,8 +16,9 @@ export function chartGuidance(spec: Record<string, unknown>): string {
   const meta = spec.usermeta as {chartKind?: string; description?: string} | undefined;
   if (meta?.chartKind !== 'metric-rows') return '';
   if (meta.description) return meta.description;
-  return `Each metric has its own vertical scale. ${chartComparisonKind(spec) === 'season-trend'
-    ? 'Seasons run left to right.' : 'Compare the selected periods left to right.'} Values are labelled directly; hover or open exact values for details.`;
+  const kind = chartComparisonKind(spec);
+  return `Each metric has its own vertical scale. ${kind === 'season-trend' ? 'Seasons run left to right.'
+    : kind === 'subject-comparison' ? 'The two subjects sit side by side.' : 'Compare the selected periods left to right.'} Values are labelled directly; hover or open exact values for details.`;
 }
 
 export function comparisonRows(spec: Record<string, unknown>) {

@@ -62,7 +62,8 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` request
 
 ## Using the workbench
 
-Choose a sport and subject, comparison windows, metrics and a question. Soccer
+Choose a sport and subject, comparison windows, metrics and a question. For the NFL, a
+head-to-head comparison measures two teams or two players over the same season. Soccer
 adds competition selection; college football uses season-specific subdivision,
 conference and school discovery. Conference selection organizes navigation rather
 than limiting analysis to conference games.

@@ -182,7 +182,7 @@
                 {#if entry.context}<small>{entry.context}</small>{/if}
                 {#if entry.sample !== undefined}<small>Sample: {entry.sample.toLocaleString()}</small>{/if}
             </dt><dd>{entry.value}</dd></div>{/each}</dl>
-                {#if row.change !== null}<p>First to last change: {row.change}</p>{/if}
+                {#if row.change !== null}<p>{chartComparisonKind(specification) === 'subject-comparison' ? 'Difference' : 'First to last change'}: {row.change}</p>{/if}
             </section>
         {/each}
         {#if !grouped && chartComparisonKind(specification) !== 'monthly-trend'}<small>Changes are numeric differences, not a judgment of improvement. pp = percentage points.</small>{/if}

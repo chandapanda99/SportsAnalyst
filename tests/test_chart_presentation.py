@@ -199,3 +199,12 @@ def test_html_export_escapes_model_text_and_shows_its_emphasis():
 
     assert _model_html("Across *all plays*, EPA **rose** <b>by</b> 2 * 3") == (
         "Across <em>all plays</em>, EPA <strong>rose</strong> &lt;b&gt;by&lt;/b&gt; 2 * 3")
+
+
+def test_head_to_head_chart_does_not_connect_the_two_subjects():
+    from sports_analyst.presentation.charts import metric_row_comparison_spec
+
+    spec = metric_row_comparison_spec([{"metric": "EPA/dropback", "subject": "CHI", "value": 0.1, "unit": "per play"},
+                                       {"metric": "EPA/dropback", "subject": "DET", "value": 0.2, "unit": "per play"}],
+                                      series_field="subject", series_order=["CHI", "DET"], comparison_kind="subject-comparison")
+    assert all(layer["mark"]["type"] != "line" for row in spec["vconcat"] for layer in row["layer"])

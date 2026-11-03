@@ -462,6 +462,10 @@ class AnalystApplication:
     ) -> InvestigationBundle:
         from sports_analyst.analysis.instructions import evidence_brief
 
+        if request.scope.comparison_design == "head_to_head":
+            from sports_analyst.application.head_to_head import investigate_head_to_head
+
+            return investigate_head_to_head(self, request, identifier, trace_metadata)
         connector, plugin = self._sport(request.sport)
         started_at = perf_counter()
         logger.info(
@@ -731,7 +735,9 @@ class AnalystApplication:
         logger.info("follow_up_started investigation_id=%s parent_id=%s mode=reuse", identifier, root.run.investigation_id)
         from sports_analyst.analysis.calculations import needs_phase_accounting
 
-        if (root.run.sport == "nfl" and root.run.analysis_domain == "offense" and needs_phase_accounting(question)
+        comparison_subject = getattr(root.run, "comparison_subject", None)
+        head_to_head = comparison_subject is not None
+        if (not head_to_head and root.run.sport == "nfl" and root.run.analysis_domain == "offense" and needs_phase_accounting(question)
                 and ("epa" in question.lower() or "epa_per_play" in root.run.metrics)
                 and not any(item.metric == "epa_phase_contribution" for item in root.aggregate_evidence)):
             # Older reports may lack a now-supported calculation. Re-enter the
@@ -776,14 +782,22 @@ class AnalystApplication:
         scoped.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.6)
         work = SimpleNamespace(aggregate_evidence=list(root.aggregate_evidence), executions=[],
                                caveats=[], charts=list(root.charts))
-        complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped)
-        add_research_charts(work, request=request, data_access=scoped)
+        if not head_to_head:
+            # Research calculations scope their data to one subject.
+            complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped)
+            add_research_charts(work, request=request, data_access=scoped)
         source_manifests = {m.manifest_id: m for m in root.dataset_manifests}
         used = {key for e in work.aggregate_evidence for key in e.dataset_manifest_ids}
         source_manifests.update({key: m for key, m in scoped.manifests.items() if key in used})
         from sports_analyst.analysis.instructions import evidence_brief
         context = evidence_brief(work.aggregate_evidence, [], list(source_manifests.values()),
-                                 {"sport": request.sport, "comparison": request.scope.model_dump(mode="json")})
+                                 {"sport": request.sport, "comparison": request.scope.model_dump(mode="json"),
+                                  **({"comparison_kind": "head_to_head"} if head_to_head else {})})
+        subjects = None
+        if head_to_head:
+            from sports_analyst.application.head_to_head import subject_label
+
+            subjects = (subject_label(root.run.subject), subject_label(comparison_subject))
         context["question_coverage_reviews"] = [{"plan": e.parameters.get("plan"), "review": e.parameters.get("question_review")}
                                                 for e in work.executions if e.tool == "complete_calculations"]
         failed = any(e.tool == "complete_calculations_failed" for e in work.executions)
@@ -804,6 +818,7 @@ class AnalystApplication:
                 trace_metadata=trace_metadata,
                 competition=root.run.scope.competition,
                 analytical_context=context,
+                subjects=subjects,
             )
             if failed:
                 draft = draft.model_copy(update={"summary": ("Partial analysis: additional research failed; independently validated evidence remains usable.\n\n" + draft.summary)[:2500]})
@@ -834,6 +849,7 @@ class AnalystApplication:
             run = InvestigationRun(
                 sport=root.run.sport,
                 subject=root.run.subject,
+                comparison_subject=comparison_subject,
                 investigation_id=identifier,
                 parent_investigation_id=root.run.investigation_id,
                 question=question,

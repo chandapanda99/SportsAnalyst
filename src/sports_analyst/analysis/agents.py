@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from sports_analyst.analysis.instructions import (
     CONVERSATION_CONTRACT,
+    HEAD_TO_HEAD_CONTRACT,
     NARRATIVE_CONTRACT,
     PROMPT_VERSION,
     REVIEW_CONTRACT,
@@ -473,6 +474,42 @@ def _fallback_synthesis(
     return SynthesisDraft(summary=summary, claims=claims)
 
 
+def _head_to_head_fallback(subjects: tuple[str, str], aggregate: list[AggregateEvidence],
+                           analysis_domain: str) -> SynthesisDraft:
+    first, second = subjects
+    metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
+    if not metrics:
+        raise ValueError("head-to-head analysis produced no comparable metrics")
+
+    def leader(item: AggregateEvidence) -> str | None:
+        difference = float(item.value or 0)
+        if difference == 0 or item.metric not in POSITIVE_IS_BETTER | LOWER_IS_BETTER:
+            return None
+        return second if (difference > 0) == (item.metric in POSITIVE_IS_BETTER) else first
+
+    def sample(item: AggregateEvidence) -> int:
+        return int(item.sample_size)
+
+    primary = metrics[0]
+    ahead = leader(primary)
+    figures = f"{first} {float(primary.baseline_value):.3f}, {second} {float(primary.comparison_value):.3f}"
+    summary = f"{ahead} led on {primary.label} ({figures})." if ahead else f"On {primary.label}, the measurements were {figures}."
+    summary += (" Each value is that subject's own measurement over the same period; differences are gaps between "
+                f"the two {'teams' if analysis_domain in {'passing', 'rushing', 'offense'} else 'subjects'}, not changes over time.")
+    claims = [
+        Claim(
+            claim_id=stable_id("claim", {"head_to_head": item.evidence_id}),
+            claim_type=ClaimType.MEASURED,
+            statement=(f"{item.label}: {first} {float(item.baseline_value):.3f}, {second} {float(item.comparison_value):.3f} "
+                       f"(difference {float(item.value or 0):+.3f}{f'; {leader(item)} ahead' if leader(item) else ''})."),
+            evidence_ids=[item.evidence_id],
+            confidence=_sample_confidence(sample(item)),
+        )
+        for item in metrics[:4]
+    ]
+    return SynthesisDraft(summary=summary, claims=claims)
+
+
 class EvidenceBoundAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -493,6 +530,7 @@ class EvidenceBoundAgent:
         trace_metadata: dict[str, Any] | None = None,
         competition: str | None = None,
         analytical_context: dict[str, Any] | None = None,
+        subjects: tuple[str, str] | None = None,
     ) -> tuple[SynthesisDraft, str | None, bool]:
         progress = 0.75
         progress_lock = Lock()
@@ -506,7 +544,7 @@ class EvidenceBoundAgent:
                 progress_callback(message, progress)
 
         report_progress("Organizing the validated evidence", 0.76)
-        fallback = _fallback_synthesis(
+        fallback = _head_to_head_fallback(subjects, aggregate, analysis_domain) if subjects else _fallback_synthesis(
             question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context, analysis_domain, sport, competition
         )
         logger.debug(
@@ -643,6 +681,8 @@ class EvidenceBoundAgent:
             )
             if sport == "soccer" and competition:
                 common += f" Competition code: {competition}. Use match and season terminology, not plays or weeks."
+            if subjects:
+                common += "\n\n" + HEAD_TO_HEAD_CONTRACT.format(first=subjects[0], second=subjects[1])
             if analysis_seasons:
                 common += (
                     f" This is an inclusive full-season range containing {analysis_seasons}; compare recorded matches, "
@@ -709,8 +749,11 @@ class EvidenceBoundAgent:
                 model=resolved.chat_model,
                 tools=tools,
                 system_prompt=(
-                    f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
-                    f"{comparison.model_dump()}. {coordinator_instruction} Write the result worded the way an experienced, "
+                    (f"You coordinate a head-to-head {sport_label} comparison of {subjects[0]} and {subjects[1]} over "
+                     f"{baseline.model_dump()}. " if subjects else
+                     f"You coordinate an {sport_label} analysis for {team}, comparing {baseline.model_dump()} with "
+                     f"{comparison.model_dump()}. ")
+                    + f"{coordinator_instruction} Write the result worded the way an experienced, "
                     f"knowledgeable, and polished expert analyst would — not a transcript of the specialists and not a metric dump. "
                     f"Build a clear hierarchy: answer, supported explanation (or what remains unresolved), qualification, "
                     f"then supporting detail. The reader should "

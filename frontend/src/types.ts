@@ -99,6 +99,7 @@ export type AnalysisOptions = {
 export type InvestigationRequest = {
   sport: string;
   subject: AnalysisSubject;
+  comparison_subject?: AnalysisSubject;
   question: string;
   analysis_domain: string;
   scope: { team: string; competition?: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: 'REG' | 'POST' | 'ALL'; comparison_design: string };
@@ -165,7 +166,7 @@ export type Chart = { chart_id: string; title: string; specification: Record<str
 export type Investigation = {
   dataset_manifests?: DatasetManifest[];
   executions?: Array<{tool: string; version?: string; duration_ms?: number; parameters?: Record<string, unknown>; dataset_manifest_ids?: string[]; sql?: string | null}>;
-  run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; competition?: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
+  run: { investigation_id: string; parent_investigation_id?: string; sport?: string; subject?: AnalysisSubject; comparison_subject?: AnalysisSubject; question: string; analysis_domain?: string; metrics?: string[]; splits?: string[]; scope: { team: string; competition?: string; baseline: AnalysisWindow; comparison: AnalysisWindow; season_type: string; comparison_design?: string }; created_at: string };
   summary: string; claims: Claim[]; aggregate_evidence: Evidence[]; play_evidence: Evidence[];
   charts: Chart[]; methodological_caveats: string[]; model_id?: string; fallback_used: boolean;
 };

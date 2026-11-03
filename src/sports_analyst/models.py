@@ -128,7 +128,8 @@ class AnalysisScope(BaseModel):
     baseline: AnalysisWindow
     comparison: AnalysisWindow
     season_type: Literal["REG", "POST", "ALL"] = "REG"
-    comparison_design: Literal["full_seasons", "week_ranges", "before_after", "season_segments", "before_after_milestone", "date_ranges"] = "week_ranges"
+    comparison_design: Literal["full_seasons", "week_ranges", "before_after", "season_segments", "before_after_milestone", "date_ranges",
+                               "head_to_head"] = "week_ranges"
 
     @model_validator(mode="before")
     @classmethod
@@ -165,6 +166,11 @@ class AnalysisScope(BaseModel):
 
     @model_validator(mode="after")
     def validate_windows(self) -> AnalysisScope:
+        if self.comparison_design == "head_to_head":
+            # Two subjects share one period, so both windows are the same.
+            if self.baseline != self.comparison:
+                raise ValueError("head-to-head comparisons use one period for both subjects")
+            return self
         if self.baseline == self.comparison:
             raise ValueError("comparison windows must differ")
         if self.comparison_design == "date_ranges" and any(
@@ -195,6 +201,7 @@ class AnalysisScope(BaseModel):
 class AnalysisRequest(BaseModel):
     sport: str = "nfl"
     subject: AnalysisSubject | None = None
+    comparison_subject: AnalysisSubject | None = None
     question: str = Field(min_length=3, max_length=2_000)
     scope: AnalysisScope
     analysis_domain: str = "passing"
@@ -230,6 +237,18 @@ class AnalysisRequest(BaseModel):
     @classmethod
     def normalize_metrics(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(item.strip().lower() for item in value if item.strip()))
+
+    @model_validator(mode="after")
+    def validate_comparison_subject(self) -> AnalysisRequest:
+        if self.comparison_subject is None:
+            return self
+        if self.scope.comparison_design != "head_to_head":
+            raise ValueError("a second subject requires a head-to-head comparison")
+        if self.subject is None or self.subject.type != self.comparison_subject.type:
+            raise ValueError("head-to-head comparisons need two teams or two players")
+        if self.subject.id == self.comparison_subject.id:
+            raise ValueError("choose two different subjects to compare")
+        return self
 
 
 class TeamOption(BaseModel):
@@ -578,6 +597,7 @@ class ChartArtifact(BaseModel):
 class InvestigationRun(BaseModel):
     sport: str = "nfl"
     subject: AnalysisSubject | None = None
+    comparison_subject: AnalysisSubject | None = None
     investigation_id: str
     parent_investigation_id: str | None = None
     question: str

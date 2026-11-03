@@ -562,3 +562,13 @@ def test_player_and_supplemental_context_tools(pbp_pair) -> None:
     assert result.play_evidence[0].visualization.offense_names
     assert result.play_evidence[0].visualization.defense_names == ["T.J. Watt", "Minkah Fitzpatrick"]
     assert result.play_evidence[0].visualization.source_packages == ["play_by_play", "participation", "ftn_charting"]
+
+
+def test_player_limit_keeps_recent_players_instead_of_cutting_the_alphabet(monkeypatch):
+    from sports_analyst.plugins import nfl
+
+    monkeypatch.setattr(nfl, "PLAYER_RESULT_LIMIT", 2)
+    frame = pl.DataFrame({"passer_player_id": ["00-1", "00-2", "00-3"], "passer_player_name": ["Aaron Old", "Josh Allen", "Patrick Mahomes"],
+                          "posteam": ["GB", "BUF", "KC"]})
+    sources = [(2010, frame.head(1)), (2025, frame.tail(2))]
+    assert [player.name for player in nfl.NFLPlugin().resolve_players("", sources)] == ["Josh Allen", "Patrick Mahomes"]

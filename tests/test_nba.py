@@ -396,6 +396,21 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     report = (tmp_path / "investigations" / team.run.investigation_id / "report.html").read_text(encoding="utf-8")
     assert "--team-primary:#007A33" in report
     assert "--team-secondary:#BA9653" in report
+    # A worker can still hold a pre-head-to-head run when report code is refreshed.
+    # Both export formats must save, and old JSON must gain the optional default on reload.
+    legacy = team.model_copy(deep=True)
+    legacy.run.investigation_id = "nba-legacy-report"
+    legacy.run.__dict__.pop("comparison_subject", None)
+    with pytest.raises(AttributeError):
+        _ = legacy.run.comparison_subject
+    saved = application.store.save_investigation(legacy)
+    assert "comparison_subject" not in saved.read_text(encoding="utf-8")
+    markdown = (saved.parent / "report.md").read_text(encoding="utf-8")
+    assert "| Baseline | Comparison | Change |" in markdown
+    assert "BOS" in (saved.parent / "report.html").read_text(encoding="utf-8")
+    restored = application.store.get_investigation(legacy.run.investigation_id)
+    assert restored.run.comparison_subject is None
+    assert restored.aggregate_evidence == team.aggregate_evidence
     with pytest.raises(KeyError):
         application.store.manifest_for_season(2025, sport="nfl")
 

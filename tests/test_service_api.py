@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+import pytest
 from fastapi.testclient import TestClient
 
 from sports_analyst.api import _event_stream, create_app
@@ -381,3 +382,63 @@ def test_service_loads_every_season_in_a_full_season_range(tmp_path: Path, pbp_p
         2025,
     }
     assert "available games from every selected season, 2022 through 2025" in bundle.summary
+
+
+def head_to_head_request(**overrides: Any) -> AnalysisRequest:
+    season = {"season": 2025, "weeks": [1, 22]}
+    payload = {
+        "sport": "nfl", "question": "Which offense passed more efficiently?", "analysis_domain": "passing",
+        "subject": {"type": "team", "id": "KC"}, "comparison_subject": {"type": "team", "id": "BUF"},
+        "scope": {"team": "KC", "baseline": season, "comparison": season, "comparison_design": "head_to_head"},
+        "metrics": ["epa_per_dropback", "success_rate"],
+    }
+    return AnalysisRequest.model_validate({**payload, **overrides})
+
+
+def test_head_to_head_request_rules() -> None:
+    assert head_to_head_request().comparison_subject.id == "BUF"
+    with pytest.raises(ValueError, match="two teams or two players"):
+        head_to_head_request(comparison_subject={"type": "player", "id": "00-0033873"})
+    with pytest.raises(ValueError, match="two different subjects"):
+        head_to_head_request(comparison_subject={"type": "team", "id": "KC"})
+    with pytest.raises(ValueError, match="one period"):
+        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2024}, "comparison": {"season": 2025},
+                                    "comparison_design": "head_to_head"})
+    with pytest.raises(ValueError, match="requires a head-to-head"):
+        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2024}, "comparison": {"season": 2025},
+                                    "comparison_design": "full_seasons"})
+
+
+def test_head_to_head_pairs_each_subjects_own_measurements(tmp_path: Path, pbp_pair) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    kansas_city = pbp_pair[2025]
+    buffalo = kansas_city.with_columns(
+        pl.lit("BUF").alias("posteam"), pl.lit("KC").alias("defteam"), (pl.col("epa") - 0.2).alias("epa"),
+        pl.col("game_id").str.replace("KC_BUF", "BUF_KC"), pl.lit("Josh Allen").alias("passer_player_name"),
+        pl.lit("00-0034857").alias("passer_player_id"))
+    source = tmp_path / "source-2025.parquet"
+    pl.concat([kansas_city, buffalo.with_columns(pl.col("success").cast(kansas_city["success"].dtype))]).write_parquet(source)
+    application.store.save_manifest(application.connector.register_local(source, 2025))
+
+    bundle = application.investigate(head_to_head_request())
+
+    assert bundle.run.comparison_subject.id == "BUF" and bundle.run.scope.comparison_design == "head_to_head"
+    epa = next(item for item in bundle.aggregate_evidence if item.metric == "epa_per_dropback")
+    assert epa.baseline_value > epa.comparison_value
+    assert epa.value == pytest.approx(epa.comparison_value - epa.baseline_value, abs=1e-6)
+    assert epa.context["subjects"] == ["Kansas City Chiefs", "Buffalo Bills"]
+    assert epa.context["difference_definition"] == "Buffalo Bills minus Kansas City Chiefs"
+    assert {item.metric for item in bundle.aggregate_evidence} == {"epa_per_dropback", "success_rate"}
+    assert {play.window for play in bundle.play_evidence} == {"baseline", "comparison"}
+    assert {play.team for play in bundle.play_evidence if play.window == "comparison"} == {"BUF"}
+    assert [chart.specification["usermeta"]["comparisonKind"] for chart in bundle.charts] == ["subject-comparison"]
+    assert bundle.summary.startswith("Kansas City Chiefs led on EPA/dropback (Kansas City Chiefs 0.058")
+    assert "not changes over time" in bundle.methodological_caveats[0]
+    assert any(item.tool == "compare_subjects" for item in bundle.executions)
+
+    follow_up = application.follow_up(bundle.run.investigation_id, "Which offense had the better success rate?")
+    assert follow_up.run.comparison_subject.id == "BUF"
+    assert not any(item.tool.startswith("complete_calculations") for item in follow_up.executions)
+
+    with pytest.raises(ValueError, match="NFL only"):
+        application.investigate(head_to_head_request(sport="nba"))

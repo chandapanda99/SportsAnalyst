@@ -1,7 +1,7 @@
 [project]
 name = "open-sports-analyst"
-version = "2.2"
-description = "A local-first, evidence-bound sports analysis agent"
+version = "3.0"
+description = "An AI-driven, evidence-bound sports analysis agent"
 readme = "README.md"
 license = "MIT"
 requires-python = "==3.13.*"

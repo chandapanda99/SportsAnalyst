@@ -141,7 +141,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
         }
         if comparison_kind == "monthly-trend":
             color_encoding["legend"] = {"title": "Season / period", "orient": "top", "direction": "horizontal"}
-        series_title = {"season-trend": "Season", "grouped-observations": "Recorded context",
+        series_title = {"season-trend": "Season", "subject-comparison": "Subject", "grouped-observations": "Recorded context",
                         "monthly-trend": "Month and context"}.get(comparison_kind, "Period")
         tooltip = [
             {"field": "metric", "type": "nominal", "title": "Metric"},
@@ -173,7 +173,9 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
                             "y": y_encoding,
                             "order": {"field": "series_order", "type": "ordinal"},
                         },
-                    }] if comparison_kind not in {"grouped-observations", "monthly-trend"} and len(metric_values) > 1 else []),
+                    # Connecting two subjects would read as a trend, so only ordered periods get a line.
+                    }] if comparison_kind not in {"grouped-observations", "monthly-trend", "subject-comparison"}
+                    and len(metric_values) > 1 else []),
                     {
                         "mark": {"type": "point", "filled": True, "size": 92, "strokeWidth": 1, "opacity": 1},
                         "encoding": point_encoding,

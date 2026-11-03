@@ -22,7 +22,20 @@ def _window_label(window) -> str:
     return f"{window.season} W{window.weeks[0]}–{window.weeks[1]}"
 
 
+def _subject_label(run) -> str:
+    def name(subject):
+        return subject.display_name or subject.id
+
+    if run.subject is None:
+        return run.scope.team
+    # Runs held by an older worker may predate the optional head-to-head field.
+    comparison_subject = getattr(run, "comparison_subject", None)
+    return f"{name(run.subject)} vs {name(comparison_subject)}" if comparison_subject else run.subject.id
+
+
 def _scope_label(scope) -> str:
+    if scope.comparison_design == "head_to_head":
+        return f"Head-to-head · {scope.baseline.season}"
     if scope.comparison_design == "full_seasons":
         return f"Season range {scope.baseline.season}–{scope.comparison.season} (available games)"
     baseline = _window_label(scope.baseline)
@@ -70,7 +83,7 @@ def _play_context(play) -> str:
 def render_markdown(bundle: InvestigationBundle) -> str:
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
-    subject = bundle.run.subject.id if bundle.run.subject else scope.team
+    subject = _subject_label(bundle.run)
     lines = [
         f"# {subject} {domain} investigation",
         "",
@@ -86,7 +99,9 @@ def render_markdown(bundle: InvestigationBundle) -> str:
     for claim in bundle.claims:
         citations = ", ".join(f"`{identifier}`" for identifier in claim.evidence_ids)
         lines.append(f"- **{claim.claim_type.value.title()} · {claim.confidence}:** {claim.statement} [{citations}]")
-    lines.extend(["", "## Metrics", "", "| Metric | Baseline | Comparison | Change | N |", "|---|---:|---:|---:|---:|"])
+    head_to_head = getattr(bundle.run, "comparison_subject", None) is not None
+    columns = (f"{_subject_label(bundle.run).replace(' vs ', ' | ')} | Difference" if head_to_head else "Baseline | Comparison | Change")
+    lines.extend(["", "## Metrics", "", f"| Metric | {columns} | N |", "|---|---:|---:|---:|---:|"])
     for item in bundle.aggregate_evidence:
         if item.baseline_value is not None and item.comparison_value is not None:
             lines.append(f"| {item.label} | {item.baseline_value:.4f} | {item.comparison_value:.4f} | {item.value} | {item.sample_size} |")
@@ -205,7 +220,7 @@ def render_html(bundle: InvestigationBundle) -> str:
     bundle = refresh_chart_presentation(bundle)
     scope = bundle.run.scope
     domain = _domain_label(bundle.run.analysis_domain)
-    subject = bundle.run.subject.id if bundle.run.subject else scope.team
+    subject = _subject_label(bundle.run)
     palette_team = bundle.run.subject.team_id if bundle.run.subject and bundle.run.subject.team_id else scope.team
     palette = team_report_palette(palette_team, bundle.run.sport)
     comparison_label = _scope_label(scope)

@@ -151,6 +151,9 @@ DOMAIN_DATASETS = {
 }
 
 
+PLAYER_RESULT_LIMIT = 10_000
+
+
 class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPresentationMixin):
     """Compose NFL planning, deterministic analysis tools, and presentation artifacts."""
 
@@ -375,6 +378,11 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     label="Before vs. after",
                     description="Split one season around a selected week.",
                 ),
+                ComparisonWindowOption(
+                    value="head_to_head",
+                    label="Head-to-head",
+                    description="Compare two teams or two players over the same season.",
+                ),
             ],
             syncable_datasets=list(SUPPORTED_DATASETS),
             dataset_min_seasons={
@@ -490,7 +498,10 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                or token in record["player_id"].lower()
                or any(token in alias.lower() for alias in record["aliases"])
         ]
-        return sorted(matches, key=lambda item: (item.name, item.player_id))[:10000]
+        # Keep the most recently active players when the directory exceeds the limit; an alphabetical cut
+        # would hide everyone late in the alphabet, active stars included.
+        recent = sorted(matches, key=lambda item: (-max(item.seasons, default=0), item.name, item.player_id))[:PLAYER_RESULT_LIMIT]
+        return sorted(recent, key=lambda item: (item.name, item.player_id))
 
     def resolve_team(self, team: str) -> str:
         token = team.strip().upper()
