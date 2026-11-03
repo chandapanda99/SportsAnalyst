@@ -6,8 +6,10 @@ import copy
 import hashlib
 import importlib.metadata
 import json
+import logging
 import math
 import re
+import warnings
 
 from sports_analyst.datasets.cfb_plays import recorded_play
 from sports_analyst.datasets.cfb_provenance import with_source_provenance
@@ -15,7 +17,11 @@ from sports_analyst.datasets.cfb_rendering import hydrate_rows, render_context
 from sports_analyst.datasets.cfb_source import CORE
 from sports_analyst.datasets.optional import load_optional_module, optional_dependencies
 
-ADAPTER_VERSION = "4"
+# 5: modeled values are withheld where the play order steps back a period.
+ADAPTER_VERSION = "5"
+MODELED_FIELDS = ("epa", "wpa", "cpoe", "cp", "xpass", "pass_oe")
+
+logger = logging.getLogger(__name__)
 
 
 def numeric(value):
@@ -41,6 +47,37 @@ def athlete_roles(play):
     return {f"{role}_id": next(iter(ids)) for role, ids in roles.items() if len(ids) == 1}
 
 
+def quiet_expected_warnings():
+    """Silence provider warnings this adapter already accounts for.
+
+    DefaultOddsWarning reports the zero spread injected below on purpose; none of the values kept
+    (EPA, spread-free WPA, CPOE, completion and pass probability) use the spread. PlayOrderWarning
+    is detected per game by ``period_breaks`` and handled there instead of printed.
+    """
+    from sportsdataverse.errors import DefaultOddsWarning, PlayOrderWarning
+
+    for category in (DefaultOddsWarning, PlayOrderWarning):
+        warnings.filterwarnings("ignore", category=category)
+
+
+def period_breaks(plays, recorded):
+    """Play IDs either side of a period that steps back along the processed order.
+
+    The provider orders plays by ID and labels overtime by period; a step back means one of them
+    is wrong there, so values read from the neighbouring row (scores, EPA lookbacks, WPA) are too.
+    """
+    affected, previous = set(), None
+    for play in plays:
+        identity = str(play.get("id") or "")
+        period = numeric(play.get("period.number"))
+        if period is None:
+            period = numeric(((recorded.get(identity) or {}).get("period") or {}).get("number"))
+        if previous and previous[1] is not None and period is not None and period < previous[1]:
+            affected.update({previous[0], identity})
+        previous = (identity, period)
+    return affected
+
+
 def process_summary(game, raw, *, context_only=False):
     """Run the provider's public pipeline against an already acquired summary.
 
@@ -50,6 +87,7 @@ def process_summary(game, raw, *, context_only=False):
     """
     with optional_dependencies("College-football advanced play analysis"):
         module = load_optional_module("sportsdataverse.cfb.cfb_pbp", "College-football advanced play analysis")
+        quiet_expected_warnings()
         processor = module.CFBPlayProcess(
             gameId=int(game),
             join_participants=False,
@@ -106,6 +144,9 @@ class CFBEnrichment:
             output = process_summary(game, raw)
             normalized = []
             directory, _ = game_directory(self.source, game, season, raw, plays, ttl)
+            withheld = period_breaks(output.get("plays") or [], by_id)
+            if withheld:
+                logger.info("cfb_play_order_break game_id=%s season=%s withheld_plays=%s", game, season, sorted(withheld))
             seen = set()
             for play in output.get("plays") or []:
                 identity = str(play.get("id") or "")
@@ -149,6 +190,9 @@ class CFBEnrichment:
                         "processed_play_count": len(seen),
                     }
                 )
+                if identity in withheld:
+                    # Missing, never zero: the play stays in the record without its modeled values.
+                    normalized[-1].update(dict.fromkeys(MODELED_FIELDS))
             if not normalized or not any(row["epa"] is not None for row in normalized):
                 raise ValueError("No usable modeled play values were produced")
             # Do not present unprocessed source plays as a complete game.
@@ -168,6 +212,7 @@ class CFBEnrichment:
                     "source_plays": len(by_id),
                     "processed_plays": count,
                     "decision_surfaces": "not evaluated: verified market inputs required",
+                    "play_order_breaks": sorted(withheld),
                     "player_attribution": "ESPN structured participants only",
                 },
             }

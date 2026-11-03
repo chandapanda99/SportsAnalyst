@@ -1141,3 +1141,29 @@ def test_metric_direction_covers_rates_but_not_totals_or_neutral_tendencies():
     assert plugin.explain_metric("passing_yards").higher_is_better is None
     assert plugin.explain_metric("expected_pass_rate").higher_is_better is None
     assert plugin.explain_metric("epa_per_play").higher_is_better is True
+
+
+def test_play_order_breaks_withhold_neighbouring_modeled_values():
+    from sports_analyst.datasets.cfb_enrichment import period_breaks
+
+    processed = [{"id": "1", "period.number": 1}, {"id": "2", "period.number": 2}, {"id": "3", "period.number": 1},
+                 {"id": "4", "period.number": 2}, {"id": "5"}]
+    # The last play's period comes from the recorded feed when the processed row lacks it.
+    assert period_breaks(processed, {"5": {"period": {"number": 1}}}) == {"2", "3", "4", "5"}
+    assert period_breaks([{"id": "1", "period.number": 1}, {"id": "2", "period.number": 1}], {}) == set()
+
+
+def test_only_accounted_provider_warnings_are_silenced():
+    import warnings
+
+    from sportsdataverse.errors import DefaultOddsWarning, PlayOrderWarning
+
+    from sports_analyst.datasets.cfb_enrichment import quiet_expected_warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        quiet_expected_warnings()
+        warnings.warn("injected spread", DefaultOddsWarning, stacklevel=1)
+        warnings.warn("period steps back", PlayOrderWarning, stacklevel=1)
+        warnings.warn("something else", UserWarning, stacklevel=1)
+    assert [str(item.message) for item in caught] == ["something else"]
