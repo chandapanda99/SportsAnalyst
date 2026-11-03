@@ -238,7 +238,7 @@ def run_object_analysis(application, key: str, kind: str, payload: dict) -> None
         jobs = application.jobs
         if jobs is None:
             raise RuntimeError("Durable object jobs are not configured")
-        jobs.emit(key, "complete", "Investigation ready" if kind == "investigation" else "Follow-up ready", 1,
+        jobs.emit(key, "complete", "Report ready" if kind == "investigation" else "Follow-up ready", 1,
                   investigation_id=key)
 
 

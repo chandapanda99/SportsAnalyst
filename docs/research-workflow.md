@@ -230,6 +230,16 @@ follow-ups. Follow-ups may research genuinely unanswered objectives while keepin
 their parent evidence immutable. Existing saved reports are not retroactively
 rewritten. Restart the backend/rebuild desktop bundles to pick up these changes.
 
+Head-to-head follow-ups research two subjects without widening either one's scope.
+The planner's tools read only the first subject's data. Each measurement it registers is
+then repeated by the host for the second subject, using the same plan against that
+subject's own scoped data and its own matching snapshot. The planner never writes that
+second plan, so both subjects are measured the same way. A plan that filters on the
+first subject's own identity is not repeated, and neither is one with no matching
+snapshot for the second subject. The report then says the measurement describes only
+the first subject. Research charts are not drawn for head-to-head reports, because they
+group series by period, which would merge the two subjects.
+
 Offline feature tests use scripted models with real QuickJS and host execution.
 Synthetic fixtures verify joins, overlap/duplicate rejection, transfers, budgets,
 cloud/local replay and failure recovery; they do not certify source availability.

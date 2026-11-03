@@ -2,7 +2,7 @@
 
 A local-first sports analysis workbench for **NFL, NBA, NCAA College Football (FBS/FCS),
 and some of the world's top soccer leagues**. Ask natural-language questions, compare teams or players, inspect
-recorded game/play evidence, and save or export investigations.
+recorded game/play evidence, and save or export reports.
 
 The model plans and explains; validated analytical tools, Polars and DuckDB
 calculate measurements. Findings cite stored evidence. Missing data stay missing,
@@ -62,19 +62,21 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` request
 
 ## Using the workbench
 
-Choose a sport and subject, comparison windows, metrics and a question. For the NFL, a
-head-to-head comparison measures two teams or two players over the same season. Soccer
+Choose a sport and subject, comparison windows, metrics and a question. A head-to-head
+comparison measures two teams or two players over the same season, or over a range of up to
+six seasons where each season is compared on its own. In college football the second subject
+is found by browsing to its school. Follow-up questions on a head-to-head report can run
+additional research, which is repeated for both subjects. Soccer
 adds competition selection; college football uses season-specific subdivision,
 conference and school discovery. Conference selection organizes navigation rather
 than limiting analysis to conference games.
 
-Investigations prepare missing supported data through the worker. Use **Manage
-data** for explicit downloads or clearing. Successful historical snapshots are
+Running an analysis prepares missing supported data through the worker. Use **Sync Data** for explicit downloads or clearing. Successful historical snapshots are
 reused; current seasons refresh, and incomplete coverage remains visible.
 
 Results include an answer, metric comparisons, findings, charts and recorded
 evidence. Open a tablet to inspect a cited event or browse its game where supported.
-The Film Room saves investigations and follow-up conversations; exports preserve
+The Film Room saves reports and their follow-up questions; exports preserve
 evidence and provenance. Saved reports are not retroactively rewritten by updates.
 
 ## Architecture
@@ -109,6 +111,5 @@ and external dataset download tests remain opt-in.
 
 ## License
 
-Open Sports Analyst uses the [MIT License](LICENSE). Source datasets and third-party
-assets retain their own attribution and terms; the software license does not
-grant rights to redistribute underlying data.
+Open Sports Analyst uses the [MIT License](LICENSE). Source datasets and third-party assets retain their own attribution and terms; the software license does not grant rights
+to redistribute underlying data.

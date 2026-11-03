@@ -456,6 +456,71 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":ids},unresolved:{}}
         season_plan(access, original, 2025)
 
 
+def test_head_to_head_research_repeats_each_measurement_for_the_second_subject(tmp_path, monkeypatch):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    from sports_analyst.analysis.calculations import SecondSubject, complete_calculations
+    from sports_analyst.application.head_to_head import side_request
+
+    access, _ = setup_access(tmp_path, "nfl", [("play_by_play", {
+        "game_id": ["1", "1", "2"], "play_id": ["a", "b", "c"], "posteam": ["A", "A", "B"], "week": [1, 1, 2], "epa": [1., 2., 5.]})])
+    access.app.settings.model_provider = "ollama"
+    season = {"season": 2025}
+    request = AnalysisRequest(sport="nfl", question="Which offense added more EPA?", subject={"type": "team", "id": "A"},
+        comparison_subject={"type": "team", "id": "B"},
+        scope={"team": "A", "season_type": "ALL", "comparison_design": "head_to_head", "baseline": season, "comparison": season})
+    first = ScopedData(access.app, side_request(request, request.subject), None, "head-to-head-research")
+    second = ScopedData(access.app, side_request(request, request.comparison_subject), None, "head-to-head-research:second")
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    code = """await tools.recordAnalysisPlan({objectives:["Total EPA"],existing_evidence_ids:[],
+required_data:[],calculations:["Sum recorded EPA"],limitations:[]});
+const checked=JSON.parse(await tools.validateJoinPlan({join_plan:{objective:"Total EPA",dataset_id:"m0",window:"baseline",
+grain:"play",measures:[{op:"sum",field:"epa",name:"epa_sum"}]}}));
+const joined=JSON.parse(await tools.executeJoinedAggregate({plan_id:checked.plan_id}));
+const counted=JSON.parse(await tools.aggregateScopedData({dataset_id:"m0",window:"baseline",group_by:[],
+measures:[{op:"count"}],filters:[]}));
+const named=JSON.parse(await tools.aggregateScopedData({dataset_id:"m0",window:"baseline",group_by:[],
+measures:[{op:"count"}],filters:[{field:"posteam",op:"eq",value:"A"}]}));
+const ids=[...joined.evidence,...joined.second_subject.evidence,...counted.evidence].map(r=>r.evidence_id);
+await tools.finishQuestionReview({evidence_by_objective:{"0":ids},unresolved:{}});"""
+    model = Model(responses=[AIMessage(content="", tool_calls=[{"name": "eval", "id": "both", "args": {"code": code}}]),
+                             AIMessage(content="Done")])
+    monkeypatch.setattr("sports_analyst.providers.get_provider", lambda _: SimpleNamespace(
+        build=lambda settings: SimpleNamespace(chat_model=model, model_id="offline-head-to-head")))
+    result = SimpleNamespace(aggregate_evidence=[], executions=[], caveats=[])
+    complete_calculations(access.app.settings, request.question, result, {}, first, SecondSubject("A", "B", second))
+
+    assert not any(e.tool == "complete_calculations_failed" for e in result.executions), result.executions[-1].parameters
+    joined = {item.context["subject"]: item for item in result.aggregate_evidence if item.metric == "joined_aggregate"}
+    assert {name: item.value for name, item in joined.items()} == {"A": 3., "B": 5.}
+    assert joined["B"].label.startswith("B: Total EPA")
+    counts = [(item.context["subject"], item.value) for item in result.aggregate_evidence if item.metric == "scoped_aggregate"]
+    # The filtered count names A, so it is registered for A alone and the report says so.
+    assert counts == [("A", 2), ("B", 1), ("A", 2)]
+    assert any("not repeated for B" in caveat for caveat in result.caveats)
+
+
+def test_second_subject_uses_its_own_partition_snapshot():
+    from sports_analyst.analysis.research.season_plans import subject_dataset
+
+    def snapshot(identifier, partition, processing="1"):
+        return DatasetManifest(manifest_id=identifier, sport="cfb", dataset="team_stats", season=2025, partition_key=partition,
+                               source_url="synthetic-test", sha256="0" * 64, row_count=1, columns=["team_id"],
+                               package_version="test", processing_version=processing, local_path="unused")
+
+    first = SimpleNamespace(manifests={"a": snapshot("a", "team:1")})
+    second = SimpleNamespace(manifests={"b": snapshot("b", "team:2")})
+    assert subject_dataset(first, second, "a") == "b"
+    second.manifests = {"b": snapshot("b", "team:2", processing="2")}
+    with pytest.raises(ValueError, match="No unique compatible team_stats snapshot"):
+        subject_dataset(first, second, "a")
+
+
 @pytest.mark.parametrize("durable", [False, True])
 def test_acquisition_dependencies_survive_interruption_and_coalesce(tmp_path, monkeypatch, durable):
     """Persist decisions before downloading; never redownload completed dependencies after replacement."""

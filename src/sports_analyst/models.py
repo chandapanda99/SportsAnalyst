@@ -12,6 +12,8 @@ SCHEMA_VERSION = "1.0"
 ANALYTICS_VERSION = "1.0"
 NFLVERSE_LICENSE = "CC-BY-4.0"
 NFLVERSE_ATTRIBUTION = "Data provided by nflverse and its contributors."
+# Each season is measured separately for both subjects, so the range bounds the work.
+MAX_HEAD_TO_HEAD_SEASONS = 6
 
 
 class ClaimType(StrEnum):
@@ -159,17 +161,30 @@ class AnalysisScope(BaseModel):
         return self.comparison.season
 
     @property
+    def season_range(self) -> bool:
+        """Every season from baseline through comparison is analysed, not only the two endpoints."""
+        return self.comparison_design == "full_seasons" or (
+            self.comparison_design == "head_to_head" and self.baseline.season < self.comparison.season)
+
+    @property
     def included_seasons(self) -> list[int]:
-        if self.comparison_design == "full_seasons":
+        if self.season_range:
             return list(range(self.baseline.season, self.comparison.season + 1))
         return list(dict.fromkeys((self.baseline.season, self.comparison.season)))
 
     @model_validator(mode="after")
     def validate_windows(self) -> AnalysisScope:
         if self.comparison_design == "head_to_head":
-            # Two subjects share one period, so both windows are the same.
-            if self.baseline != self.comparison:
-                raise ValueError("head-to-head comparisons use one period for both subjects")
+            # Two subjects share one period: a single window, or a range of complete seasons.
+            if self.baseline == self.comparison:
+                return self
+            if any(window.weeks != (1, 22) or window.segment or window.start_date or window.end_date
+                   for window in (self.baseline, self.comparison)):
+                raise ValueError("head-to-head season ranges must use complete seasons")
+            if self.baseline.season > self.comparison.season:
+                raise ValueError("head-to-head season range end must not be earlier than its start")
+            if self.comparison.season - self.baseline.season + 1 > MAX_HEAD_TO_HEAD_SEASONS:
+                raise ValueError(f"head-to-head season ranges cover at most {MAX_HEAD_TO_HEAD_SEASONS} seasons")
             return self
         if self.baseline == self.comparison:
             raise ValueError("comparison windows must differ")

@@ -676,6 +676,31 @@ summary {
     margin-top: .4rem;
 }
 
+.key-metrics table.season-pairs {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.key-metrics .season-pairs th,
+.key-metrics .season-pairs td {
+    padding: .4rem .5rem .4rem 0;
+    border-bottom: 1px solid var(--color-border-subtle);
+    text-align: left;
+    vertical-align: top;
+}
+
+.key-metrics .season-pairs thead th {
+    color: var(--color-text-secondary);
+    font-size: .75rem;
+    font-weight: 600;
+}
+
+.key-metrics .season-pairs td {
+    color: var(--color-text-primary);
+}
+
 .key-metrics small {
     display: block;
     margin-top: .25rem;
@@ -746,6 +771,11 @@ summary {
 
 .play-panel {
     scroll-margin-top: 1rem;
+}
+
+/* One column: tall metric-row charts left a large empty column beside shorter charts. */
+.chart-grid {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 /* Programmatic focus targets announce themselves without a stray ring. */

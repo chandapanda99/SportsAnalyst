@@ -401,8 +401,17 @@ def test_head_to_head_request_rules() -> None:
         head_to_head_request(comparison_subject={"type": "player", "id": "00-0033873"})
     with pytest.raises(ValueError, match="two different subjects"):
         head_to_head_request(comparison_subject={"type": "team", "id": "KC"})
-    with pytest.raises(ValueError, match="one period"):
-        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2024}, "comparison": {"season": 2025},
+    season_range = head_to_head_request(scope={"team": "KC", "baseline": {"season": 2023}, "comparison": {"season": 2025},
+                                               "comparison_design": "head_to_head"})
+    assert season_range.scope.season_range and season_range.scope.included_seasons == [2023, 2024, 2025]
+    with pytest.raises(ValueError, match="complete seasons"):
+        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2024, "weeks": [1, 9]}, "comparison": {"season": 2025},
+                                    "comparison_design": "head_to_head"})
+    with pytest.raises(ValueError, match="not be earlier"):
+        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2025}, "comparison": {"season": 2024},
+                                    "comparison_design": "head_to_head"})
+    with pytest.raises(ValueError, match="at most 6 seasons"):
+        head_to_head_request(scope={"team": "KC", "baseline": {"season": 2018}, "comparison": {"season": 2025},
                                     "comparison_design": "head_to_head"})
     with pytest.raises(ValueError, match="requires a head-to-head"):
         head_to_head_request(scope={"team": "KC", "baseline": {"season": 2024}, "comparison": {"season": 2025},
@@ -440,5 +449,29 @@ def test_head_to_head_pairs_each_subjects_own_measurements(tmp_path: Path, pbp_p
     assert follow_up.run.comparison_subject.id == "BUF"
     assert not any(item.tool.startswith("complete_calculations") for item in follow_up.executions)
 
-    with pytest.raises(ValueError, match="NFL only"):
-        application.investigate(head_to_head_request(sport="nba"))
+
+def test_head_to_head_season_range_pairs_each_season(tmp_path: Path, pbp_pair) -> None:
+    application = AnalystApplication(Settings(data_dir=tmp_path, foundry_endpoint=""))
+    for season, kansas_city in pbp_pair.items():
+        buffalo = kansas_city.with_columns(
+            pl.lit("BUF").alias("posteam"), pl.lit("KC").alias("defteam"), (pl.col("epa") + 0.3).alias("epa"),
+            pl.col("game_id").str.replace("KC_BUF", "BUF_KC"))
+        source = tmp_path / f"source-{season}.parquet"
+        pl.concat([kansas_city, buffalo.with_columns(pl.col("success").cast(kansas_city["success"].dtype))]).write_parquet(source)
+        application.store.save_manifest(application.connector.register_local(source, season))
+
+    bundle = application.investigate(head_to_head_request(
+        scope={"team": "KC", "baseline": {"season": 2024}, "comparison": {"season": 2025}, "comparison_design": "head_to_head"}))
+
+    epa = sorted((item for item in bundle.aggregate_evidence if item.metric == "epa_per_dropback"), key=lambda item: item.context["season"])
+    assert [item.context["season"] for item in epa] == [2024, 2025]
+    assert [item.label for item in epa] == ["EPA/dropback · 2024", "EPA/dropback · 2025"]
+    assert all(item.value == pytest.approx(0.3, abs=1e-6) for item in epa)
+    assert epa[0].baseline_value > epa[1].baseline_value  # The fixture's 2025 offense is weaker in both subjects.
+    assert {play.season for play in bundle.play_evidence} <= {2024, 2025}
+    assert any("compared one at a time" in caveat for caveat in bundle.methodological_caveats)
+    chart = bundle.charts[0].specification
+    assert chart["usermeta"]["comparisonKind"] == "subject-comparison"
+    assert [plot["title"]["text"] for plot in chart["vconcat"]][:2] == ["EPA/dropback · 2024", "EPA/dropback · 2025"]
+    # The deterministic report leads with the latest season.
+    assert "EPA/dropback · 2025" in bundle.summary and bundle.summary.startswith("Buffalo Bills led")

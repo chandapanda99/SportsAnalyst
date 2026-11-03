@@ -23,7 +23,7 @@ class ScopedData:
         self.app, self.request = app, request
         self.identifier = identifier
         seasons = {request.scope.baseline.season, request.scope.comparison.season}
-        if request.scope.comparison_design == "full_seasons":
+        if request.scope.season_range:
             seasons.update(request.scope.included_seasons)
         self.manifests = {item.manifest_id: item for item in app.store.manifests(
             sport=request.sport, competition=request.scope.competition, provider_id=None, processing_version=None)
@@ -159,7 +159,7 @@ class ScopedData:
             return {**response, "result_sha256": digest(response)}
         manifest = self.manifests[dataset_id]
         fields = sorted(manifest.columns)
-        if window.startswith("season:") and self.request.scope.comparison_design == "full_seasons":
+        if window.startswith("season:") and self.request.scope.season_range:
             year = int(window.removeprefix("season:"))
             if year not in self.request.scope.included_seasons:
                 raise ValueError("Season is outside the investigation scope")
@@ -209,7 +209,7 @@ class ScopedData:
                 predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) >= str(period.start_date)
             if period.end_date:
                 predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) <= str(period.end_date)
-        elif self.request.scope.comparison_design != "full_seasons":
+        elif not self.request.scope.season_range:
             if "week" not in columns:
                 raise ValueError("This table cannot establish the requested week/season-segment window")
             if period.segment:

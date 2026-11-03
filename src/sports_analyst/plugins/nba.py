@@ -760,6 +760,9 @@ class NBAPlugin:
                     value="season_segments", label="Season segments", description="Compare named NBA phases within or across seasons."
                 ),
                 ComparisonWindowOption(
+                    value="head_to_head", label="Head-to-head", description="Compare two teams or two players over the same season or seasons."
+                ),
+                ComparisonWindowOption(
                     value="before_after_milestone", label="Before vs. after", description="Compare phases around a reviewed season milestone."
                 ),
             ],

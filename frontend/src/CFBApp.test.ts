@@ -4,7 +4,7 @@ import App from './App.svelte';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState({}, '', '/'); });
 
-it.each(['analysis', 'school download', 'conference download', 'conference download with school', 'player selection'])(
+it.each(['analysis', 'school download', 'conference download', 'conference download with school', 'player selection', 'head-to-head', 'player head-to-head'])(
   'keeps CFB subject selection first and scopes the %s workflow', async (workflow) => {
   const storage = new Map<string, string>();
   vi.stubGlobal('localStorage', {getItem: (key: string) => storage.get(key) ?? null,
@@ -25,7 +25,8 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
         default_metrics: ['win_rate'], default_metrics_by_domain: {results: ['win_rate']},
         analysis_domains: [{value: 'results', label: 'Results', description: 'Recorded results', subject_type: 'team'}],
         subject_types: sport === 'cfb' ? [{value: 'team', label: 'Team'}, {value: 'player', label: 'Player'}] : [{value: 'team', label: 'Team'}], split_dimensions: [],
-        comparison_windows: [{value: 'full_seasons', label: 'Full seasons', description: 'Compare recorded games'}],
+        comparison_windows: [{value: 'full_seasons', label: 'Full seasons', description: 'Compare recorded games'},
+                             {value: 'head_to_head', label: 'Head-to-head', description: 'Compare two schools'}],
         syncable_datasets: ['schedules', 'team_stats', 'rosters'], dataset_min_seasons: {schedules: null, team_stats: null, rosters: null},
         week_values: [1, 2], data_setup: {required_datasets: ['schedules'], recommended_datasets: ['team_stats', 'rosters'], descriptions: {schedules: 'Schedule'},
                                        label: 'Selected college data', description: 'Prepared on demand'}});
@@ -36,7 +37,9 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
       return response({conferences: [{value: '8', label: 'Selected Conference'}],
                        teams: url.searchParams.has('conference_id') ? [{value: '1', label: 'Selected School'}, {value: '2', label: 'Other School'}] : [], cached: true});
     }
-    if (url.pathname === '/api/sports/cfb/players') return response([{player_id: '10', name: 'School Player', teams: ['1'], positions: ['QB'], seasons: [2025, 2024]}]);
+    if (url.pathname === '/api/sports/cfb/players') return response(url.searchParams.get('team_id') === '2'
+      ? [{player_id: '20', name: 'Other Player', teams: ['2'], positions: ['QB'], seasons: [2025]}]
+      : [{player_id: '10', name: 'School Player', teams: ['1'], positions: ['QB'], seasons: [2025, 2024]}]);
     if (url.pathname === '/api/sports/cfb/players/10/seasons') return response({seasons: [2025, 2024]});
     if (url.pathname === '/api/datasets/cfb/sync-stream' && init?.method === 'POST') {
       downloaded = JSON.parse(String(init.body));
@@ -77,7 +80,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   expect((screen.getByRole('button', {name: 'Download Entire Conference'}) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.click(screen.getByRole('button', {name: 'Choose a School'}));
   expect(document.activeElement?.id).toBe('scope-heading');
-  if (workflow === 'player selection') {
+  if (workflow === 'player selection' || workflow === 'player head-to-head') {
     await fireEvent.click(screen.getByRole('button', {name: 'Player'}));
     expect((screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement).disabled).toBe(true);
   }
@@ -125,7 +128,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     });
     return;
   }
-  if (workflow === 'player selection') {
+  if (workflow === 'player selection' || workflow === 'player head-to-head') {
     await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).includes('/cfb/players?'))).toBe(true));
     const player = screen.getByRole('combobox', {name: 'Player'});
     expect((player as HTMLInputElement).disabled).toBe(false);
@@ -134,8 +137,46 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).includes('/cfb/players/10/seasons'))).toBe(true));
     expect((player as HTMLInputElement).value).toContain('School Player');
     expect(fetch.mock.calls.filter(([input]) => String(input).includes('/cfb/players?')).every(([input]) => String(input).includes('team_id=1'))).toBe(true);
+    if (workflow === 'player head-to-head') {
+      await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+      const schools = await waitFor(() => {
+        const found = screen.getAllByLabelText('School') as HTMLSelectElement[];
+        expect(found[1]?.disabled).toBe(false);
+        return found;
+      });
+      await fireEvent.change(schools[1], {target: {value: '2'}});
+      await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).includes('team_id=2'))).toBe(true));
+      const compare = screen.getByRole('combobox', {name: 'Compare with'});
+      await fireEvent.focus(compare);
+      await fireEvent.mouseDown(await screen.findByRole('option', {name: /Other Player/}));
+      // This fixture has no player metrics, so the run itself stays blocked; the subjects are what is checked here.
+      expect((await screen.findAllByText('Subjects selected')).length).toBeGreaterThan(0);
+      expect(document.querySelector('.analysis-brief')?.textContent).toContain('School Player vs Other Player');
+      return;
+    }
     expect(downloaded).toBeNull();
     expect(submitted).toBeNull();
+    return;
+  }
+  if (workflow === 'head-to-head') {
+    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+    // A second school browser picks the other school, starting from the first school's conference.
+    const schools = await waitFor(() => {
+      const found = screen.getAllByLabelText('School') as HTMLSelectElement[];
+      expect(found).toHaveLength(2);
+      expect(found[1].disabled).toBe(false);
+      return found;
+    });
+    await fireEvent.change(schools[1], {target: {value: '1'}});
+    expect(await screen.findByText('Choose a different school from the first one.')).toBeTruthy();
+    await fireEvent.change(schools[1], {target: {value: '2'}});
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'Which school won more often?'}});
+    await waitFor(() => expect((screen.getByRole('button', {name: /Run analysis/}) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', {name: /Run analysis/}));
+    await waitFor(() => expect(submitted?.sport).toBe('cfb'));
+    expect(submitted.subject).toMatchObject({type: 'team', id: '1'});
+    expect(submitted.comparison_subject).toMatchObject({type: 'team', id: '2', display_name: 'Other School'});
+    expect(submitted.scope).toMatchObject({comparison_design: 'head_to_head', baseline: {season: 2025}, comparison: {season: 2025}});
     return;
   }
   await fireEvent.click(await screen.findByRole('button', {name: 'Show 5 more examples'}));

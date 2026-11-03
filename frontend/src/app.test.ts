@@ -878,6 +878,63 @@ describe('Open Sports Analyst workbench', () => {
     expect(body.scope.baseline).toEqual(body.scope.comparison);
   });
 
+  it('compares two teams head-to-head across a range of seasons', async () => {
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+    await fireEvent.change(screen.getByLabelText('Last season'), {target: {value: '2024'}});
+    await fireEvent.change(screen.getByLabelText('First season'), {target: {value: '2025'}});
+    expect((await screen.findAllByText('Choose a first season on or before the last season')).length).toBeGreaterThan(0);
+    await fireEvent.change(screen.getByLabelText('Last season'), {target: {value: '2025'}});
+    await fireEvent.change(screen.getByLabelText('First season'), {target: {value: '2024'}});
+    const compare = screen.getByRole('combobox', {name: 'Compare with'});
+    await fireEvent.focus(compare);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Buffalo Bills/}));
+    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'Which offense passed better each season?'}});
+    await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
+    expect(document.querySelector('.analysis-brief')?.textContent).toContain('2024–2025 · head-to-head');
+    await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
+    const [, request] = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/investigations/stream'))!;
+    const body = JSON.parse(String(request?.body));
+    expect(body.scope).toMatchObject({comparison_design: 'head_to_head', baseline: {season: 2024}, comparison: {season: 2025}});
+  });
+
+  it('lists each season of a head-to-head range on one card', async () => {
+    const report = savedReport('investigation-h2h-range', 'Which offense passed better each season?');
+    const pair = (season: number, first: number, second: number) => ({
+      evidence_id: `h2h-epa-${season}`, metric: 'epa_per_dropback', label: `EPA/dropback · ${season}`, unit: 'per play',
+      value: second - first, baseline_value: first, comparison_value: second, sample_size: 160,
+      context: {comparison_kind: 'head_to_head', subjects: ['Kansas City Chiefs', 'Buffalo Bills'], baseline_sample: 160,
+        comparison_sample: 170, season, season_label: String(season), metric_label: 'EPA/dropback'}});
+    mockInvestigations = [{
+      ...report,
+      run: {...report.run, subject: {type: 'team', id: 'KC', display_name: 'Kansas City Chiefs'},
+        comparison_subject: {type: 'team', id: 'BUF', display_name: 'Buffalo Bills'}, metrics: ['epa_per_dropback'],
+        scope: {team: 'KC', comparison_design: 'head_to_head', season_type: 'REG', baseline: {season: 2024, weeks: [1, 22]},
+          comparison: {season: 2025, weeks: [1, 22]}}},
+      aggregate_evidence: [pair(2024, 0.2, 0.1), pair(2025, 0.05, 0.15)]
+    }];
+    render(App);
+    await fireEvent.click(await screen.findByText('Which offense passed better each season?'));
+    const cards = await waitFor(() => {
+      const articles = document.querySelectorAll('.key-metrics article');
+      expect(articles.length).toBe(1);
+      return articles;
+    });
+    expect(cards[0].querySelector('h3')?.textContent).toBe('EPA/dropback');
+    const rows = await waitFor(() => {
+      const found = [...cards[0].querySelectorAll('tbody tr')].map(row => [...row.children].map(cell => cell.textContent?.trim()));
+      expect(found[1][3]).toBe('Buffalo Bills');
+      return found;
+    });
+    expect(rows).toEqual([['2024', '0.200', '0.100', 'Kansas City Chiefs'], ['2025', '0.050', '0.150', 'Buffalo Bills']]);
+    expect(cards[0].textContent).toContain('no combined multi-season value');
+    expect(screen.getAllByText('2024–2025 · Head-to-head').length).toBeGreaterThan(0);
+  });
+
   it('shows a head-to-head report with both names and who leads', async () => {
     const season = {season: 2025, weeks: [1, 22]};
     mockInvestigations = [{

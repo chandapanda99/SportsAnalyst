@@ -606,7 +606,7 @@ class AnalystApplication:
                 request.scope.comparison,
                 result.aggregate_evidence,
                 result.play_evidence,
-                request.scope.included_seasons if request.scope.comparison_design == "full_seasons" else None,
+                request.scope.included_seasons if request.scope.season_range else None,
                 conversation_context,
                 request.analysis_domain,
                 request.sport,
@@ -672,7 +672,7 @@ class AnalystApplication:
             self.events.emit(identifier, "saving", "Saving your report", 0.97)
             self.store.save_investigation(bundle)
             self.telemetry.add_outputs(persist_span, {"investigation_id": identifier, "saved": True})
-        self.events.emit(identifier, "complete", "Investigation ready", 1.0, investigation_id=identifier)
+        self.events.emit(identifier, "complete", "Report ready", 1.0, investigation_id=identifier)
         logger.info(
             "investigation_completed investigation_id=%s duration_ms=%d",
             identifier,
@@ -749,8 +749,8 @@ class AnalystApplication:
         with self.telemetry.span(
                 "sports-analyst.reuse-parent-evidence", metadata=trace_metadata, parent=root_span, run_type="tool"
         ) as reuse_span:
-            self.events.emit(identifier, "planning", "Reviewing the existing investigation", 0.1)
-            self.events.emit(identifier, "analyzing", "Reusing validated evidence from the parent investigation", 0.55)
+            self.events.emit(identifier, "planning", "Reviewing the report", 0.1)
+            self.events.emit(identifier, "analyzing", "Reusing the report's validated evidence", 0.55)
             conversation_context = [
                 {"question": item.run.question, "summary": item.summary} for item in
                 self.store.investigation_thread(root.run.investigation_id)
@@ -766,38 +766,50 @@ class AnalystApplication:
         self.events.emit(identifier, "synthesizing", "Answering the follow-up from validated evidence", 0.75)
         from types import SimpleNamespace
 
-        from sports_analyst.analysis.calculations import complete_calculations
+        from sports_analyst.analysis.calculations import SecondSubject, complete_calculations
         from sports_analyst.analysis.research.presentation import add_research_charts
         from sports_analyst.analysis.scoped_data import ScopedData
 
         request = AnalysisRequest(sport=root.run.sport, subject=root.run.subject, question=question,
             scope=root.run.scope, analysis_domain=root.run.analysis_domain, metrics=root.run.metrics,
             splits=root.run.splits, parent_investigation_id=root.run.investigation_id)
-        partition = None
-        if request.sport == "cfb" and request.subject:
-            partition = f"{request.subject.type}:{request.subject.id}"
-        elif request.sport == "soccer" and request.subject and request.subject.type == "team":
-            partition = f"team:{request.subject.id}"
-        scoped = ScopedData(self, request, partition, identifier)
-        scoped.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.6)
+
+        def scoped_data(subject_request: AnalysisRequest, key: str) -> ScopedData:
+            subject = subject_request.subject
+            partition = None
+            if subject_request.sport == "cfb" and subject:
+                partition = f"{subject.type}:{subject.id}"
+            elif subject_request.sport == "soccer" and subject and subject.type == "team":
+                partition = f"team:{subject.id}"
+            data = ScopedData(self, subject_request, partition, key)
+            data.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.6)
+            return data
+
+        second = None
+        if head_to_head:
+            from sports_analyst.application.head_to_head import side_request, subject_label
+
+            # Research reads one subject's data at a time; the host repeats each measurement for the second.
+            scoped = scoped_data(side_request(request, root.run.subject), identifier)
+            second = SecondSubject(subject_label(root.run.subject), subject_label(comparison_subject),
+                                   scoped_data(side_request(request, comparison_subject), f"{identifier}:second-subject"))
+        else:
+            scoped = scoped_data(request, identifier)
         work = SimpleNamespace(aggregate_evidence=list(root.aggregate_evidence), executions=[],
                                caveats=[], charts=list(root.charts))
+        complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped, second)
         if not head_to_head:
-            # Research calculations scope their data to one subject.
-            complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped)
+            # Research charts label series by period, which would merge the two subjects' measurements.
             add_research_charts(work, request=request, data_access=scoped)
         source_manifests = {m.manifest_id: m for m in root.dataset_manifests}
         used = {key for e in work.aggregate_evidence for key in e.dataset_manifest_ids}
-        source_manifests.update({key: m for key, m in scoped.manifests.items() if key in used})
+        for access in (scoped, *([second.access] if second else [])):
+            source_manifests.update({key: m for key, m in access.manifests.items() if key in used})
         from sports_analyst.analysis.instructions import evidence_brief
         context = evidence_brief(work.aggregate_evidence, [], list(source_manifests.values()),
                                  {"sport": request.sport, "comparison": request.scope.model_dump(mode="json"),
                                   **({"comparison_kind": "head_to_head"} if head_to_head else {})})
-        subjects = None
-        if head_to_head:
-            from sports_analyst.application.head_to_head import subject_label
-
-            subjects = (subject_label(root.run.subject), subject_label(comparison_subject))
+        subjects = (second.first_label, second.label) if second else None
         context["question_coverage_reviews"] = [{"plan": e.parameters.get("plan"), "review": e.parameters.get("question_review")}
                                                 for e in work.executions if e.tool == "complete_calculations"]
         failed = any(e.tool == "complete_calculations_failed" for e in work.executions)
@@ -810,7 +822,7 @@ class AnalystApplication:
                 root.run.scope.comparison,
                 work.aggregate_evidence,
                 root.play_evidence,
-                root.run.scope.included_seasons if root.run.scope.comparison_design == "full_seasons" else None,
+                root.run.scope.included_seasons if root.run.scope.season_range else None,
                 conversation_context,
                 root.run.analysis_domain,
                 root.run.sport,

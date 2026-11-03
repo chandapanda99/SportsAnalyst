@@ -35,7 +35,9 @@ def _subject_label(run) -> str:
 
 def _scope_label(scope) -> str:
     if scope.comparison_design == "head_to_head":
-        return f"Head-to-head · {scope.baseline.season}"
+        seasons = scope.baseline.season if scope.baseline.season == scope.comparison.season else (
+            f"{scope.baseline.season}–{scope.comparison.season}, each season compared separately")
+        return f"Head-to-head · {seasons}"
     if scope.comparison_design == "full_seasons":
         return f"Season range {scope.baseline.season}–{scope.comparison.season} (available games)"
     baseline = _window_label(scope.baseline)
@@ -85,13 +87,13 @@ def render_markdown(bundle: InvestigationBundle) -> str:
     domain = _domain_label(bundle.run.analysis_domain)
     subject = _subject_label(bundle.run)
     lines = [
-        f"# {subject} {domain} investigation",
+        f"# {subject} {domain} report",
         "",
         bundle.summary,
         "",
         f"**Question:** {bundle.run.question}  ",
         f"**Scope:** {_scope_label(scope)} ({scope.season_type})  ",
-        f"**Investigation:** `{bundle.run.investigation_id}`",
+        f"**Report ID:** `{bundle.run.investigation_id}`",
         "",
         "## Findings",
         "",
@@ -271,9 +273,9 @@ footer{{margin-top:36px;padding-top:18px;border-top:2px solid var(--team-accent)
 @media print{{*{{print-color-adjust:exact;-webkit-print-color-adjust:exact}}body{{max-width:none;padding:0}}}}
 """
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{html.escape(subject)} {html.escape(domain)} investigation</title><style>{styles}</style></head><body>
+<title>{html.escape(subject)} {html.escape(domain)} report</title><style>{styles}</style></head><body>
 <header><div class="eyebrow">Open Sports Analyst · Evidence-bound report</div>
-<h1>{html.escape(subject)} {html.escape(domain)} analysis</h1><p>{_model_html(bundle.summary)}</p>
+<h1>{html.escape(subject)} {html.escape(domain)} report</h1><p>{_model_html(bundle.summary)}</p>
 <small>{comparison_label} · {html.escape(bundle.run.investigation_id)}</small></header>
 <main><h2>Findings</h2>{claims}{charts}<h2>Representative evidence</h2><table><thead>
 <tr><th>Game</th><th>Play</th><th>Value</th><th>Description</th></tr></thead><tbody>{plays}</tbody></table>

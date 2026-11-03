@@ -15,7 +15,7 @@ from sports_analyst.models import stable_id
 def selected_games(access, plan, team):
     request, executor = access.request, access.executor
     windows = [name for name in ("baseline", "comparison") if getattr(request.scope, name).season == plan.season]
-    if not windows and request.scope.comparison_design == "full_seasons":
+    if not windows and request.scope.season_range:
         windows = [f"season:{plan.season}"]
     player = request.subject and request.subject.type == "player"
     player_games = set()

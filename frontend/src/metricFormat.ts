@@ -76,6 +76,13 @@ export function metricColumns(metric: Evidence, evidence: Evidence[], scope: Sco
   return {columns: [first, ...columns, last], middleSeasonsMissing: false};
 }
 
+/** A head-to-head season range pairs the two subjects separately in each season, oldest first. */
+export function headToHeadSeasons(metric: Evidence, evidence: Evidence[]) {
+  if (!finite(metric.context?.season)) return [];
+  return evidence.filter(item => item.metric === metric.metric && finite(item.context?.season))
+      .sort((a, b) => Number(a.context?.season) - Number(b.context?.season));
+}
+
 /** Who leads a head-to-head metric: the difference is second minus first. */
 export function headToHeadLeader(difference: number | undefined, higherIsBetter: boolean | null | undefined, names: [string, string]) {
   const verdict = changeVerdict(difference, higherIsBetter);

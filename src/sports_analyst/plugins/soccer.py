@@ -220,6 +220,8 @@ class SoccerPlugin:
             comparison_windows=[
                 ComparisonWindowOption(value="full_seasons", label="Full seasons", description="Compare the first and last seasons, with intermediate seasons in the trend."),
                 ComparisonWindowOption(value="date_ranges", label="Date ranges", description="Compare matches in two selected date ranges."),
+                ComparisonWindowOption(value="head_to_head", label="Head-to-head",
+                                       description="Compare two teams or two players over the same seasons in this competition."),
             ],
             week_values=[], syncable_datasets=[d for d in SOCCER_DATASETS
                 if (d != "asa_analytics" or competition in {"usa.1", "usa.nwsl"})

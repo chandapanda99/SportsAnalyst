@@ -195,7 +195,7 @@
 {:else if rows.length}<button class="chart-toggle" type="button" aria-expanded={showChart} onclick={() => showChart = !showChart}>{showChart ? 'Hide comparison chart' : 'Show comparison chart'}</button>{/if}
 {#if !matrixMode || (showChart && hasPlot)}
 <div class="chart-visual" class:compact={rows.length > 0 && !showChart}>
-<SchematicViewport label="chart" focusable={false} onexpand={value => expanded = value}>
+<SchematicViewport label="chart" focusable={false} quietExpand onexpand={value => expanded = value}>
 <div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} bind:this={target} role="img" aria-label={title ?? 'Chart'}>
     {#if renderError}<p class="chart-error">{renderError}</p>{/if}
 </div>

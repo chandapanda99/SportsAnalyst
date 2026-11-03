@@ -480,6 +480,8 @@ def _head_to_head_fallback(subjects: tuple[str, str], aggregate: list[AggregateE
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     if not metrics:
         raise ValueError("head-to-head analysis produced no comparable metrics")
+    # Season ranges lead with their latest season; the stable sort keeps metric order within a season.
+    metrics.sort(key=lambda item: -int(item.context.get("season") or 0))
 
     def leader(item: AggregateEvidence) -> str | None:
         difference = float(item.value or 0)

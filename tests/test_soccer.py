@@ -436,6 +436,23 @@ class SoccerIntegrationTests(unittest.TestCase):
         self.assertTrue(result.claims)
         self.assertIn("2023–24 season", result.summary)
 
+    def test_head_to_head_compares_two_teams_in_one_competition_season(self) -> None:
+        self._sync([2025])
+        app = AnalystApplication(self.settings)
+        app.connectors["soccer"] = self.connector
+        season = {"season": 2025}
+        bundle = app.investigate(AnalysisRequest(
+            sport="soccer", question="Which side scored more?", analysis_domain="results",
+            subject={"type": "team", "id": "1"}, comparison_subject={"type": "team", "id": "2"},
+            scope={"team": "1", "competition": "eng.1", "baseline": season, "comparison": season, "comparison_design": "head_to_head"},
+            metrics=["goals_for_per_match", "points_per_match"]))
+        self.assertEqual([bundle.run.subject.display_name, bundle.run.comparison_subject.display_name], ["Home", "Away"])
+        goals = next(item for item in bundle.aggregate_evidence if item.metric == "goals_for_per_match")
+        self.assertGreater(goals.baseline_value, goals.comparison_value)
+        self.assertEqual(goals.context["subjects"], ["Home", "Away"])
+        self.assertTrue(bundle.summary.startswith("Home led on"))
+        self.assertEqual({play.window for play in bundle.play_evidence}, {"baseline", "comparison"})
+
     def test_selected_player_game_log_is_cached(self) -> None:
         payload = {"names": ["goalAssists"], "seasonTypes": [{"categories": [{"events": [
             {"eventId": "2025", "date": "2024-09-15", "stats": ["2"]}]}]}]}

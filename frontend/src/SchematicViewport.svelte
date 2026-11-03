@@ -9,6 +9,8 @@
   export let selectedMarker = '';
   export let onselect: (id: string) => void = () => {};
   export let focusable = true;
+  // Charts use a quiet, right-aligned Expand control; tablets keep the full button.
+  export let quietExpand = false;
   export let onexpand: (expanded: boolean) => void = () => {};
   let expanded = false;
   let zoom = 1;
@@ -94,7 +96,7 @@
 
 <svelte:window on:keydown={keydown} on:pointermove={pointerMove} on:pointerup={pointerUp} on:pointercancel={pointerUp}/>
 <div bind:this={root} class="schematic-viewer" class:expanded role={expanded ? 'dialog' : 'region'} aria-modal={expanded ? 'true' : undefined} aria-label={label}>
-  <div class="viewer-controls">
+  <div class="viewer-controls" class:quiet-controls={quietExpand && !expanded}>
     {#if expanded}
       <button bind:this={closeButton} type="button" on:click={close}>Close expanded view</button>
       <button type="button" aria-label="Zoom out" disabled={zoom <= 1} on:click={() => scale(zoom - .5)}>−</button>
@@ -103,7 +105,7 @@
       {#if focusable}<button type="button" on:click={focusPlay}>Focus play</button>{/if}
       <button type="button" on:click={() => scale(1)}>Full view</button>
     {:else}
-      <button bind:this={expandButton} type="button" on:click={expand}>Expand {label}</button>
+      <button bind:this={expandButton} type="button" class:quiet={quietExpand} on:click={expand}>Expand {label}</button>
     {/if}
   </div>
   {#if markers.length}
@@ -131,6 +133,9 @@
   select {min-width:0; max-width:100%; flex:1 1 14rem; min-height:44px; font:inherit; font-size:16px; color:var(--color-text-primary,#edf7ff); background:var(--color-surface-control,#102336);}
   button {min-width:44px; min-height:44px; padding:.5rem .75rem; border:1px solid var(--line,#315063); border-radius:.4rem; background:var(--color-surface-control,#102336); color:var(--color-text-primary,#edf7ff); cursor:pointer; font:inherit;}
   button:disabled {opacity:.45; cursor:default;}
+  .quiet-controls {justify-content:flex-end; padding:0;}
+  button.quiet {min-height:36px; padding:.3rem .6rem; border-color:transparent; background:transparent; color:var(--color-text-secondary,#9fb3c2); font-size:.85rem;}
+  button.quiet:hover, button.quiet:focus-visible {border-color:var(--line,#315063); color:var(--color-text-primary,#edf7ff);}
   .schematic-scroll {overflow:auto; max-width:100%;}
   .schematic-canvas {min-width:100%;}
   .marker-details {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; padding:.75rem; border:1px solid var(--mint,#7be4cd); background:var(--color-surface-panel,#071724);}

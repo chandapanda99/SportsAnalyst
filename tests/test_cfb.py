@@ -501,6 +501,29 @@ def test_investigation_prepares_team_and_transfer_player_evidence_with_weighted_
     assert child.play_evidence == bundle.play_evidence
 
 
+def test_head_to_head_compares_two_schools_season_by_season(tmp_path, source):
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, foundry_endpoint="", langsmith_tracing=False))
+    assert any(option.value == "head_to_head" for option in application.analysis_options("cfb").comparison_windows)
+    request = AnalysisRequest(
+        sport="cfb", question="Which school scored more?", analysis_domain="results",
+        subject={"type": "team", "id": "1", "display_name": "FBS School"},
+        comparison_subject={"type": "team", "id": "2", "display_name": "FCS School"},
+        metrics=["points_per_game", "win_rate"],
+        scope={"team": "1", "baseline": {"season": 2024}, "comparison": {"season": 2025}, "comparison_design": "head_to_head"},
+    )
+
+    bundle = application.investigate(request, "cfb-head-to-head")
+
+    points = sorted((item for item in bundle.aggregate_evidence if item.metric == "points_per_game"), key=lambda item: item.context["season"])
+    assert [(item.context["season"], item.baseline_value, item.comparison_value, item.value) for item in points] == [
+        (2024, 28.0, 14.0, -14.0), (2025, 28.0, 14.0, -14.0)]
+    assert points[0].context["subjects"] == ["FBS School", "FCS School"]
+    # Each school's data is prepared in its own partition, never a national download.
+    assert {item.partition_key for item in bundle.dataset_manifests} >= {"team:1", "team:2"}
+    assert bundle.summary.startswith("FBS School led on Points scored/game · 2025")
+    assert {play.window for play in bundle.play_evidence} <= {"baseline", "comparison"}
+
+
 @pytest.mark.parametrize("durable", [False, True])
 def test_durable_source_coalesces_inflight_requests_across_replicas(tmp_path, monkeypatch, durable):
     persistence = DurableMemory() if durable else None

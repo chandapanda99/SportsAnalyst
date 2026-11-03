@@ -9,6 +9,13 @@ from sports_analyst.datasets.snapshots import sha256_file
 from sports_analyst.datasets.soccer.catalog import soccer_season_label
 
 
+def season_range(scope):
+    """Recorded scopes are dicts; mirror AnalysisScope.season_range for them."""
+    design = scope.get("comparison_design")
+    return design == "full_seasons" or (design == "head_to_head" and scope.get("baseline", {}).get("season", 0)
+                                        < scope.get("comparison", {}).get("season", 0))
+
+
 def field_label(field):
     field = field.rsplit("__", 1)[-1]
     return {"game_id": "Match", "event_id": "Match", "possession_pct": "Possession",
@@ -59,7 +66,7 @@ class ResearchLabels:
             if period.get("start_date") and period.get("end_date"):
                 dates = [date.fromisoformat(period[key][:10]).strftime("%b %d, %Y") for key in ("start_date", "end_date")]
                 return " – ".join(dates)
-            if scope.get("comparison_design") != "full_seasons" and period.get("weeks"):
+            if not season_range(scope) and period.get("weeks"):
                 return f"{label} · Weeks {period['weeks'][0]}–{period['weeks'][1]}"
             return label
         return {"baseline": "Earlier period", "comparison": "Later period"}.get(window, "Recorded sample")
@@ -195,7 +202,7 @@ class ResearchLabels:
 
     def expected_periods(self, item):
         scope = self.scope(item)
-        if scope.get("comparison_design") == "full_seasons":
+        if season_range(scope):
             return [self.season_label(item, year) for year in range(scope["baseline"]["season"], scope["comparison"]["season"] + 1)]
         if scope.get("baseline") and scope.get("comparison"):
             return list(dict.fromkeys(self.period(item.model_copy(update={"context": {**item.context, "window": window,

@@ -6,7 +6,7 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.8"
+PROMPT_VERSION = "1.9"
 
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
@@ -95,7 +95,10 @@ falling relative to the other. Say who leads on each measure in the metric's own
 samples; when opportunity differs (plays, games, attempts), prefer rates and say how unequal the samples are.
 Team context, teammates, schedules and playing time differ between subjects: describe outcomes, and do not
 credit or blame one subject alone for the gap. Plays in the baseline window belong to {first}; plays in the
-comparison window belong to {second}. Season-by-season trends do not apply to this report.
+comparison window belong to {second}. When records carry a season, each one compares the two subjects within that
+season only: you may say who led in how many seasons and whether the lead changed hands, but no combined
+multi-season value exists, so never present one. Additional research measurements are labelled with the subject
+they describe; compare only measurements made with the same plan for both subjects.
 """.strip()
 
 SPORT_GUIDANCE = {

@@ -472,3 +472,30 @@ def test_team_and_player_nba_investigations_share_the_nfl_flow(tmp_path: Path, m
     assert application.query_sql("SELECT count(*) AS plays FROM pbp", sport="nba") == [{"plays": 4}]
     with pytest.raises(ValueError, match="no datasets"):
         application.query_sql("SELECT count(*) FROM pbp", sport="nfl")
+
+
+def test_nba_head_to_head_compares_two_teams_in_one_season(tmp_path: Path) -> None:
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, foundry_endpoint=""))
+    connector = application.connectors["nba"]
+    frames = _nba_frames(2025, 114)
+    boston = frames["team_boxscores"]
+    frames["team_boxscores"] = pl.concat([boston, boston.with_columns(
+        pl.lit("13").alias("team_id"), pl.lit("LAL").alias("team_abbreviation"), pl.lit(110).alias("team_score"),
+        pl.lit(114).alias("opponent_team_score"), pl.lit(False).alias("team_winner"), pl.lit(38).alias("field_goals_made"))],
+        how="vertical_relaxed")
+    for dataset, frame in frames.items():
+        source = tmp_path / f"{dataset}-2025.parquet"
+        frame.write_parquet(source)
+        application.store.save_manifest(connector.register_local(source, 2025, dataset))
+    season = AnalysisWindow(season=2025)
+    bundle = application.investigate(AnalysisRequest(
+        sport="nba", subject=AnalysisSubject(type="team", id="BOS"), comparison_subject=AnalysisSubject(type="team", id="LAL"),
+        question="Which team scored more efficiently?", analysis_domain="offense", metrics=["points_per_game", "effective_fg_pct"],
+        scope=AnalysisScope(team="BOS", baseline=season, comparison=season, season_type="ALL", comparison_design="head_to_head"),
+    ))
+    assert bundle.run.comparison_subject.id == "LAL"
+    assert {item.metric for item in bundle.aggregate_evidence} <= {"points_per_game", "effective_fg_pct"}
+    assert bundle.aggregate_evidence and all(item.context["comparison_kind"] == "head_to_head" for item in bundle.aggregate_evidence)
+    points = next(item for item in bundle.aggregate_evidence if item.metric == "points_per_game")
+    assert points.baseline_value != points.comparison_value
+    assert [chart.specification["usermeta"]["comparisonKind"] for chart in bundle.charts] == ["subject-comparison"]

@@ -131,7 +131,7 @@ class JoinExecutor:
             return None
         games, usable, facts = set(), False, {}
         needed = (request.scope.season_type != "ALL" or period.start_date or period.end_date
-                  or request.scope.comparison_design != "full_seasons" or contract(manifest).grain == "game")
+                  or not request.scope.season_range or contract(manifest).grain == "game")
         for calendar in candidates:
             fields = [k for k in calendar.columns if k in {"game_id", "event_id", "completed", "season_type", "week",
                       "date", "game_date", "game_date_time", "notes_headline", "status", "season",
@@ -319,7 +319,7 @@ class JoinExecutor:
     def base(self, manifest, fields, window):
         request, c = self.access.request, contract(manifest)
         period = (AnalysisWindow(season=int(window.split(":", 1)[1]))
-                  if window.startswith("season:") and request.scope.comparison_design == "full_seasons"
+                  if window.startswith("season:") and request.scope.season_range
                   else getattr(request.scope, window, None) if window in {"baseline", "comparison"} else None)
         if period is None or period.season not in request.scope.included_seasons or manifest.season != period.season:
             raise ValueError("Window/dataset season outside investigation")
@@ -383,7 +383,7 @@ class JoinExecutor:
                 allowed &= day >= period.start_date
             if period.end_date:
                 allowed &= day <= period.end_date
-        elif request.scope.comparison_design != "full_seasons" and attributed is None:
+        elif not request.scope.season_range and attributed is None:
             if "week" not in cols or period.segment:
                 raise ValueError("Window requires verified week/segment attribution")
             fields.add("week")

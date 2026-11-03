@@ -19,7 +19,7 @@
   import {expandedQuestions} from './expandedQuestions';
   import {initializeBranding} from './sportsBranding';
   import {questionBanks, supplementalQuestionBanks} from './questionCatalog';
-  import {changeVerdict, headToHeadLeader, metricColumns, metricFormatter, periodLabel} from './metricFormat';
+  import {changeVerdict, headToHeadLeader, headToHeadSeasons, metricColumns, metricFormatter, periodLabel} from './metricFormat';
   import SubjectSearch from './SubjectSearch.svelte';
   import {gameLabel} from './reportText';
   import ModelText from './ModelText.svelte';
@@ -201,7 +201,7 @@
     comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string; playerInput: string;
     playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
     selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[]; dataManagerOpen: boolean;
-    customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean; compareSubjectId: string;
+    customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean; compareSubjectId: string; headToHeadFirst: number;
     selectedCompetition: string; baselineStartDate: string; baselineEndDate: string; comparisonStartDate: string; comparisonEndDate: string;
   };
   const sportDrafts: Record<string, DraftState> = {};
@@ -231,6 +231,16 @@
   let metricDirections: Record<string, boolean | null> = {};
   let showFullFilmRoom = false;
   let compareSubjectId = '';
+  // Head-to-head runs from this season through `comparison`; 0 until the mode is chosen.
+  let headToHeadFirst = 0;
+  const MAX_HEAD_TO_HEAD_SEASONS = 6;
+  // College football picks the second subject by browsing to its school.
+  let compareCfbTeams: TeamOption[] = [];
+  let compareCfbSchool = '';
+  let compareCfbSeason = 0;
+  let comparePlayers: PlayerOption[] = [];
+  let comparePlayersLoading = false;
+  let comparePlayerVersion = 0;
   let runningInvestigationId = '';
   let cancelling = false;
   let routeHandled = false;
@@ -264,7 +274,9 @@
           : dataReady ? `${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source is' : 'sources are'} not synced yet. Sync now, or anything missing prepares when you run the analysis.`
               : `Sync ${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source' : 'sources'} to run this analysis.`;
   $: periodBlocker = !windowsDiffer
-      ? analysisDesign === 'full_seasons' ? 'Choose an end season after the start season' : 'Choose two different periods'
+      ? headToHead ? periodStart > comparison ? 'Choose a first season on or before the last season'
+          : `Head-to-head covers up to ${MAX_HEAD_TO_HEAD_SEASONS} seasons`
+      : analysisDesign === 'full_seasons' ? 'Choose an end season after the start season' : 'Choose two different periods'
       : !hasSubjectData ? `${selectedPlayer?.name ?? 'This player'} has no recorded data for ${missingPlayerSeasons.map(seasonLabel).join(', ')}`
           : !hasRequiredData ? `Sync ${missingRequiredSeasons.map(seasonLabel).join(', ')} before running` : '';
   $: readinessSteps = [
@@ -424,7 +436,7 @@
       comparisonEndDate
     } = context;
     if (comparisonMode === 'season_vs_prior') return `${seasonLabel(comparison)}, measured against ${seasonLabel(baseline)}`;
-    if (comparisonMode === 'head_to_head') return `${seasonLabel(comparison)} · head-to-head`;
+    if (comparisonMode === 'head_to_head') return `${seasonSpan(baseline, comparison)} · head-to-head`;
     if (comparisonMode === 'full_seasons') return `${seasonLabel(baseline)} → ${seasonLabel(comparison)} · every season in this range`;
     if (comparisonMode === 'before_after_milestone') return `${seasonLabel(baseline)} · before vs. after the All-Star break`;
     if (comparisonMode === 'before_after') return `${seasonLabel(baseline)} · weeks 1–${splitWeek - 1} vs. ${splitWeek}–22`;
@@ -435,17 +447,29 @@
 
   function keyMetrics(result: Investigation) {
     const selected = new Set(result.run.metrics ?? []);
-    return result.aggregate_evidence.filter(item => item.baseline_value != null && item.comparison_value != null && (!selected.size || selected.has(item.metric ?? ''))).slice(0, 6);
+    const metrics = result.aggregate_evidence.filter(item => item.baseline_value != null && item.comparison_value != null && (!selected.size || selected.has(item.metric ?? '')));
+    if (!result.run.comparison_subject) return metrics.slice(0, 6);
+    // A head-to-head season range has one record per season; one card lists them all.
+    const byMetric = new Map<string, Evidence>();
+    for (const item of metrics) if (!byMetric.has(item.metric ?? '')) byMetric.set(item.metric ?? '', item);
+    return [...byMetric.values()].slice(0, 6);
+  }
+
+  function seasonSpan(first: number, last: number) {
+    return first === last ? seasonLabel(last) : `${seasonLabel(first)}–${seasonLabel(last)}`;
   }
 
   // One season is reported against the season before it, as a two-season range.
   $: analysisDesign = comparisonMode === 'season_vs_prior' ? 'full_seasons' : comparisonMode;
   $: headToHead = comparisonMode === 'head_to_head';
-  $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : headToHead ? comparison : baseline;
+  $: if (headToHead && !headToHeadFirst) headToHeadFirst = comparison;
+  $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : headToHead ? headToHeadFirst || comparison : baseline;
   $: comparisonOptions = (analysisOptions?.comparison_windows ?? []).flatMap(option => option.value === 'full_seasons'
       ? [option, {value: 'season_vs_prior', label: 'One season vs. the season before', description: 'Analyze one season, using the season before it as the reference point.'}]
       : [option]);
-  $: requiredSeasons = headToHead ? [comparison] : analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
+  $: requiredSeasons = headToHead
+      ? periodStart <= comparison ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index) : [comparison]
+      : analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
       ? [baseline]
       : analysisDesign === 'full_seasons' && periodStart < comparison
           ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index)
@@ -484,7 +508,8 @@
   });
   $: playerNamesById = new Map(knownPlayers.map((player) => [player.player_id, player.name]));
   $: visibleDomains = (analysisOptions?.analysis_domains ?? []).filter((domain) => domainAvailableForSubject(domain, subjectType, selectedPlayer));
-  $: windowsDiffer = headToHead || analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
+  $: windowsDiffer = headToHead ? periodStart <= comparison && comparison - periodStart < MAX_HEAD_TO_HEAD_SEASONS
+      : analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
       || (analysisDesign === 'full_seasons' ? periodStart < comparison : activeSport === 'nba'
           ? baseline !== comparison || baselineSegment !== comparisonSegment
           : ['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges'
@@ -501,8 +526,12 @@
   $: hasSubjectData = missingPlayerSeasons.length === 0;
   // Head-to-head candidates are the same kind of subject with recorded data in the chosen season.
   $: compareOptions = !headToHead ? [] : subjectType === 'team'
-      ? (analysisOptions?.teams ?? []).filter(option => option.value !== resolvedTeam).map(option => ({value: option.value, label: option.label, detail: option.value}))
-      : knownPlayers.filter(player => player.player_id !== selectedPlayerId && playerSeasonsForDomain(player).map(Number).includes(comparison))
+      ? (activeSport === 'cfb' ? compareCfbTeams : analysisOptions?.teams ?? []).filter(option => option.value !== resolvedTeam)
+          .map(option => ({value: option.value, label: option.label, detail: activeSport === 'cfb' ? '' : option.value}))
+      : (activeSport === 'cfb' ? comparePlayers : knownPlayers.filter(player => {
+          const seasons = playerSeasonsForDomain(player).map(Number);
+          return requiredSeasons.every(season => seasons.includes(season));
+        })).filter(player => player.player_id !== selectedPlayerId)
           .map(player => ({value: player.player_id, label: player.name, detail: [player.positions.join('/'), player.teams.join('/')].filter(Boolean).join(' · ')}));
   $: if (compareSubjectId && compareOptions.length && !compareOptions.some(option => option.value === compareSubjectId)) compareSubjectId = '';
   $: compareSubjectLabel = compareOptions.find(option => option.value === compareSubjectId)?.label ?? '';
@@ -704,7 +733,7 @@
       selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
       selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
       syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets], dataManagerOpen,
-      customizeSources, customizeMetrics, metricsEdited, compareSubjectId,
+      customizeSources, customizeMetrics, metricsEdited, compareSubjectId, headToHeadFirst,
       selectedCompetition, baselineStartDate, baselineEndDate, comparisonStartDate, comparisonEndDate
     };
   }
@@ -742,6 +771,11 @@
     question = '';
     showFullFilmRoom = false;
     compareSubjectId = '';
+    headToHeadFirst = 0;
+    compareCfbTeams = [];
+    compareCfbSchool = '';
+    comparePlayers = [];
+    comparePlayerVersion += 1;
     selectedMetrics = [];
     selectedSplits = [];
     syncSeasons = [];
@@ -773,6 +807,7 @@
     customizeMetrics = draft.customizeMetrics;
     metricsEdited = draft.metricsEdited;
     compareSubjectId = draft.compareSubjectId ?? '';
+    headToHeadFirst = draft.headToHeadFirst ?? 0;
     selectedCompetition = draft.selectedCompetition;
     baselineStartDate = draft.baselineStartDate;
     baselineEndDate = draft.baselineEndDate;
@@ -838,7 +873,8 @@
 
   function selectSubjectType(type: 'team' | 'player') {
     subjectType = type;
-    compareSubjectId = '';
+    compareSubjectId = activeSport === 'cfb' && type === 'team' ? compareCfbSchool : '';
+    if (activeSport === 'cfb' && type === 'player' && compareCfbSchool) void loadComparePlayers(compareCfbSchool, compareCfbSeason);
     if (type === 'team') {
       playerSearchVersion += 1;
       playersLoading = false;
@@ -903,6 +939,31 @@
 
   function playerDisplay(player: PlayerOption) {
     return `${player.name}${player.teams.length ? ` · ${player.teams.map(team => playerTeamLabel(team)).join('/')}` : ''}`;
+  }
+
+  function compareCfbChanged(selection: {season: number; teams: TeamOption[]; team: string; loading: boolean; error: string}) {
+    compareCfbTeams = selection.teams;
+    const school = selection.loading || selection.error ? '' : selection.team;
+    if (school === compareCfbSchool && selection.season === compareCfbSeason) return;
+    compareCfbSchool = school;
+    compareCfbSeason = selection.season;
+    compareSubjectId = subjectType === 'team' ? school : '';
+    comparePlayers = [];
+    comparePlayerVersion += 1;
+    if (subjectType === 'player' && school) void loadComparePlayers(school, selection.season);
+  }
+
+  async function loadComparePlayers(school: string, season: number) {
+    const version = ++comparePlayerVersion;
+    comparePlayersLoading = true;
+    try {
+      const matches = await api.players('cfb', '', undefined, school, season);
+      if (version === comparePlayerVersion) comparePlayers = matches;
+    } catch {
+      if (version === comparePlayerVersion) comparePlayers = [];
+    } finally {
+      if (version === comparePlayerVersion) comparePlayersLoading = false;
+    }
   }
 
   function cfbSelectionChanged(selection: {
@@ -1648,7 +1709,9 @@
   }
 
   function investigationWindow(item: Investigation | InvestigationSummary) {
-    if (item.run.scope.comparison_design === 'head_to_head') return `${seasonLabel(item.run.scope.baseline.season)} · Head-to-head`;
+    if (item.run.scope.comparison_design === 'head_to_head') {
+      return `${seasonSpan(item.run.scope.baseline.season, item.run.scope.comparison.season)} · Head-to-head`;
+    }
     const baselineWindow = item.run.scope.baseline;
     const comparisonWindow = item.run.scope.comparison;
     if (item.run.sport === 'soccer') {
@@ -1895,7 +1958,7 @@
         weeks: [1, 22]
       };
       if (headToHead) {
-        baselineWindow = {season: comparison, weeks: [1, 22]};
+        baselineWindow = {season: periodStart, weeks: [1, 22]};
         comparisonWindow = {season: comparison, weeks: [1, 22]};
       } else if (comparisonMode === 'week_ranges') {
         baselineWindow = {season: baseline, weeks: [baselineStartWeek, baselineEndWeek]};
@@ -2717,9 +2780,9 @@
             <section class="scope-card" aria-labelledby="comparison-heading">
               <div class="scope-heading">
                 <div><span class="eyebrow">{activeSport === 'cfb' ? '03' : '02'} · Comparison</span>
-                  <h3 id="comparison-heading" tabindex="-1">Choose the periods to compare</h3></div>
+                  <h3 id="comparison-heading" tabindex="-1">{headToHead ? 'Choose the seasons and who to compare' : 'Choose the periods to compare'}</h3></div>
               </div>
-              <p>The first period is your starting point. The second shows what changed.</p>
+              <p>{headToHead ? 'Both subjects are measured over the same seasons.' : 'The first period is your starting point. The second shows what changed.'}</p>
               <div class="scope-controls">
                 <label>Comparison type
                   <select bind:value={comparisonMode}>
@@ -2742,17 +2805,38 @@
               {#if scopeSeasons.length}
                 {#if headToHead}
                   <div class="window-grid before-after">
-                    <label>Season<select bind:value={comparison}>
+                    <label>First season<select bind:value={headToHeadFirst}>
                       {#each scopeSeasons as season}
                         <option value={season}>{seasonLabel(season)}</option>
                       {/each}
                     </select></label>
+                    <label>Last season<select bind:value={comparison}>
+                      {#each scopeSeasons as season}
+                        <option value={season}>{seasonLabel(season)}</option>
+                      {/each}
+                    </select></label>
+                  </div>
+                  <p class="section-help">Choose the same season twice to compare one season. A longer range, up to {MAX_HEAD_TO_HEAD_SEASONS} seasons,
+                    compares the two side by side in each season.</p>
+                  {#if periodBlocker}<p class="validation">{periodBlocker}</p>{/if}
+                  {#if activeSport === 'cfb'}
+                    <p class="section-help">Browse to the {subjectType === 'player' ? 'school of the player' : 'school'} to compare with.</p>
+                    <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision} initialConference={cfbConference}
+                                  disabled={busy} onchange={compareCfbChanged}/>
+                    {#if subjectType === 'team' && compareCfbSchool && compareCfbSchool === resolvedTeam}
+                      <p class="validation">Choose a different school from the first one.</p>
+                    {/if}
+                  {/if}
+                  {#if activeSport !== 'cfb' || subjectType === 'player'}
                     <SubjectSearch id="compare-subject" label="Compare with" options={compareOptions} value={compareSubjectId}
                                    placeholder={subjectType === 'player' ? 'Search players…' : 'Search teams…'}
-                                   emptyMessage={subjectType === 'player' ? 'No other players with data in this season' : 'No other teams'}
-                                   onsearch={subjectType === 'player' ? searchPlayers : undefined} searching={playerSearching}
+                                   emptyMessage={activeSport === 'cfb' ? comparePlayersLoading ? 'Loading players…'
+                                       : compareCfbSchool ? 'No other players found at this school' : 'Choose a school above first'
+                                       : subjectType === 'player' ? 'No other players with data in every chosen season' : 'No other teams'}
+                                   onsearch={subjectType === 'player' && activeSport !== 'cfb' ? searchPlayers : undefined}
+                                   searching={playerSearching || comparePlayersLoading}
                                    onselect={(value) => compareSubjectId = value}/>
-                  </div>
+                  {/if}
                   {#if !resolvedSubject}<p class="section-help">Choose the first {subjectType} above, then who to compare with.</p>{/if}
                 {:else if comparisonMode === 'season_vs_prior'}
                   <div class="window-grid before-after">
@@ -3157,7 +3241,23 @@
             {@const direction = metricDirections[`${active.run.sport ?? 'nfl'}:${metric.metric}`]}
             {@const verdict = active.run.comparison_subject ? '' : changeVerdict(metric.value, direction)}
             {@const leader = active.run.comparison_subject ? headToHeadLeader(metric.value, direction, [period.columns[0].label, period.columns[1].label]) : ''}
-            <article><h3>{metric.label}</h3>
+            {@const seasons = active.run.comparison_subject ? headToHeadSeasons(metric, active.aggregate_evidence) : []}
+            <article><h3>{seasons.length ? metric.context?.metric_label ?? metric.label : metric.label}</h3>
+              {#if seasons.length}
+                {@const names = [period.columns[0].label, period.columns[1].label] as [string, string]}
+                {@const rangeFormat = metricFormatter(metric, seasons.flatMap(item => [item.baseline_value, item.comparison_value]))}
+                <table class="season-pairs">
+                  <thead><tr><th scope="col">Season</th><th scope="col">{names[0]}</th><th scope="col">{names[1]}</th><th scope="col">Ahead</th></tr></thead>
+                  <tbody>
+                    {#each seasons as item}
+                      <tr><th scope="row">{item.context?.season_label ?? seasonLabel(Number(item.context?.season))}</th>
+                        <td>{rangeFormat.value(item.baseline_value)}</td><td>{rangeFormat.value(item.comparison_value)}</td>
+                        <td>{headToHeadLeader(item.value, direction, names) || '—'}</td></tr>
+                    {/each}
+                  </tbody>
+                </table>
+                <small>Each season is compared on its own; there is no combined multi-season value.</small>
+              {:else}
               <div class:many-periods={period.columns.length > 2}>
                 {#each period.columns as column}
                   <span>{column.label} <b>{format.value(column.value)}</b>
@@ -3171,6 +3271,7 @@
                   {#if verdict}<em class:worse={verdict === 'Worse'}>{verdict}</em>{/if}</p>
               {/if}
               {#if period.middleSeasonsMissing}<small>Middle seasons aren't recorded for this metric.</small>{/if}
+              {/if}
             </article>
           {:else}<p>No comparable metric values are available for these periods. Review the limitations below or adjust your periods and data sources.</p>{/each}
         </section>

@@ -177,6 +177,8 @@ class CFBPlugin:
                 ComparisonWindowOption(value="full_seasons", label="Full seasons", description="Compare season game samples."),
                 ComparisonWindowOption(value="date_ranges", label="Date ranges", description="Compare games within selected dates."),
                 ComparisonWindowOption(value="week_ranges", label="Week ranges", description="Use recorded ESPN week numbers."),
+                ComparisonWindowOption(value="head_to_head", label="Head-to-head",
+                                       description="Compare two schools or two players over the same season or seasons."),
             ],
             subject_types=[{"value": "team", "label": "Team"}, {"value": "player", "label": "Player"}],
             week_values=list(range(1, 23)),

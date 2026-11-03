@@ -381,7 +381,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 ComparisonWindowOption(
                     value="head_to_head",
                     label="Head-to-head",
-                    description="Compare two teams or two players over the same season.",
+                    description="Compare two teams or two players over the same season or seasons.",
                 ),
             ],
             syncable_datasets=list(SUPPORTED_DATASETS),

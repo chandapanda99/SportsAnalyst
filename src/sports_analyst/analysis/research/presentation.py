@@ -2,7 +2,7 @@
 import json
 import math
 
-from sports_analyst.analysis.research.labels import ResearchLabels
+from sports_analyst.analysis.research.labels import ResearchLabels, season_range
 from sports_analyst.analysis.research.labels import field_label as _field_label
 from sports_analyst.models import ChartArtifact, stable_id
 from sports_analyst.presentation.charts import metric_row_comparison_spec
@@ -166,7 +166,7 @@ def add_research_charts(result, request=None, data_access=None, store=None):
         spec = metric_row_comparison_spec(rows, series_field=field,
             series_order=order, comparison_kind=kind, color_field="window" if kind in {"monthly-trend", "grouped-observations"} else None)
         spec["usermeta"]["researchObjective"] = objective
-        spec["usermeta"]["colorTitle"] = "Seasons" if labels.scope(items[0]).get("comparison_design") == "full_seasons" else "Periods"
+        spec["usermeta"]["colorTitle"] = "Seasons" if season_range(labels.scope(items[0])) else "Periods"
         scope_labels = labels.filters(items[0])
         dimensions = list(items[0].context.get("group", {}))
         title_filters = [text for text in scope_labels if not text.endswith(": recorded")]
