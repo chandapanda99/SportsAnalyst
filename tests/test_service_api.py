@@ -468,7 +468,8 @@ def test_head_to_head_season_range_pairs_each_season(tmp_path: Path, pbp_pair) -
     assert [item.label for item in epa] == ["EPA/dropback · 2024", "EPA/dropback · 2025"]
     assert all(item.value == pytest.approx(0.3, abs=1e-6) for item in epa)
     assert epa[0].baseline_value > epa[1].baseline_value  # The fixture's 2025 offense is weaker in both subjects.
-    assert {play.season for play in bundle.play_evidence} <= {2024, 2025}
+    assert {(play.window, play.season) for play in bundle.play_evidence} == {
+        ("baseline", 2024), ("baseline", 2025), ("comparison", 2024), ("comparison", 2025)}
     assert any("compared one at a time" in caveat for caveat in bundle.methodological_caveats)
     chart = bundle.charts[0].specification
     assert chart["usermeta"]["comparisonKind"] == "subject-comparison"

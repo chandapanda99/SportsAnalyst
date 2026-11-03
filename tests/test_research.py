@@ -498,7 +498,7 @@ await tools.finishQuestionReview({evidence_by_objective:{"0":ids},unresolved:{}}
     assert not any(e.tool == "complete_calculations_failed" for e in result.executions), result.executions[-1].parameters
     joined = {item.context["subject"]: item for item in result.aggregate_evidence if item.metric == "joined_aggregate"}
     assert {name: item.value for name, item in joined.items()} == {"A": 3., "B": 5.}
-    assert joined["B"].label.startswith("B: Total EPA")
+    assert joined["B"].label.startswith("B: Total EPA: 2025 sum epa")
     counts = [(item.context["subject"], item.value) for item in result.aggregate_evidence if item.metric == "scoped_aggregate"]
     # The filtered count names A, so it is registered for A alone and the report says so.
     assert counts == [("A", 2), ("B", 1), ("A", 2)]

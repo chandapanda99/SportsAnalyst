@@ -218,7 +218,7 @@ def complete_calculations(settings, question, result, scope, data_access=None, s
                 assert_comparable([*originals.values(), *accepted], payload, measure, group)
                 identity = {"execution": execution_id, "group": group, "measure": measure}
                 item = AggregateEvidence(evidence_id=stable_id("evidence", identity), metric="joined_aggregate",
-                    label=f"{f'{subject}: ' if subject else ''}{join_plan['objective']}: {join_plan['window']} "
+                    label=f"{f'{subject}: ' if subject else ''}{join_plan['objective']}: {window_name(join_plan['window'])} "
                           f"{measure['op']} {measure['field']} {group}",
                     value=value, sample_size=row[measure["name"] + "_non_null"],
                     unit=payload["measurement_definitions"][measure["name"]]["unit"],
@@ -251,6 +251,15 @@ def complete_calculations(settings, question, result, scope, data_access=None, s
         return json.dumps({"execution_id": execution_id, "coverage": audit, "evidence": [
             {"evidence_id": item.evidence_id, "label": item.label, "value": item.value, "non_null": item.sample_size}
             for item in registered]}, default=str)
+
+    def window_name(window: str) -> str:
+        """Head-to-head windows are seasons, not before and after periods."""
+        if not second or not data_access:
+            return window
+        if window.startswith("season:"):
+            return window.removeprefix("season:")
+        period = getattr(data_access.request.scope, window, None) if window in {"baseline", "comparison"} else None
+        return str(period.season) if period is not None else window
 
     def _not_repeated(kind: str, error: Exception) -> dict:
         result.caveats.append(f"Additional {kind} was not repeated for {second.label}: {str(error)[:300]}. "
@@ -407,7 +416,8 @@ def complete_calculations(settings, question, result, scope, data_access=None, s
                           **({"subject": subject} if subject else {})}
                 item = AggregateEvidence(evidence_id=stable_id("evidence", {"query": execution_id, "group": group, "measure": measure}),
                     metric="scoped_aggregate",
-                    label=f"{f'{subject}: ' if subject else ''}{window}: {measure['op']} {measure['field']} {group}", value=value, unit="rows" if measure["op"] == "count" else "recorded column units",
+                    label=f"{f'{subject}: ' if subject else ''}{window_name(window)}: {measure['op']} {measure['field']} {group}",
+                    value=value, unit="rows" if measure["op"] == "count" else "recorded column units",
                     sample_size=row.get(f"{key}_non_null", row["qualifying_rows"]), row_set_sha256=digest(source),
                     dataset_manifest_ids=sources, tool_execution_id=execution_id,
                     caveats=[payload["definition"], "A descriptive aggregate; not causal or opponent-adjusted. "

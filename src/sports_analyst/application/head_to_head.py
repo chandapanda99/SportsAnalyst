@@ -157,9 +157,11 @@ def compare_sides(first: Side, second: Side, metrics: list[str], execution_id: s
 
 
 def comparison_chart(evidence: list[AggregateEvidence], labels: list[str], period: str) -> ChartArtifact:
-    # Season-range rows are already labelled "Metric · Season": one row of the two subjects per season.
+    # Season-range rows are already labelled "Metric · Season": one row of the two subjects per season,
+    # grouped by metric in the order the metrics were chosen.
+    order = list(dict.fromkeys(item.metric for item in evidence))
     rows = [{"metric": item.label, "subject": label, "value": value, "unit": item.unit, "sample_size": sample}
-            for item in sorted(evidence, key=lambda item: (item.metric, item.context.get("season", 0)))
+            for item in sorted(evidence, key=lambda item: (order.index(item.metric), item.context.get("season", 0)))
             for label, value, sample in zip(labels, (item.baseline_value, item.comparison_value),
                                             (item.context["baseline_sample"], item.context["comparison_sample"]), strict=True)]
     return ChartArtifact(
@@ -183,6 +185,17 @@ def _season_sides(app, request: AnalysisRequest, subjects: list[AnalysisSubject]
                            for index, subject in enumerate(subjects)], None
         except ValueError as error:
             yield season, None, str(error)[:300]
+
+
+def _spread_plays(sides: list[Side]) -> list[PlayEvidence]:
+    """One subject's example plays, taken in turn from each season, newest first, up to the limit."""
+    by_season = sorted(([*side.plays] for side in sides if side.plays), key=lambda plays: -plays[0].season)
+    chosen: list[PlayEvidence] = []
+    while len(chosen) < PLAYS_PER_SUBJECT and any(by_season):
+        for plays in by_season:
+            if plays and len(chosen) < PLAYS_PER_SUBJECT:
+                chosen.append(plays.pop(0))
+    return chosen
 
 
 def _gap_caveats(gaps: dict[str, list[str]], unmeasured_seasons: list[str], season_range: bool) -> list[str]:
@@ -237,9 +250,8 @@ def investigate_head_to_head(app, request: AnalysisRequest, identifier: str, tra
         started_at=started_at, duration_ms=round((perf_counter() - started) * 1000),
         result_sha256=_sha([item.evidence_id for item in evidence]),
         dataset_manifest_ids=list(dict.fromkeys(key for item in evidence for key in item.dataset_manifest_ids)))]
-    # Sides alternate first, second per season; each subject keeps its latest seasons' plays.
-    plays = [play for sides in (measured[0::2], measured[1::2])
-             for play in sorted((play for side in sides for play in side.plays), key=lambda play: -play.season)[:PLAYS_PER_SUBJECT]]
+    # Sides alternate first, second per season; each subject's plays are spread across its seasons.
+    plays = [*_spread_plays(measured[0::2]), *_spread_plays(measured[1::2])]
     caveats = [
         f"Head-to-head: each value is that subject's own {'single-season' if season_range else period} measurement. "
         f"Differences are {labels[1]} minus {labels[0]}, not changes over time.",
