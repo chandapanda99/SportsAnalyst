@@ -69,12 +69,15 @@ def match_shots(visual, game_id):
             minute, added = int(time[1]), time[2]
             period = 1 if minute < 45 or (minute == 45 and added) else 2 if 45 < minute < 90 or (minute == 90 and added) else None
         candidates = []
-        if time and period and event.get("athlete_id") and len(name.split()) >= 2 and not re.search(r"disallow|overturn|no goal|own goal", kind + " " + str(event.get("text") or "").lower()):
+        # A one-word name ("Rodri") must equal FotMob's own one-word full name, never a short display name.
+        single = len(name.split()) == 1
+        if time and period and event.get("athlete_id") and name.strip() and not re.search(r"disallow|overturn|no goal|own goal", kind + " " + str(event.get("text") or "").lower()):
             for shot in shots:
                 shot_period = {"FirstHalf": 1, "SecondHalf": 2, "FirstExtra": 3, "SecondExtra": 4}.get(shot.get("period"))
                 if shot_period != period or str(shot.get("espn_team_id")) != str(event.get("team_id")):
                     continue
-                if name_key(shot.get("fullName") or shot.get("playerName")) != name_key(name):
+                full = shot.get("fullName") or ("" if single else shot.get("playerName"))
+                if (single and len(str(full).split()) != 1) or name_key(full) != name_key(name):
                     continue
                 if shot.get("min") != int(time[1]) or (shot.get("minAdded") or 0) != int(time[2] or 0):
                     continue
@@ -91,6 +94,6 @@ def match_shots(visual, game_id):
     for event, shot in zip(visual.soccer_timeline, proposals):
         if shot and used[str(shot["id"])] == 1:
             event = {**event, "spatial_provider": "fotmob", "spatial_event_id": str(shot["id"]),
-                "spatial_context": {"shot": shot, **provenance[str(shot["id"])]}, "spatial_match_method": "unique_match_team_full_name_period_clock_outcome_v1"}
+                "spatial_context": {"shot": shot, **provenance[str(shot["id"])]}, "spatial_match_method": "unique_match_team_full_name_period_clock_outcome_v2"}
         timeline.append(event)
     return visual.model_copy(update={"soccer_timeline": timeline})

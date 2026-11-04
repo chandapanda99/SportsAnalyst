@@ -61,6 +61,15 @@ def test_fotmob_shots_match_exact_timeline_and_hydrate_old_report(source, tmp_pa
         hydrated.model_copy(update={"soccer_timeline":[event, event]})]
     assert all("spatial_context" not in match_shots(case, "espn1").soccer_timeline[0] for case in cases)
     assert "spatial_context" not in match_shots(hydrated, "other-game").soccer_timeline[0]
+    # A one-word name pairs only with an identical one-word FotMob full name, never a surname.
+    def with_name(full_name):
+        analytics = [{**row, "shots_json": json.dumps([{**s, "fullName": full_name} if s["id"] == goal["id"] else s
+                                                       for s in json.loads(row["shots_json"])])} for row in rows]
+        single = {**event, "athlete_name": "Rodri"}
+        case = hydrated.model_copy(update={"soccer_analytics": analytics, "soccer_timeline": [single]})
+        return match_shots(case, "espn1").soccer_timeline[0]
+    assert with_name("Rodri")["spatial_event_id"] == str(goal["id"])
+    assert "spatial_context" not in with_name("Rodri Hernández")
 
 
 def test_source_backed_match_preserves_broad_counters_and_native_player_identity(source):
