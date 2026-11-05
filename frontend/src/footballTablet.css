@@ -91,6 +91,12 @@
         gap: 5px
     }
 
+    .football-tablet .source-list {
+        color: var(--color-text-tertiary);
+        font-size: 11px;
+        text-align: right
+    }
+
     .football-tablet .source-badges span {
         padding: 3px 6px;
         border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--line));

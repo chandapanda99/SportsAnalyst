@@ -12,7 +12,7 @@ it('renders NFL kicks and returns with specialist roles, correct direction, and 
     visualization: {sport: 'nfl', possession_team: 'ARI', defensive_team: 'NO', yards_to_go: 10}};
   const fieldGoal: SpecialTeamsContext = {kind: 'field_goal', start_yards_to_goal: 24, kick_distance: 42,
     kicker: 'Recorded Kicker', result: 'made', kicking_team: 'ARI', receiving_team: 'NO'};
-  const view = render(PlayTablet, {play: {...base, visualization: {...base.visualization, special_teams: fieldGoal}}, onclose: () => {}});
+  const view = render(PlayTablet, {play: {...base, visualization: {...base.visualization, special_teams: fieldGoal}}});
   expect(document.querySelector('.play-path.kick')).toBeTruthy();
   expect(document.querySelector('.goalposts')).toBeTruthy();
   expect(view.getByText('Field goal · Good')).toBeTruthy();
@@ -21,7 +21,7 @@ it('renders NFL kicks and returns with specialist roles, correct direction, and 
   const kickoff: SpecialTeamsContext = {kind: 'kickoff', start_yards_to_goal: 65, kick_distance: 65, return_yards: 22, kicking_team: 'NO', receiving_team: 'ARI'};
   for (const kick of [punt, kickoff]) {
     const visual = {...base.visualization, special_teams: kick};
-    await view.rerender({play: {...base, visualization: visual}, onclose: () => {}});
+    await view.rerender({play: {...base, visualization: visual}});
     const diagram = buildPlaySchematic(visual);
     const flight = diagram.paths.find(path => path.kind === 'kick')!;
     const returned = diagram.paths.find(path => path.kind === 'return')!;
@@ -34,18 +34,18 @@ it('renders NFL kicks and returns with specialist roles, correct direction, and 
   expect(view.getByText('NO kicking team')).toBeTruthy();
   // A saved report with no new metadata still renders its explicitly stated kick distance.
   await view.rerender({play: {...base, description: 'Punter punts 60 yards, fair catch.',
-    visualization: {...base.visualization, play_type: 'punt', yardline_100: 76}}, onclose: () => {}});
+    visualization: {...base.visualization, play_type: 'punt', yardline_100: 76}}});
   expect(view.getByText('Punt · Fair catch')).toBeTruthy();
   expect(document.querySelector('.play-path.kick')).toBeTruthy();
   expect(document.querySelector('.play-path.return')).toBeNull();
   await view.rerender({play: {...base, description: 'Kicker kicks 65 yards. Touchback to the ARI 35.',
-    visualization: {...base.visualization, play_type: 'kickoff', yardline_100: 35}}, onclose: () => {}});
+    visualization: {...base.visualization, play_type: 'kickoff', yardline_100: 35}}});
   expect(document.querySelector('.event-marker.placement')?.getAttribute('transform')).toContain('translate(75 ');
   expect(document.querySelector('.play-path.return')).toBeNull();
 });
 
 it('does not invent returns, touchback placement, miss locations, or action on blocked/nullified kicks', async () => {
-  const view = render(PlayTablet, {play: {evidence_id: 'edge', game_id: 'game', play_id: 1}, onclose: () => {}});
+  const view = render(PlayTablet, {play: {evidence_id: 'edge', game_id: 'game', play_id: 1}});
   for (const kick of [
     {kind: 'kickoff', start_yards_to_goal: 65, kick_distance: 65, touchback: true, return_yards: 0},
     {kind: 'punt', start_yards_to_goal: 76, kick_distance: 45, fair_catch: true, return_yards: 0},
@@ -58,7 +58,7 @@ it('does not invent returns, touchback placement, miss locations, or action on b
     {kind: 'field_goal', start_yards_to_goal: 24, kick_distance: 42, result: 'made', no_play: true},
   ] satisfies SpecialTeamsContext[]) {
     const visual = {special_teams: kick};
-    await view.rerender({play: {evidence_id: 'edge', game_id: 'game', play_id: 1, visualization: visual}, onclose: () => {}});
+    await view.rerender({play: {evidence_id: 'edge', game_id: 'game', play_id: 1, visualization: visual}});
     expect(document.querySelector('.play-path.return, .play-path.carry, .box-area')).toBeNull();
     if (kick.kind === 'field_goal' || kick.blocked || !('start_yards_to_goal' in kick)) {
       expect(document.querySelector('.play-path.kick')).toBeNull();

@@ -412,8 +412,93 @@
     grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
 }
 
-.metric-explain {
-    margin: -.1rem 0 .8rem 1.8rem;
+/* A quiet link: the metric is the choice, the explanation is secondary. */
+.metric-group .metric-explain {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    min-height: 1.75rem;
+    margin: -.2rem 0 .7rem 1.8rem;
+    padding: .1rem .2rem;
+    border: 0;
+    background: transparent;
+    color: var(--mint);
+    font-size: .8rem;
+}
+
+.metric-group .metric-explain:hover {
+    color: var(--color-text-primary);
+    text-decoration: underline;
+}
+
+.question-kind {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: .6rem;
+    margin: 0 0 1rem;
+}
+
+.question-kind button {
+    display: grid;
+    gap: .2rem;
+    padding: .75rem .9rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: .55rem;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.question-kind button span {
+    color: var(--color-text-secondary);
+    font-size: .82rem;
+    line-height: 1.4;
+}
+
+.question-kind button[aria-pressed="true"] {
+    border-color: var(--mint);
+    background: color-mix(in srgb, var(--mint) 10%, var(--color-surface-control));
+}
+
+.question-kind button[aria-pressed="true"] strong {
+    color: var(--mint);
+}
+
+.compare-subject {
+    position: relative;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--line);
+}
+
+.compare-subject .versus {
+    position: absolute;
+    top: -.7rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0 .6rem;
+    background: var(--color-surface);
+    color: var(--mint);
+    font: 600 .75rem var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+}
+
+.question-field h3 label {
+    font: inherit;
+    color: inherit;
+    letter-spacing: normal;
+    text-transform: none;
+}
+
+.question-examples-label {
+    display: block;
+    margin-top: 1rem;
+    color: var(--color-text-tertiary);
+    font: 11px var(--font-mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
 }
 
 .metric-info {
@@ -438,13 +523,21 @@ summary {
 
 .question-examples {
     display: grid;
-    gap: .5rem;
-    margin: .75rem 0 1rem;
+    gap: .4rem;
+    margin: .5rem 0 0;
 }
 
 .question-examples button {
     text-align: left;
-    line-height: 1.5;
+    line-height: 1.45;
+    font-size: .85rem;
+    color: var(--color-text-secondary);
+    min-height: 2.25rem;
+    padding: .45rem .7rem;
+}
+
+.question-examples button:hover {
+    color: var(--color-text-primary);
 }
 
 .question-examples .question-more {
@@ -468,7 +561,19 @@ summary {
 }
 
 .data-manager .sync-fields {
-    grid-template-columns: minmax(12rem, .3fr) minmax(0, 1fr);
+    grid-template-columns: minmax(14rem, .34fr) minmax(0, 1fr);
+}
+
+.season-options .season-current {
+    color: var(--mint);
+    font: 500 10px var(--font-mono);
+    font-style: normal;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.dataset-options .coverage-detail {
+    color: var(--color-text-secondary);
 }
 
 .data-manager .dataset-options {
@@ -624,6 +729,86 @@ summary {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
     gap: 1rem;
     margin: 1.5rem 0;
+}
+
+.key-metrics .key-metrics-note {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: .85rem;
+}
+
+.play-tag-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem 1.25rem;
+    margin: -.5rem 0 1rem;
+    padding: 0 20px;
+    font-size: .8rem;
+}
+
+.play-tag-legend div {
+    display: flex;
+    gap: .35rem;
+}
+
+.play-tag-legend dt {
+    color: var(--color-text-primary);
+    font-weight: 600;
+}
+
+.play-tag-legend dd {
+    margin: 0;
+    color: var(--color-text-secondary);
+}
+
+.thread-origin {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: .75rem;
+    width: 100%;
+    padding: .7rem .9rem;
+    border: 1px solid var(--line);
+    border-radius: .55rem;
+    background: var(--color-surface-control);
+    color: var(--color-text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.thread-origin small {
+    color: var(--mint);
+    font: 11px var(--font-mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.thread-origin span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thread-origin em {
+    color: var(--color-text-secondary);
+    font-size: .8rem;
+    font-style: normal;
+}
+
+.thread-origin.selected {
+    border-color: color-mix(in srgb, var(--mint) 45%, var(--line));
+}
+
+@media (max-width: 650px) {
+    .thread-origin {
+        grid-template-columns: minmax(0, 1fr);
+        gap: .25rem;
+    }
+
+    .thread-origin span {
+        white-space: normal;
+    }
 }
 
 .key-metrics h3 {

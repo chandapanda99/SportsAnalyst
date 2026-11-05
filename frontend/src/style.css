@@ -754,7 +754,7 @@ main.soccer-background {
     letter-spacing: .08em
 }
 
-.scope-controls input, .scope-controls select, .window-grid select, .onboarding select {
+.scope-controls input, .scope-controls select, .window-grid select, .onboarding select, .team-combobox > input {
     display: block;
     width: 100%;
     margin-top: 8px;
@@ -1565,7 +1565,7 @@ main.soccer-background {
 
 .season-options label {
     display: grid;
-    grid-template-columns: 15px 42px minmax(0, 1fr);
+    grid-template-columns: 15px max-content minmax(0, 1fr);
     align-items: center;
     gap: 8px;
     min-height: 34px;
@@ -1596,6 +1596,9 @@ main.soccer-background {
 }
 
 .season-options strong {
+    display: flex;
+    flex-direction: column;
+    white-space: nowrap;
     font: 600 13px var(--font-mono);
     letter-spacing: 0
 }
@@ -1664,6 +1667,7 @@ main.soccer-background {
 
 .dataset-options .dataset-name {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
     gap: 6px;
@@ -2051,9 +2055,7 @@ main.soccer-background {
     display: flex;
     flex-direction: column;
     gap: 18px;
-    max-height: 560px;
     padding: 26px;
-    overflow-y: auto;
     background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface-low) 55%, transparent), transparent)
 }
 
@@ -2896,11 +2898,14 @@ button.analyst-bubble:focus-visible,
 }
 
 .play-list .play-description > span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     font-size: 14px;
+    line-height: 1.4;
     color: var(--muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis
+    overflow: hidden
 }
 
 .play-list .play-description small {

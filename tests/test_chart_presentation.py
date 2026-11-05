@@ -116,7 +116,7 @@ def test_season_trend_chart_renders_labels_scales_and_export_legend():
     svg = vlc.vegalite_to_svg(themed)
     assert all(label in svg for label in ("Seasons", "2023", "2024", "2025", "2.2%", "1.3%", "0.079"))
     assert "+0.079" not in svg and "NaN" not in svg
-    assert "-0.10 pp" in svg and "-4.00 pp" in svg and "-10.2%" not in svg
+    assert "-0.1 pct pts" in svg and "-4.0 pct pts" in svg and "-10.2%" not in svg
 
 
 def test_research_categories_resolve_names_separate_populations_and_survive_saved_repair(tmp_path):

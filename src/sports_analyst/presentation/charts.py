@@ -14,7 +14,7 @@ def _display_value(value: float, unit: str | None) -> str:
     if normalized_unit == "percent_points":
         return f"{value:.1f}%"
     if normalized_unit == "percentage_points":
-        return f"{value:.2f} pp"
+        return f"{value:.1f} pct pts"
     if normalized_unit in {"attempts", "completions", "count", "observations", "interceptions", "sacks", "touchdowns", "yards"}:
         return f"{value:,.0f}"
     if abs(value) >= 100:
@@ -78,6 +78,14 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
         )
 
     comparison_kind = comparison_kind or ("season-trend" if series_field == "season" else "period-comparison")
+    if comparison_kind == "subject-trend":
+        # Two lines share each season: the higher value is labelled above its point, the lower one below.
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in values:
+            groups.setdefault((row["metric"], str(row[series_field])), []).append(row)
+        for group in groups.values():
+            for rank, row in enumerate(sorted(group, key=lambda item: -item["value"])):
+                row["label_above"] = rank == 0
     order = list(dict.fromkeys([*series_order, *(str(row[series_field]) for row in values)]))
     color_order = list(dict.fromkeys(str(row[color_field]) for row in values)) if color_field else order
     metric_specs = []
@@ -87,7 +95,9 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
         unit = str(metric_values[0].get("unit") or "") if metric_values else ""
         smallest, largest = min(numeric_values), max(numeric_values)
         proportion = unit.casefold() in {"percentage", "rate", "proportion"} and max(abs(smallest), abs(largest)) <= 1
-        padding = max((largest - smallest) * .18, max(abs(smallest), abs(largest)) * .04, .002 if proportion else .01)
+        # Two-line season charts label points above and below, so they need more headroom.
+        spread = .3 if comparison_kind == "subject-trend" else .18
+        padding = max((largest - smallest) * spread, max(abs(smallest), abs(largest)) * .04, .002 if proportion else .01)
         lower, upper = smallest - padding, largest + padding
         if unit.casefold() in {"percentage", "rate", "proportion"} and 0 <= smallest <= largest <= 1:
             lower, upper = max(0, lower), min(1, upper)
@@ -110,7 +120,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
                 "grid": True,
                 **({"tickMinStep": 1} if unit in {"count", "observations", "attempts", "completions", "yards"} else {}),
                 **({"labelExpr": "format(datum.value, '.1f') + '%'"} if unit == "percent_points" else {}),
-                **({"labelExpr": "format(datum.value, '.2f') + ' pp'"} if unit == "percentage_points" else {}),
+                **({"labelExpr": "format(datum.value, '.1f') + ' pct pts'"} if unit == "percentage_points" else {}),
             },
         }
         x_encoding = {
@@ -141,11 +151,12 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
         }
         if comparison_kind == "monthly-trend":
             color_encoding["legend"] = {"title": "Season / period", "orient": "top", "direction": "horizontal"}
-        series_title = {"season-trend": "Season", "subject-comparison": "Subject", "grouped-observations": "Recorded context",
-                        "monthly-trend": "Month and context"}.get(comparison_kind, "Period")
+        series_title = {"season-trend": "Season", "subject-trend": "Season", "subject-comparison": "Subject",
+                        "grouped-observations": "Recorded context", "monthly-trend": "Month and context"}.get(comparison_kind, "Period")
         tooltip = [
             {"field": "metric", "type": "nominal", "title": "Metric"},
             {"field": series_field, "type": "nominal", "title": series_title},
+            *([{"field": color_field, "type": "nominal", "title": "Subject"}] if comparison_kind == "subject-trend" else []),
             {"field": "display_value", "type": "nominal", "title": "Value"},
             *([{"field": "context_label", "type": "nominal", "title": "Recorded context"}]
               if any(row["context_label"] != "Not recorded" for row in metric_values) else []),
@@ -159,13 +170,28 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
             "order": {"field": "series_order", "type": "ordinal"},
             "tooltip": tooltip,
         }
+        text_encoding = {**point_encoding, "color": {"value": "#edf5fa"}, "text": {"field": "display_value", "type": "nominal"}}
+        text_layers = [
+            {"transform": [{"filter": "datum.label_above"}],
+             "mark": {"type": "text", "align": "center", "dy": -10, "fontSize": 11, "fontWeight": 600}, "encoding": text_encoding},
+            {"transform": [{"filter": "!datum.label_above"}],
+             "mark": {"type": "text", "align": "center", "dy": 16, "fontSize": 11, "fontWeight": 600}, "encoding": text_encoding},
+        ] if comparison_kind == "subject-trend" else [
+            {"mark": {"type": "text", "align": "center", "dy": -10, "fontSize": 11, "fontWeight": 600}, "encoding": text_encoding},
+        ]
+        subject_lines = [{
+            "mark": {"type": "line", "strokeWidth": 2, "opacity": 0.85},
+            "encoding": {"x": x_encoding, "y": y_encoding, "color": color_encoding,
+                         "order": {"field": "series_order", "type": "ordinal"}},
+        }] if comparison_kind == "subject-trend" else []
         metric_specs.append(
             {
                 "title": {"text": metric, "anchor": "start", "fontSize": 13, "offset": 14},
                 "data": {"values": metric_values},
                 "width": "container",
-                "height": 120,
+                "height": 140 if comparison_kind == "subject-trend" else 120,
                 "layer": [
+                    *subject_lines,
                     *([{
                         "mark": {"type": "line", "strokeWidth": 1.5, "color": "#52697A", "opacity": 0.8},
                         "encoding": {
@@ -174,7 +200,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
                             "order": {"field": "series_order", "type": "ordinal"},
                         },
                     # Connecting two subjects would read as a trend, so only ordered periods get a line.
-                    }] if comparison_kind not in {"grouped-observations", "monthly-trend", "subject-comparison"}
+                    }] if comparison_kind not in {"grouped-observations", "monthly-trend", "subject-comparison", "subject-trend"}
                     and len(metric_values) > 1 else []),
                     {
                         "mark": {"type": "point", "filled": True, "size": 92, "strokeWidth": 1, "opacity": 1},
@@ -184,11 +210,7 @@ def metric_row_comparison_spec(rows: Iterable[dict[str, Any]], *, series_field: 
                         "mark": {"type": "point", "filled": True, "size": 750, "opacity": 0.001},
                         "encoding": point_encoding,
                     },
-                    {
-                        "mark": {"type": "text", "align": "center", "dy": -10, "fontSize": 11, "fontWeight": 600},
-                        "encoding": {**point_encoding, "color": {"value": "#edf5fa"},
-                                     "text": {"field": "display_value", "type": "nominal"}},
-                    },
+                    *text_layers,
                 ],
             }
         )

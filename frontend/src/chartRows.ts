@@ -18,13 +18,16 @@ export function chartGuidance(spec: Record<string, unknown>): string {
   if (meta.description) return meta.description;
   const kind = chartComparisonKind(spec);
   return `Each metric has its own vertical scale. ${kind === 'season-trend' ? 'Seasons run left to right.'
+    : kind === 'subject-trend' ? 'Seasons run left to right, with one line for each side.'
     : kind === 'subject-comparison' ? 'The two subjects sit side by side.' : 'Compare the selected periods left to right.'} Values are labelled directly; hover or open exact values for details.`;
 }
 
 export function comparisonRows(spec: Record<string, unknown>) {
-  const meta = spec.usermeta as {chartKind?: string; seriesField?: string; seriesLabels?: string[]} | undefined;
+  const meta = spec.usermeta as {chartKind?: string; seriesField?: string; seriesLabels?: string[]; colorField?: string} | undefined;
   if (meta?.chartKind !== 'metric-rows' || !meta.seriesField) return [];
   const field = meta.seriesField;
+  // A two-line season chart names both the season and the side; a first-to-last change across sides means nothing.
+  const sides = chartComparisonKind(spec) === 'subject-trend' && meta.colorField ? meta.colorField : '';
   const values = ((spec.data as {values?: MetricValue[]})?.values ?? [])
     .filter(row => typeof row.metric === 'string' && typeof row.value === 'number' && Number.isFinite(row.value));
   const groups = new Map<string, MetricValue[]>();
@@ -41,12 +44,13 @@ export function comparisonRows(spec: Record<string, unknown>) {
     const first = entries[0], last = entries.at(-1)!;
     const percentage = ['percentage', 'rate', 'proportion'].includes(first.unit ?? '') && entries.every(row => Math.abs(row.value) <= 1);
     const change = (last.value - first.value) * (percentage ? 100 : 1);
-    return {metric, entries: entries.map(row => ({series: String(row[field]), value: (row.display_value ?? String(row.value)).replace(/^\+/, ''),
+    return {metric, entries: entries.map(row => ({series: sides ? `${row[field]} · ${row[sides]}` : String(row[field]),
+      value: (row.display_value ?? String(row.value)).replace(/^\+/, ''),
       context: typeof row.context_label === 'string' && row.context_label !== 'Not recorded' && row.context_label !== String(row[field])
         ? row.context_label : '',
       sample: typeof row.sample_size === 'number' ? row.sample_size : undefined})),
-      change: entries.length > 1 && !['grouped-observations', 'monthly-trend'].includes(chartComparisonKind(spec))
-        ? `${change > 0 ? '+' : ''}${Number(change.toFixed(3))}${percentage || ['percent_points', 'percentage_points'].includes(first.unit ?? '') ? ' pp' : first.unit ? ` ${first.unit}` : ''}` : null};
+      change: entries.length > 1 && !['grouped-observations', 'monthly-trend', 'subject-trend'].includes(chartComparisonKind(spec))
+        ? `${change > 0 ? '+' : ''}${Number(change.toFixed(3))}${percentage || ['percent_points', 'percentage_points'].includes(first.unit ?? '') ? ' pct pts' : first.unit ? ` ${first.unit}` : ''}` : null};
   });
 }
 

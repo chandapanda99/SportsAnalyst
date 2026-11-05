@@ -13,7 +13,6 @@
     import {colorContrastRatio, NFL_TEAM_NAMES, teamChartPalette, teamLogoUrl} from './teamPalettes';
 
     export let play: Evidence;
-    export let onclose: () => void;
 
     $: specialTeams = resolveSpecialTeams(play.visualization ?? {}, play.description ?? '');
     $: diagramPlay = {...play, visualization: {...play.visualization, special_teams: specialTeams}};
@@ -34,7 +33,8 @@
     $: defensePlayers = playerRows(play.visualization?.defense_names, play.visualization?.defense_positions);
 
     function sourceLabel(source: string) {
-        return source === 'play_by_play' ? 'PBP' : source === 'participation' ? 'PARTICIPATION' : source === 'ftn_charting' ? 'FTN' : source.toUpperCase();
+        return source === 'play_by_play' ? 'Play-by-play' : source === 'participation' ? 'Participation'
+            : source === 'ftn_charting' ? 'FTN charting' : source.replaceAll('_', ' ');
     }
 
     function inferredHomeTeam(gameId?: string) {
@@ -55,11 +55,7 @@
 <FootballTablet label={`Play schematic for ${gameLabel(play)}, play ${play.play_id}`}>
     <header>
         <div><span>PLAY-BY-PLAY SCHEMATIC</span>
-            <h3>{gameLabel(play)} · Play #{play.play_id}</h3></div>
-        <div class="tablet-actions">
-            <span>Recorded Play Context</span>
-            <button type="button" aria-label="Close play schematic" on:click={onclose}>×</button>
-        </div>
+            <h3>{gameLabel(play)}{play.visualization?.quarter ? ` · Q${play.visualization.quarter} ${play.visualization?.clock ?? ''}` : ''}</h3></div>
     </header>
     <div class="situation">
         <strong>{play.visualization?.down ? `${play.visualization.down}${play.visualization.down === 1 ? 'st' : play.visualization.down === 2 ? 'nd' : play.visualization.down === 3 ? 'rd' : 'th'} & ${play.visualization.yards_to_go ?? '?'}` : 'Situation unavailable'}</strong>
@@ -74,9 +70,7 @@
         <div><strong>{schematic.lineupMode === 'recorded' ? 'Recorded participants' : schematic.lineupMode === 'hybrid' ? 'Recorded participants · completed formation' : 'Formation-template lineup'}</strong>
             <span>{schematic.context.formation} · {schematic.context.offensivePersonnel} offense · {schematic.context.defensivePersonnel} defense · {schematic.context.boxCount} in box{schematic.context.boxCountRecorded ? '' : ' (estimated)'} · {schematic.context.passRusherCount} rushers{schematic.context.passRusherCountRecorded ? '' : ' (estimated)'}</span>
         </div>
-        <div class="source-badges" aria-label="Sources used by this schematic">
-            {#each sourcePackages as source}<span>{sourceLabel(source)}</span>{/each}
-        </div>
+        <small class="source-list">Sources: {sourcePackages.map(sourceLabel).join(' · ')}</small>
     </div>{/if}
     <FootballSchematic play={diagramPlay} {homeTeamName} {homeTeam} {homeLogo} {homePalette} {offensePalette} {defensePalette} {endzoneTextColor} fieldLabel={`${specialTeams ? 'Special teams diagram' : 'Reconstructed play'} on ${homeTeam}'s home field`}/>
     <div class="play-details">

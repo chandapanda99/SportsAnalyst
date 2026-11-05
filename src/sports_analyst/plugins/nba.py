@@ -754,7 +754,7 @@ class NBAPlugin:
             ],
             comparison_windows=[
                 ComparisonWindowOption(
-                    value="full_seasons", label="Full season range", description="Analyze every season from the selected start through end."
+                    value="full_seasons", label="Season range", description="Every season from the first through the last, each shown in the trend."
                 ),
                 ComparisonWindowOption(
                     value="season_segments", label="Season segments", description="Compare named NBA phases within or across seasons."

@@ -65,6 +65,21 @@ DEFAULTS = {
     domain: [key for key, item in METRICS.items() if item[2] == domain]
     for domain in ("results", "offense", "quarterback", "rushing", "receiving")
 }
+DOMAIN_DESCRIPTIONS = {
+    "results": "Wins, points scored and points allowed per game.",
+    "offense": "Yards, conversion rates and turnovers per game.",
+    "quarterback": "A passer's completions, yards, touchdowns and interceptions.",
+    "rushing": "A runner's carries, yards and touchdowns.",
+    "receiving": "A receiver's catches, yards and touchdowns.",
+}
+DATASET_DESCRIPTIONS = {
+    "schedules": "Game dates, opponents and final scores.",
+    "team_stats": "Team yards, conversions and turnovers per game.",
+    "player_stats": "Player passing, rushing and receiving per game.",
+    "rosters": "Player names, positions and classes.",
+    "scoring_events": "Each score with its time and type.",
+    "recorded_plays": "Recorded plays for play examples.",
+}
 
 # Metric -> (modeled field, reducer, play-type filter, structured athlete role).
 # Advanced metrics are optional, not part of the cheap box-score defaults.
@@ -168,13 +183,14 @@ class CFBPlugin:
                 {
                     "value": name,
                     "label": name.title(),
-                    "description": "Recorded statistics; optional modeled play values require game-level preparation and verified coverage.",
+                    "description": DOMAIN_DESCRIPTIONS[name],
                     "subject_type": "team" if name in {"results", "offense"} else "player",
                 }
                 for name in DEFAULTS
             ],
             comparison_windows=[
-                ComparisonWindowOption(value="full_seasons", label="Full seasons", description="Compare season game samples."),
+                ComparisonWindowOption(value="full_seasons", label="Season range",
+                                       description="Every season from the first through the last, each shown in the trend."),
                 ComparisonWindowOption(value="date_ranges", label="Date ranges", description="Compare games within selected dates."),
                 ComparisonWindowOption(value="week_ranges", label="Week ranges", description="Use recorded ESPN week numbers."),
                 ComparisonWindowOption(value="head_to_head", label="Head-to-head",
@@ -191,7 +207,7 @@ class CFBPlugin:
                 "label": "Selected college-football data",
                 "description": "Only selected teams/players and games are prepared on demand.",
                 "descriptions": {
-                    **{name: name.replace("_", " ").title() for name in CFB_DATASETS},
+                    **DATASET_DESCRIPTIONS,
                     "enriched_plays": "Optional per-game SportsDataverse EPA/WPA pipeline; modeled values, not observed statistics.",
                 },
             },

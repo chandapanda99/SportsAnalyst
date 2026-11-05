@@ -10,6 +10,7 @@
         | 'database-import'
         | 'file-download'
         | 'history'
+        | 'info-circle'
         | 'play-card'
         | 'player-play'
         | 'refresh'
@@ -27,7 +28,9 @@
 <svg class="ui-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
      stroke-width={name === 'player-play' ? 1.5 : name === 'sports-analyst' ? 1.75 : 2}
      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-    {#if name === 'clipboard-plus'}
+    {#if name === 'info-circle'}
+        <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0-18 0M12 8h.01M11 12h1v4h1"></path>
+    {:else if name === 'clipboard-plus'}
         <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path>
         <path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2M10 14h4m-2-2v4"></path>
     {:else if name === 'book-open'}

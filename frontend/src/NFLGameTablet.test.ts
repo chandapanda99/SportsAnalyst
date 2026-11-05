@@ -16,7 +16,7 @@ it('opens on the cited NFL play, browses opponent context, searches, and returns
   render(NFLGameTablet, {play: cited, investigationId: 'report', onclose: vi.fn()});
   expect(screen.getByRole('heading', {name: 'CHIEFS at BILLS'})).toBeTruthy();
   expect(screen.getByText('NFL · RECORDED GAME CONTEXT')).toBeTruthy();
-  expect(screen.getByLabelText('Selected NFL play metrics')).toBeTruthy();
+  expect(screen.getByText('Cited analysis play')).toBeTruthy();
   await waitFor(() => expect((screen.getByLabelText('Select game play') as HTMLSelectElement).disabled).toBe(false));
   expect((screen.getByLabelText('Select game play') as HTMLSelectElement).value).toBe('20');
   await fireEvent.click(screen.getByRole('button', {name: 'Next play'}));

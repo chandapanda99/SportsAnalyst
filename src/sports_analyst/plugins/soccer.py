@@ -95,6 +95,15 @@ for subject_type in ("team", "player"):
                          "minutes" if field == "minutes" else "goals" if "goals" in field else "count",
                          "Recorded ESPN season totals, fetched for the selected subject. Full-season comparisons only; never substitutes for match-level values.")
 
+DOMAIN_DESCRIPTIONS = {
+    "results": "Points, wins and goals per match.",
+    "attack": "Goals, shots and expected goals created.",
+    "defense": "Goals and expected goals conceded.",
+    "control": "Share of possession.",
+    "usage": "A player's appearances and starts.",
+    "scoring": "A player's goals and expected goals.",
+    "discipline": "A player's cards per appearance.",
+}
 DEFAULTS = {
     "results": ["points_per_match", "win_rate", "goals_for_per_match", "goals_against_per_match", "xg_difference_per_match"],
     "attack": ["goals_for_per_match", "shots_per_match", "shots_on_target_per_match", "xg_per_match", "non_penalty_xg_per_match", "goals_minus_xg_per_match"],
@@ -212,13 +221,14 @@ class SoccerPlugin:
                                   analysis_domain=info[3], available_seasons=metric_seasons(name, info[1]),
                                   subject_types=[info[2]]) for name, info in METRICS.items()],
             default_metrics=DEFAULTS["results"],
-            analysis_domains=[{"value": key, "label": key.title(), "description": f"Compare soccer {key} metrics.",
+            analysis_domains=[{"value": key, "label": key.title(), "description": DOMAIN_DESCRIPTIONS[key],
                                "subject_type": "player" if key in {"usage", "scoring", "discipline"} else "team"}
                               for key in DEFAULTS],
             default_metrics_by_domain=DEFAULTS,
             split_dimensions=[],
             comparison_windows=[
-                ComparisonWindowOption(value="full_seasons", label="Full seasons", description="Compare the first and last seasons, with intermediate seasons in the trend."),
+                ComparisonWindowOption(value="full_seasons", label="Season range",
+                                       description="Every season from the first through the last, each shown in the trend."),
                 ComparisonWindowOption(value="date_ranges", label="Date ranges", description="Compare matches in two selected date ranges."),
                 ComparisonWindowOption(value="head_to_head", label="Head-to-head",
                                        description="Compare two teams or two players over the same seasons in this competition."),

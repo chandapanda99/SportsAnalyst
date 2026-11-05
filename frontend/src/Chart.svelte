@@ -156,6 +156,7 @@
 {#if rows.length}
     <p class="chart-guidance">{chartGuidance(specification)}</p>
     {#if !matrixMode || showChart}<div class="series-key" aria-label={anonymousCategories ? 'Recorded categories legend'
+        : chartComparisonKind(specification) === 'subject-trend' ? 'Subjects legend'
         : (specification.usermeta as {colorTitle?: string})?.colorTitle === 'Seasons'
             || chartComparisonKind(specification) === 'season-trend' ? 'Seasons legend' : 'Periods legend'}>
         {#each anonymousCategories ? series.slice(0, 1) : series as item}
@@ -185,7 +186,7 @@
                 {#if row.change !== null}<p>{chartComparisonKind(specification) === 'subject-comparison' ? 'Difference' : 'First to last change'}: {row.change}</p>{/if}
             </section>
         {/each}
-        {#if !grouped && chartComparisonKind(specification) !== 'monthly-trend'}<small>Changes are numeric differences, not a judgment of improvement. pp = percentage points.</small>{/if}
+        {#if !grouped && !['monthly-trend', 'subject-trend'].includes(chartComparisonKind(specification))}<small>Changes are numeric differences, not a judgment of improvement.</small>{/if}
         </div>
     </details>{/if}
 {/if}

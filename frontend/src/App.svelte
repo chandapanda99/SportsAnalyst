@@ -136,7 +136,7 @@
   let comparisonEndWeek = 18;
   let splitWeek = 10;
   let baselineSegment = 'regular_season';
-  let comparisonSegment = 'post_all_star';
+  let comparisonSegment = 'regular_season';
   let comparisonMode = 'full_seasons';
   let analysisDomain = 'passing';
   let subjectType: 'team' | 'player' = 'team';
@@ -259,6 +259,8 @@
       .filter(source => !(analysisOptions?.automatic_preparation && activeSport === 'nba'
           && source === (subjectType === 'player' ? 'team_boxscores' : 'player_boxscores')));
   $: suggestedSources = [...new Set([...requiredSources, ...(setup?.recommended_datasets ?? [])])];
+  $: visibleSyncDatasets = customizeSources ? analysisOptions?.syncable_datasets ?? []
+      : suggestedSources.filter(source => analysisOptions?.syncable_datasets.includes(source));
   $: sourceGaps = [...new Set(requiredSeasons)].flatMap(season => requiredSources.filter(source => !datasets.some(item => (item.sport ?? 'nfl') === activeSport && item.season === season && item.dataset === source && (activeSport !== 'soccer' || item.competition === selectedCompetition)
       && item.row_count !== 0 && item.availability !== 'source_unavailable'
       && (!item.partition_key || item.partition_key === `${subjectType}:${resolvedSubject}`
@@ -266,11 +268,14 @@
   $: dataReady = activeSport === 'cfb' ? Boolean(analysisOptions && resolvedTeam && !cfbLoading && !cfbError && !cfbHistoryLoading)
       : Boolean(analysisOptions && requiredSeasons.length && (analysisOptions.automatic_preparation || !sourceGaps.length));
   $: scopeDataSynced = dataReady && !sourceGaps.length;
+  // Names the seasons the analysis will use, so the data header and the form refer to the same thing.
+  $: analysisSpan = requiredSeasons.length
+      ? seasonSpan(Math.min(...requiredSeasons), Math.max(...requiredSeasons)) : 'the selected seasons';
   $: dataStatusLabel = scopeDataSynced ? 'Data synced'
       : activeSport === 'cfb' && !resolvedTeam ? 'Choose a school to check its data'
           : dataReady ? 'Missing data will prepare when you run' : 'Sync required data';
   $: dataStatusDetail = activeSport === 'cfb' && !resolvedTeam ? 'Choose a school above to see the data this analysis needs.'
-      : scopeDataSynced ? 'Required data is synced for the selected seasons.'
+      : scopeDataSynced ? `Required data is ready for ${analysisSpan}.`
           : dataReady ? `${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source is' : 'sources are'} not synced yet. Sync now, or anything missing prepares when you run the analysis.`
               : `Sync ${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source' : 'sources'} to run this analysis.`;
   $: periodBlocker = !windowsDiffer
@@ -284,9 +289,9 @@
     {
       ready: Boolean(resolvedSubject) && (!headToHead || Boolean(compareSubjectId)),
       label: !resolvedSubject ? 'Choose a team or player' : headToHead ? compareSubjectId ? 'Subjects selected' : 'Choose who to compare with' : 'Subject selected',
-      target: headToHead && resolvedSubject ? 'comparison-heading' : 'scope-heading'
+      target: 'scope-heading'
     },
-    {ready: !periodBlocker, label: periodBlocker || 'Periods selected', target: 'comparison-heading'},
+    {ready: !periodBlocker, label: periodBlocker || (headToHead ? 'Seasons selected' : 'Time frame selected'), target: 'comparison-heading'},
     {
       ready: selectedAvailableMetricCount > 0,
       label: selectedAvailableMetricCount ? `${selectedAvailableMetricCount} metrics selected` : 'Choose at least one metric',
@@ -455,8 +460,23 @@
     return [...byMetric.values()].slice(0, 6);
   }
 
+  const MODE_ORDER = ['full_seasons', 'season_vs_prior', 'week_ranges', 'date_ranges', 'season_segments', 'before_after', 'before_after_milestone'];
+  function modeRank(value: string) {
+    const rank = MODE_ORDER.indexOf(value);
+    return rank < 0 ? MODE_ORDER.length : rank;
+  }
+
+  let timeFrameMode = 'full_seasons';
+  function chooseHeadToHead(on: boolean) {
+    if (on === headToHead) return;
+    if (on) timeFrameMode = comparisonMode;
+    comparisonMode = on ? 'head_to_head' : comparisonOptions.some(option => option.value === timeFrameMode) ? timeFrameMode : 'full_seasons';
+  }
+
   function seasonSpan(first: number, last: number) {
-    return first === last ? seasonLabel(last) : `${seasonLabel(first)}–${seasonLabel(last)}`;
+    // Split-year labels ("2024–25") already contain a dash, so their range reads "2024–25 to 2025–26".
+    const [start, end] = [seasonLabel(first), seasonLabel(last)];
+    return first === last ? end : start.includes('–') ? `${start} to ${end}` : `${start}–${end}`;
   }
 
   // One season is reported against the season before it, as a two-season range.
@@ -464,9 +484,15 @@
   $: headToHead = comparisonMode === 'head_to_head';
   $: if (headToHead && !headToHeadFirst) headToHeadFirst = comparison;
   $: periodStart = comparisonMode === 'season_vs_prior' ? comparison - 1 : headToHead ? headToHeadFirst || comparison : baseline;
-  $: comparisonOptions = (analysisOptions?.comparison_windows ?? []).flatMap(option => option.value === 'full_seasons'
-      ? [option, {value: 'season_vs_prior', label: 'One season vs. the season before', description: 'Analyze one season, using the season before it as the reference point.'}]
-      : [option]);
+  // Every sport lists its time frames in the same order and wording; head-to-head is chosen in the Subject step.
+  $: comparisonOptions = (analysisOptions?.comparison_windows ?? [])
+      .filter(option => option.value !== 'head_to_head')
+      .flatMap(option => option.value === 'full_seasons'
+          ? [option, {value: 'season_vs_prior', label: 'One season vs. the season before', description: 'Analyze one season, using the season before it as the reference point.'}]
+          : [option])
+      .sort((left, right) => modeRank(left.value) - modeRank(right.value));
+  $: headToHeadAvailable = (analysisOptions?.comparison_windows ?? []).some(option => option.value === 'head_to_head');
+  $: currentSeason = analysisOptions?.current_season ?? null;
   $: requiredSeasons = headToHead
       ? periodStart <= comparison ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index) : [comparison]
       : analysisDesign === 'before_after' || analysisDesign === 'before_after_milestone'
@@ -764,9 +790,9 @@
     seasonType = 'REG';
     subjectType = 'team';
     analysisDomain = sport === 'nba' ? 'offense' : ['soccer', 'cfb'].includes(sport) ? 'results' : 'passing';
-    comparisonMode = sport === 'nba' ? 'season_segments' : 'full_seasons';
+    comparisonMode = 'full_seasons';
     baselineSegment = 'regular_season';
-    comparisonSegment = 'post_all_star';
+    comparisonSegment = 'regular_season';
     baselineStartDate = baselineEndDate = comparisonStartDate = comparisonEndDate = '';
     question = '';
     showFullFilmRoom = false;
@@ -823,11 +849,17 @@
       if (!seasons.includes(baseline)) baseline = seasons[1] ?? seasons[0];
     }
     if (!initializedSelections) {
+      // A fresh sport starts on its latest completed seasons, never ones carried over from another sport.
+      const pair = defaultSeasonPair(analysisOptions, seasons);
+      if (pair) [baseline, comparison] = pair;
       selectedMetrics = [...analysisOptions.default_metrics];
-      syncSeasons = analysisOptions.syncable_seasons.filter(season => {
+      const syncable = analysisOptions.syncable_seasons.filter(season => {
         const required = analysisOptions?.data_setup?.required_datasets ?? ['play_by_play'];
         return required.every(source => eligibleSelectedSeasons(source, [season]).length);
-      }).slice(0, 2);
+      });
+      // Tick the seasons the analysis will use, so the download list and the form agree.
+      const analysed = syncable.filter(season => season >= baseline && season <= comparison);
+      syncSeasons = analysed.length ? analysed : syncable.slice(0, 2);
       selectLocallyAvailablePackages();
       const required = analysisOptions.data_setup?.required_datasets?.length ? analysisOptions.data_setup.required_datasets : ['play_by_play'];
       dataManagerOpen = ![baseline, comparison].every(season => required.every(source => syncedPackages(season).has(source)));
@@ -838,6 +870,15 @@
       analysisDomain = validDomains[0]?.value ?? analysisOptions.analysis_domains[0]?.value ?? analysisDomain;
       useRecommendedMetrics();
     }
+  }
+
+  // The latest two completed seasons, preferring ones already synced.
+  function defaultSeasonPair(options: AnalysisOptions, seasons: number[]): [number, number] | null {
+    const current = options.current_season;
+    const complete = seasons.filter(season => current == null || season < current);
+    const synced = options.available_seasons.filter(season => complete.includes(season)).sort((left, right) => right - left);
+    const pool = synced.length >= 2 ? synced : complete.length ? complete : seasons;
+    return pool.length ? [pool[1] ?? pool[0], pool[0]] : null;
   }
 
   function domainAvailableForSubject(
@@ -1412,9 +1453,14 @@
       schedule_crosswalk: 'Schedule Crosswalk',
       team_crosswalk: 'Team Crosswalk',
       player_core: 'Player Identity Core',
-      player_impact: 'Player Impact'
+      player_impact: 'Player Impact',
+      match_analytics: 'Match Analytics (FotMob)',
+      team_stats: 'Team Stats',
+      scoring_events: 'Scoring Events',
+      recorded_plays: 'Recorded Plays',
+      enriched_plays: 'Modeled Play Values (EPA/WPA)'
     };
-    return labels[dataset] ?? dataset.replaceAll('_', ' ');
+    return labels[dataset] ?? dataset.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   }
 
   function chartGuidance(specification: Record<string, unknown>) {
@@ -1459,6 +1505,12 @@
       return {baseline: subjectName(result, result.run.subject), comparison: subjectName(result, result.run.comparison_subject)};
     }
     return {baseline: periodLabel(start, design, seasonLabel), comparison: periodLabel(end, design, seasonLabel)};
+  }
+
+  function evidenceLeader(result: Investigation) {
+    if (!result.run.comparison_subject) return null;
+    const {baseline, comparison} = reportPeriods(result);
+    return (item: Evidence) => headToHeadLeader(item.value, metricDirections[`${result.run.sport ?? 'nfl'}:${item.metric}`], [baseline, comparison]);
   }
 
   function evidenceGroups(plays: Evidence[], periods: { baseline: string; comparison: string }) {
@@ -1552,7 +1604,8 @@
     return minimumLabel || 'offered for selected seasons';
   }
 
-  function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons, selectedTeam = resolvedTeam) {
+  function packageInstallStatus(dataset: string, selectedSeasons = syncSeasons, selectedTeam = resolvedTeam)
+      : {state: string; label: string; detail?: string} | null {
     if (activeSport !== 'cfb' && ['conference', 'division'].includes(downloadScope.kind))
       return {state: 'partial', label: 'Per-season group coverage checked on sync'};
     if (activeSport !== 'cfb' && downloadScope.kind === 'team') selectedTeam = downloadScope.team_ids?.[0] ?? '';
@@ -1596,7 +1649,8 @@
       const incomplete = local < eligibleSeasons.length || eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season, selectedTeam, fullLibrary));
       return {
         state: incomplete ? 'partial' : 'installed',
-        label: `${statsLabel} · xG: ${covered}/${expected} matches${incomplete ? ' · resume sync' : covered < expected ? ' · limited source coverage' : ''}`
+        label: incomplete ? 'Partial · resume sync' : 'Installed',
+        detail: `${statsLabel} · xG for ${covered} of ${expected} matches${!incomplete && covered < expected ? ' (limited source coverage)' : ''}`
       };
     }
     if (activeSport === 'soccer' && eligibleSeasons.some(season => soccerPackageIncomplete(dataset, season, selectedTeam, fullLibrary))) {
@@ -2061,7 +2115,7 @@
     if (!syncSeasons.length || !syncDatasets.length) return;
     const offeredDatasets = new Set(analysisOptions?.syncable_datasets ?? []);
     const requestedDatasets = syncDatasets.filter((dataset) =>
-        offeredDatasets.has(dataset) && packageEligible(dataset, syncSeasons) && missingSyncSeasons(dataset).length
+        offeredDatasets.has(dataset) && visibleSyncDatasets.includes(dataset) && packageEligible(dataset, syncSeasons) && missingSyncSeasons(dataset).length
     );
     const requestedSeasons = syncSeasons.map(Number).filter((season) => Number.isInteger(season));
     if (!requestedSeasons.length || !requestedDatasets.length) return;
@@ -2436,15 +2490,29 @@
         <section class="scope-card" class:cfb-subject-card={activeSport === 'cfb'} aria-labelledby="scope-heading">
           <div class="scope-heading">
             <div><span class="eyebrow">01 · Subject</span>
-              <h3 id="scope-heading" tabindex="-1">{activeSport === 'cfb' ? 'Choose Your Subject' : 'Who do you want to understand?'}</h3></div>
+              <h3 id="scope-heading" tabindex="-1">{headToHead ? 'Who do you want to compare?' : 'Who do you want to understand?'}</h3></div>
             <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons to choose from'}</span></div>
           {#if activeSport === 'cfb'}
             <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
                           initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
             {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
           {/if}
+          {#if activeSport === 'cfb'}
+            <p class="section-help">College football data is prepared one school at a time, so choose the school first. The data panel below then
+              shows what that school needs.</p>
+          {/if}
           {#if activeSport === 'cfb' && subjectType === 'player' && !resolvedTeam}
             <p class="section-help">Choose a school above to browse its players. Full analysis datasets are not required to select your subject.</p>
+          {/if}
+          {#if headToHeadAvailable}
+            <div class="question-kind" role="group" aria-label="Kind of question">
+              <button type="button" aria-pressed={!headToHead} on:click={() => chooseHeadToHead(false)}>
+                <strong>Change over time</strong><span>Follow one {subjectType} across seasons or parts of a season.</span>
+              </button>
+              <button type="button" aria-pressed={headToHead} on:click={() => chooseHeadToHead(true)}>
+                <strong>Head-to-head</strong><span>Compare two {subjectType === 'player' ? 'players' : 'teams'} over the same seasons.</span>
+              </button>
+            </div>
           {/if}
           <div class="scope-controls">
             {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
@@ -2550,6 +2618,32 @@
               </div>
             {/if}
           </div>
+          {#if headToHead}
+            <div class="compare-subject">
+              <span class="versus" aria-hidden="true">vs</span>
+              {#if activeSport === 'cfb'}
+                <p class="section-help">Browse to the {subjectType === 'player' ? 'school of the player' : 'school'} to compare with.</p>
+                <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision} initialConference={cfbConference}
+                              disabled={busy} onchange={compareCfbChanged}/>
+                {#if subjectType === 'team' && compareCfbSchool && compareCfbSchool === resolvedTeam}
+                  <p class="validation">Choose a different school from the first one.</p>
+                {/if}
+              {/if}
+              {#if activeSport !== 'cfb' || subjectType === 'player'}
+                <div class="scope-controls">
+                  <SubjectSearch id="compare-subject" label="Compare with" options={compareOptions} value={compareSubjectId}
+                                 placeholder={subjectType === 'player' ? 'Search Players…' : 'Search Teams…'}
+                                 emptyMessage={activeSport === 'cfb' ? comparePlayersLoading ? 'Loading players…'
+                                     : compareCfbSchool ? 'No other players found at this school' : 'Choose a school above first'
+                                     : subjectType === 'player' ? 'No other players with data in every chosen season' : 'No other teams'}
+                                 onsearch={subjectType === 'player' && activeSport !== 'cfb' ? searchPlayers : undefined}
+                                 searching={playerSearching || comparePlayersLoading}
+                                 onselect={(value) => compareSubjectId = value}/>
+                </div>
+              {/if}
+              {#if !resolvedSubject}<p class="section-help">Choose the first {subjectType} above, then who to compare with.</p>{/if}
+            </div>
+          {/if}
         </section>
       {/snippet}
       <section class="ask-panel">
@@ -2625,7 +2719,7 @@
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
-              <span>{#if activeSport === 'cfb'}<span class="eyebrow">02 · Data</span>{/if}
+              <span><span class="eyebrow">Data</span>
                 <strong>{scopeDataSynced ? 'Data Ready · Manage Data' : 'Sync Data'}</strong><small>{dataStatusDetail}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' && resolvedTeam ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
@@ -2700,7 +2794,7 @@
                         <label class:selected={syncSeasons.includes(season)}>
                           <input type="checkbox" aria-label={`${season} season`} checked={syncSeasons.includes(season)}
                                  on:change={() => toggleSyncSeason(season)}/>
-                          <strong>{seasonLabel(season)}{activeSport === 'nfl' && season === 2026 ? ' · Current' : ''}</strong>
+                          <strong>{seasonLabel(season)}{#if season === currentSeason}<em class="season-current">In progress</em>{/if}</strong>
                           <small>{seasonPackageStatus(season)}</small>
                         </label>
                       {/each}
@@ -2714,7 +2808,7 @@
                       </button>
                     </legend>
                     <div class="dataset-options">
-                      {#each (customizeSources ? analysisOptions?.syncable_datasets ?? [] : suggestedSources.filter(source => analysisOptions?.syncable_datasets.includes(source))) as dataset}
+                      {#each visibleSyncDatasets as dataset}
                         {@const installStatus = packageInstallStatus(dataset, syncSeasons, resolvedTeam)}
                         <label><input type="checkbox" aria-label={datasetLabel(dataset)}
                                       checked={syncDatasets.includes(dataset)}
@@ -2726,9 +2820,10 @@
                                  aria-label={`${datasetLabel(dataset)} local status: ${installStatus.label}`}>{installStatus.label}</b>
                             {/if}
                           </span>
+                          {#if installStatus?.detail}<small class="coverage-detail">{installStatus.detail}</small>{/if}
                           <small><span class="source-role"
                                        class:required-source={requiredSources.includes(dataset)}>{sourceRole(dataset)}</span> · {packageCoverage(dataset, syncSeasons)}</small>
-                          {#if setup?.descriptions[dataset]}<small>{setup.descriptions[dataset]}</small>{/if}
+                          {#if setup?.descriptions[dataset] && setup.descriptions[dataset].toLowerCase() !== datasetLabel(dataset).toLowerCase()}<small>{setup.descriptions[dataset]}</small>{/if}
                           {#if activeSport === 'cfb'}
                             {#each datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}` && item.dataset === dataset && syncSeasons.includes(item.season) && item.availability_message) as snapshot}
                               <small class="validation">{snapshot.season}: {snapshot.availability_message}</small>
@@ -2738,14 +2833,14 @@
                     </div>
                   </fieldset>
                 </div>
-                {#if activeSport === 'nfl' && syncSeasons.includes(2026)}
-                  <p class="current-season-note">2026 is still in progress. Analyses use games in your latest downloaded snapshot; refresh it as nflverse publishes
-                    new results. For like-for-like comparisons, select matching week ranges.</p>
+                {#if currentSeason != null && syncSeasons.includes(currentSeason)}
+                  <p class="current-season-note">{seasonLabel(currentSeason)} is still in progress. Analyses use games in your latest download; refresh it as new
+                    results are published.{activeSport === 'nfl' ? ' For like-for-like comparisons, select matching week ranges.' : ''}</p>
                 {/if}
                 <button class="download-data-button"
                         disabled={!syncSeasons.length || !syncDatasets.length || (activeSport !== 'cfb' && !downloadScope.ready) || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
                         on:click={syncData}>
-                  {activeSport === 'nfl' && syncSeasons.includes(2026) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => packageEligible(source)).length}
+                  {currentSeason != null && syncSeasons.includes(currentSeason) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => visibleSyncDatasets.includes(source) && packageEligible(source)).length}
                   sources for {syncSeasons.length} seasons
                   {#if activeSport !== 'cfb' && downloadScope.kind !== 'league'} · {downloadScope.label}{/if}
                   <Icon name="database-import" size={20}/>
@@ -2779,19 +2874,19 @@
             {#if activeSport !== 'cfb'}{@render subjectCard()}{/if}
             <section class="scope-card" aria-labelledby="comparison-heading">
               <div class="scope-heading">
-                <div><span class="eyebrow">{activeSport === 'cfb' ? '03' : '02'} · Comparison</span>
-                  <h3 id="comparison-heading" tabindex="-1">{headToHead ? 'Choose the seasons and who to compare' : 'Choose the periods to compare'}</h3></div>
+                <div><span class="eyebrow">02 · {headToHead ? 'Seasons' : 'Time frame'}</span>
+                  <h3 id="comparison-heading" tabindex="-1">{headToHead ? 'Choose the seasons' : 'Choose the time frame'}</h3></div>
               </div>
-              <p>{headToHead ? 'Both subjects are measured over the same seasons.' : 'The first period is your starting point. The second shows what changed.'}</p>
+              {#if headToHead}<p>Both {subjectType === 'player' ? 'players' : 'teams'} are measured over the same seasons.</p>{/if}
               <div class="scope-controls">
-                <label>Comparison type
+                {#if !headToHead}<label>Compare
                   <select bind:value={comparisonMode}>
                     {#each comparisonOptions as option}
                       <option value={option.value}
                               disabled={['full_seasons', 'season_vs_prior'].includes(option.value) && scopeSeasons.length < 2}>{option.label}</option>
                     {/each}
                   </select>
-                </label>
+                </label>{/if}
                 {#if ['nfl', 'cfb'].includes(activeSport)}<label>Season type
                   <select bind:value={seasonType}>
                     <option value="REG">Regular season</option>
@@ -2801,7 +2896,7 @@
                 </label>{/if}
               </div>
 
-              <p class="section-help">{comparisonOptions.find(option => option.value === comparisonMode)?.description ?? ''}</p>
+              {#if !headToHead}<p class="section-help">{comparisonOptions.find(option => option.value === comparisonMode)?.description ?? ''}</p>{/if}
               {#if scopeSeasons.length}
                 {#if headToHead}
                   <div class="window-grid before-after">
@@ -2819,25 +2914,6 @@
                   <p class="section-help">Choose the same season twice to compare one season. A longer range, up to {MAX_HEAD_TO_HEAD_SEASONS} seasons,
                     compares the two side by side in each season.</p>
                   {#if periodBlocker}<p class="validation">{periodBlocker}</p>{/if}
-                  {#if activeSport === 'cfb'}
-                    <p class="section-help">Browse to the {subjectType === 'player' ? 'school of the player' : 'school'} to compare with.</p>
-                    <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision} initialConference={cfbConference}
-                                  disabled={busy} onchange={compareCfbChanged}/>
-                    {#if subjectType === 'team' && compareCfbSchool && compareCfbSchool === resolvedTeam}
-                      <p class="validation">Choose a different school from the first one.</p>
-                    {/if}
-                  {/if}
-                  {#if activeSport !== 'cfb' || subjectType === 'player'}
-                    <SubjectSearch id="compare-subject" label="Compare with" options={compareOptions} value={compareSubjectId}
-                                   placeholder={subjectType === 'player' ? 'Search players…' : 'Search teams…'}
-                                   emptyMessage={activeSport === 'cfb' ? comparePlayersLoading ? 'Loading players…'
-                                       : compareCfbSchool ? 'No other players found at this school' : 'Choose a school above first'
-                                       : subjectType === 'player' ? 'No other players with data in every chosen season' : 'No other teams'}
-                                   onsearch={subjectType === 'player' && activeSport !== 'cfb' ? searchPlayers : undefined}
-                                   searching={playerSearching || comparePlayersLoading}
-                                   onselect={(value) => compareSubjectId = value}/>
-                  {/if}
-                  {#if !resolvedSubject}<p class="section-help">Choose the first {subjectType} above, then who to compare with.</p>{/if}
                 {:else if comparisonMode === 'season_vs_prior'}
                   <div class="window-grid before-after">
                     <label>Season<select bind:value={comparison}>
@@ -2848,10 +2924,10 @@
                     <div class="window-summary"><span>Measured against</span><strong>{seasonLabel(periodStart)}</strong></div>
                   </div>
                   {#if periodBlocker}<p class="validation">{periodBlocker}</p>{/if}
-                {:else if activeSport === 'soccer' || (activeSport === 'cfb' && comparisonMode === 'date_ranges')}
+                {:else if ['soccer', 'cfb'].includes(activeSport) && comparisonMode === 'date_ranges'}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>First period</legend>
+                      <legend>Starting point</legend>
                       <label>Season<select bind:value={baseline}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2864,7 +2940,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>Second period</legend>
+                      <legend>Compared to</legend>
                       <label>Season<select bind:value={comparison}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2879,8 +2955,8 @@
                 {:else if activeSport === 'nba'}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'First period'}</legend>
-                      <label>Season<select bind:value={baseline} on:change={() => {
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
+                      <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline} on:change={() => {
                                         if (comparisonMode === 'before_after_milestone') comparison = baseline;
                                         if (!availableSegments(baseline).some(segment => segment.value === baselineSegment)) baselineSegment = availableSegments(baseline)[0]?.value ?? 'regular_season';
                                     }}>
@@ -2900,8 +2976,8 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Second period'}</legend>
-                      <label>Season<select bind:value={comparison} disabled={comparisonMode === 'before_after_milestone'} on:change={() => {
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
+                      <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison} disabled={comparisonMode === 'before_after_milestone'} on:change={() => {
                     if (!availableSegments(comparison).some(segment => segment.value === comparisonSegment)) comparisonSegment = availableSegments(comparison)[0]?.value ?? 'regular_season';
                   }}>
                         {#each scopeSeasons as season}
@@ -2934,13 +3010,13 @@
                         <option value={week}>Week {week}</option>
                       {/each}
                     </select></label>
-                    <div class="window-summary"><span>First period</span><strong>{baseline} · Weeks 1–{splitWeek - 1}</strong></div>
-                    <div class="window-summary"><span>Second period</span><strong>{baseline} · Weeks {splitWeek}–22</strong></div>
+                    <div class="window-summary"><span>Before</span><strong>{baseline} · Weeks 1–{splitWeek - 1}</strong></div>
+                    <div class="window-summary"><span>After</span><strong>{baseline} · Weeks {splitWeek}–22</strong></div>
                   </div>
                 {:else}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'First period'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2960,7 +3036,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Second period'}</legend>
+                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -2980,11 +3056,11 @@
                     </fieldset>
                   </div>
                   {#if comparisonMode === 'full_seasons' && windowsDiffer}
-                    <p class="range-summary">{`Includes every season from ${baseline} through ${comparison}: ${requiredSeasons.join(', ')}.`}</p>
+                    <p class="range-summary">{`Includes every season from ${seasonLabel(baseline)} through ${seasonLabel(comparison)}: ${requiredSeasons.map(seasonLabel).join(', ')}.`}</p>
                   {/if}
-                  {#if activeSport === 'nfl' && requiredSeasons.includes(2026)}
-                    <p class="current-season-note">The current season is incomplete. Results reflect only games in the downloaded 2026 snapshot; use matching week
-                      ranges to compare equivalent portions of past seasons.</p>
+                  {#if currentSeason != null && requiredSeasons.includes(currentSeason)}
+                    <p class="current-season-note">{seasonLabel(currentSeason)} is still being played. Results reflect only games in your latest download{activeSport === 'nfl'
+                      ? '; use matching week ranges to compare equivalent portions of past seasons' : ''}.</p>
                   {/if}
                   {#if !windowsDiffer}
                     <p class="validation">{comparisonMode === 'full_seasons' ? 'Choose an ending season later than the starting season.' : 'Choose two different seasons or week ranges.'}</p>
@@ -3007,7 +3083,7 @@
 
             <section class="metric-card" aria-labelledby="metric-heading">
               <div class="scope-heading">
-                <div><span class="eyebrow">{activeSport === 'cfb' ? '04' : '03'} · Focus</span>
+                <div><span class="eyebrow">03 · Focus</span>
                   <h3 id="metric-heading" tabindex="-1">Choose {subjectType === 'player' ? 'player metrics' : 'what to measure'}</h3></div>
                 <div class="metric-actions">
                   <button type="button" aria-expanded={customizeMetrics} on:click={() => customizeMetrics = !customizeMetrics}>Customize metrics</button>
@@ -3045,7 +3121,8 @@
                         <span><strong>{metric.label}</strong><small>{metric.description}</small>
                           {#if !availableMetricIds.has(metric.value)}<small>Unavailable for one or more selected periods. Check data sources or choose another metric.</small>{/if}</span>
                       </label>
-                      <button class="metric-explain" type="button" on:click={() => explainMetric(metric)}>About {metric.label}</button>
+                      <button class="metric-explain" type="button" aria-label={`About ${metric.label}`} on:click={() => explainMetric(metric)}>
+                        <Icon name="info-circle" size={14}/>About</button>
                     {/each}
                   </section>
                 {/each}
@@ -3106,12 +3183,15 @@
             </section>
 
             <div class="question-field">
-              <span class="eyebrow">{activeSport === 'cfb' ? '05' : '04'} · Question</span>
-              <div class="question-heading">
-                <label for="investigation-question">Your Question:</label>
-
+              <div class="scope-heading">
+                <div><span class="eyebrow">04 · Question</span>
+                  <h3 id="question-heading"><label for="investigation-question">What do you want to know?</label></h3></div>
               </div>
-              <div class="question-examples" aria-label="Example questions">
+              <p class="section-help">Ask what changed or why, in your own words. Naming a situation, such as third downs or the second half,
+                focuses the report.</p>
+              <textarea id="investigation-question" bind:value={question} rows="3" placeholder="Type your question, or start from an example below"></textarea>
+              <span class="question-examples-label" id="question-examples-label">Examples</span>
+              <div class="question-examples" role="group" aria-labelledby="question-examples-label">
                 {#each questionExamples.slice(0, showAllQuestionExamples ? questionExamples.length : 3) as example}
                   <button type="button" on:click={() => { question = example; lastSuggestedQuestion = example; }}>{example}</button>
                 {/each}
@@ -3122,7 +3202,6 @@
                   </button>
                 {/if}
               </div>
-              <textarea id="investigation-question" bind:value={question} rows="3" placeholder={`For example: ${questionExamples[0] ?? ''}`}></textarea>
             </div>
           </div>
           <aside class="analysis-brief" aria-label="Analysis brief">
@@ -3135,7 +3214,7 @@
                   {#if subjectType === 'player' && selectedPlayer}
                     <PlayerPortrait id={selectedPlayer.player_id} sport={activeSport} name={selectedPlayer.name}/>
                   {/if}{subjectType === 'player' ? selectedPlayer?.name ?? 'Choose a player' : resolvedTeam ? teamInput : 'Choose a team'}{headToHead && compareSubjectLabel ? ` vs ${compareSubjectLabel}` : ''}</dd>
-                <dt>Periods</dt>
+                <dt>{headToHead ? 'Seasons' : 'Time frame'}</dt>
                 <dd>{periodBrief}</dd>
                 <dt>Focus</dt>
                 <dd>{displayDomain(analysisDomain)}</dd>
@@ -3235,6 +3314,9 @@
       {#if !active.run.parent_investigation_id}
         <section class="key-metrics" aria-label={active.run.comparison_subject ? 'Key metric comparison' : 'Key metric changes'}>
           <h2 class="sr-only">{active.run.comparison_subject ? 'Key metric comparison' : 'Key metric changes'}</h2>
+          {#if active.run.comparison_subject && active.run.scope.baseline.season < active.run.scope.comparison.season}
+            <p class="key-metrics-note">Each season is compared on its own; there is no combined multi-season value.</p>
+          {/if}
           {#each keyMetrics(active) as metric}
             {@const period = metricColumns(metric, active.aggregate_evidence, active.run.scope, seasonLabel)}
             {@const format = metricFormatter(metric, period.columns.map(column => column.value))}
@@ -3256,7 +3338,6 @@
                     {/each}
                   </tbody>
                 </table>
-                <small>Each season is compared on its own; there is no combined multi-season value.</small>
               {:else}
               <div class:many-periods={period.columns.length > 2}>
                 {#each period.columns as column}
@@ -3304,7 +3385,7 @@
             {#if selectedClaimId === claim.claim_id}
               <div class="mobile-evidence">
                 <SupportingEvidence items={selectedEvidenceItems} loading={evidenceLoading} error={evidenceError} retry={() => inspectFinding(claim)}
-                                    periods={reportPeriods(active)}/>
+                                    periods={reportPeriods(active)} leader={evidenceLeader(active)}/>
               </div>
             {/if}
           {:else}<p class="empty-state">No findings could be supported by these data. Check the methodology below, then try different periods or download additional
@@ -3315,13 +3396,13 @@
         <aside class="evidence-panel desktop-evidence" class:empty-evidence-panel={!selectedClaim}>
           {#if selectedClaim}<p class="selected-finding-label">Finding {active.claims.indexOf(selectedClaim) + 1}</p>
             <SupportingEvidence items={selectedEvidenceItems} loading={evidenceLoading} error={evidenceError}
-                                retry={() => selectedClaim && inspectFinding(selectedClaim)} periods={reportPeriods(active)}/>
+                                retry={() => selectedClaim && inspectFinding(selectedClaim)} periods={reportPeriods(active)} leader={evidenceLeader(active)}/>
           {:else}<p class="evidence-panel-empty">Select a finding to see its supporting evidence.</p>{/if}
         </aside>
       </div>
       <section class="charts">
         <div class="section-title"><h2>Performance comparisons</h2>
-          {#if active.charts.length}<small>Season summaries, monthly trends and clearly scoped supporting calculations.</small>{/if}
+          {#if active.charts.length}<small>The measurements behind the findings. Exact values are listed under each chart.</small>{/if}
         </div>
         {#if !active.charts.length}<p class="empty-state">No charts were produced for this analysis. The findings and supporting evidence above contain the available
           measurements.</p>{/if}
@@ -3357,8 +3438,13 @@
           from {active.run.comparison_subject ? 'each subject' : 'both periods'}—not the entire
           sample</small>
         </div>
-        <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it. Counterexamples show
-          outcomes that run against the overall trend.</p>
+        <p class="section-help">Select a {activeSport === 'soccer' ? 'match' : activeSport === 'nba' ? 'possession' : 'play'} to inspect it.</p>
+        <dl class="play-tag-legend">
+          <div><dt>Typical</dt><dd>close to the usual result</dd></div>
+          <div><dt>Metric example</dt><dd>shows a chosen metric at work, often a big gain or loss</dd></div>
+          <div><dt>Supports change</dt><dd>fits the overall finding</dd></div>
+          <div><dt>Counterexample</dt><dd>runs against it</dd></div>
+        </dl>
         {#if !active.play_evidence.length}<p class="empty-state">No representative plays are available for this analysis. Review the numerical evidence and source
           limitations above.</p>{/if}
         {#each evidenceGroups(active.play_evidence, reportPeriods(active)) as group}
@@ -3375,7 +3461,7 @@
                                                               class:supporting={play.evidence_role ? play.evidence_role !== 'counterexample' : play.supporting}
                                                               class:typical={play.evidence_role === 'typical'}>{evidenceRoleLabel(play)}</span>
                   <span class="play-reference"><strong title={play.game_id}>{gameLabel(play)}</strong>
-                    {#if activeSport !== 'soccer' && play.play_id !== 0}<small>Play #{activeSport === 'cfb' ? play.visualization?.cfb_statistics?.selected_play?.id ?? play.play_id : play.play_id}</small>{/if}</span>
+                    {#if play.season && (active.run.comparison_subject || active.run.scope.baseline.season !== active.run.scope.comparison.season)}<small>{seasonLabel(play.season)} season</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
                       class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
@@ -3394,7 +3480,7 @@
         <summary>How this analysis was calculated</summary>
         <h3>Methodology and limitations</h3>
         {#each active.methodological_caveats as caveat}<p>{caveat}</p>{/each}
-        <p>Change is measured from the first period to the second.
+        <p>{active.run.comparison_subject ? `Differences are ${reportPeriods(active).comparison} minus ${reportPeriods(active).baseline}.` : 'Change is measured from the starting point to the comparison.'}
           {active.fallback_used ? 'This summary was calculated without an AI model.' : `Written by the AI model ${active.model_id ?? 'configured for this app'}.`}
           Measured findings come from recorded data; interpretations describe possible
           explanations.</p>
@@ -3422,11 +3508,18 @@
           <span class="conversation-count">{Math.max(0, conversationThread.length - 1)} follow-up{conversationThread.length === 2 ? '' : 's'}</span>
         </div>
         <div class="conversation-messages" aria-live="polite">
-          {#each conversationThread as turn, index}
+          {#each conversationThread as turn}
+            {#if !turn.run.parent_investigation_id}
+              <button class="thread-origin" class:selected={active.run.investigation_id === turn.run.investigation_id} type="button"
+                      on:click={() => openInvestigation(turn)}>
+                <small>Report question</small><span>{turn.run.question}</span>
+                <em>{active.run.investigation_id === turn.run.investigation_id ? 'Showing the report' : 'Back to the report'}</em>
+              </button>
+            {:else}
             <article class="chat-row user-row">
               <span class="chat-avatar user-avatar">You</span>
               <div class="chat-bubble user-bubble">
-                <div class="chat-message-meta"><small>{index === 0 ? 'Initial question' : `Follow-up ${index}`}</small>
+                <div class="chat-message-meta"><small>Follow-up {conversationThread.filter(item => item.run.parent_investigation_id).indexOf(turn) + 1}</small>
                   <time datetime={turn.run.created_at}>{chatTimestamp(turn.run.created_at)}</time>
                 </div>
                 <p>{turn.run.question}</p></div>
@@ -3443,6 +3536,7 @@
                   <Icon name="arrow-right" size={15}/></span>
               </button>
             </div>
+            {/if}
           {/each}
           {#if pendingFollowup}
             <article class="chat-row user-row pending-message">

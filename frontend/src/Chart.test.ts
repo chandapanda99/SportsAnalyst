@@ -125,7 +125,7 @@ it('offers exact comparisons, percentage-point changes, metric filtering and exp
     vconcat: [{title: {text: 'Success rate'}}, {title: {text: 'Yards'}}],
   }}});
   expect(screen.getByLabelText('Exact metric comparison').textContent).toContain('0.0%');
-  expect(screen.getByLabelText('Exact metric comparison').textContent).toContain('+45 pp');
+  expect(screen.getByLabelText('Exact metric comparison').textContent).toContain('+45 pct pts');
   expect(screen.getByLabelText('Exact metric comparison').textContent).toContain('+100 yards');
   await fireEvent.change(screen.getByRole('combobox', {name: 'Show metric'}), {target: {value: 'Success rate'}});
   expect(screen.getByLabelText('Exact metric comparison').textContent).not.toContain('Yards');

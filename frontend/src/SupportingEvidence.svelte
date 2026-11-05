@@ -5,7 +5,9 @@
   export let items: Evidence[] = [];
   export let loading = false;
   export let error = '';
-  export let periods = {baseline: 'First period', comparison: 'Second period'};
+  export let periods = {baseline: 'Starting point', comparison: 'Compared to'};
+  // Set for head-to-head reports: names the side that leads on a metric, or '' when the metric has no better direction.
+  export let leader: ((item: Evidence) => string) | null = null;
   export let retry: () => void = () => {
   };
   const number = (value: number | undefined) => value == null ? 'Not recorded' : new Intl.NumberFormat(undefined, {maximumFractionDigits: 3}).format(value);
@@ -31,15 +33,24 @@
             <dt>{periods.comparison}</dt>
             <dd>{format.value(item.comparison_value)}</dd>
           {/if}
-          {#if item.baseline_value != null && item.comparison_value != null}
+          {#if item.baseline_value != null && item.comparison_value != null && leader}
+            {@const ahead = leader(item)}
+            <dt>{ahead ? 'Lead' : 'Difference'}</dt>
+            <dd>{ahead ? `${ahead} by ${format.change(Math.abs(item.value ?? 0)).replace(/^\+/, '')}` : format.change(item.value)}</dd>
+          {:else if item.baseline_value != null && item.comparison_value != null}
             <dt>Change</dt>
             <dd>{format.change(item.value)}</dd>
           {:else}
             <dt>Value</dt>
             <dd>{number(item.value ?? item.epa ?? item.metric_value)} {(item.unit ?? '').replaceAll('_', ' ')}</dd>
           {/if}
-          <dt>Sample</dt>
-          <dd>{item.sample_size != null ? number(item.sample_size) : item.play_id != null ? '1 play' : 'Not recorded'}</dd>
+          {#if leader && item.context?.baseline_sample != null && item.context?.comparison_sample != null}
+            <dt>Samples</dt>
+            <dd>{number(Number(item.context.baseline_sample))} · {number(Number(item.context.comparison_sample))}</dd>
+          {:else}
+            <dt>Sample</dt>
+            <dd>{item.sample_size != null ? number(item.sample_size) : item.play_id != null ? '1 play' : 'Not recorded'}</dd>
+          {/if}
           {#if item.context?.players}
             <dt>Players</dt>
             <dd>{Array.isArray(item.context.players) ? item.context.players.join(', ') : item.context.players}</dd>

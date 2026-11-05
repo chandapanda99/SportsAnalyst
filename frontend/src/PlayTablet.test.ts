@@ -9,7 +9,6 @@ describe('football evidence tablet venue styling', () => {
     const {container, getByRole} = render(PlayTablet, {props: {
       play: {evidence_id: 'mobile-field', game_id: '2025_01_KC_BUF', play_id: 1, team: 'KC',
         visualization: {possession_team: 'KC', defensive_team: 'BUF', yardline_100: 40, play_type: 'run'}},
-      onclose: () => undefined,
     }});
     const marker = container.querySelector('.field-player')!;
     await fireEvent.click(marker);
@@ -48,7 +47,6 @@ describe('football evidence tablet venue styling', () => {
             pass_rushers: 4, blitzers: 1, coverage_type: 'COVER_1', man_zone: 'MAN', starting_hash: 'L', qb_location: 'S',
           },
         },
-        onclose: () => undefined,
       },
     });
 
@@ -91,7 +89,6 @@ describe('football evidence tablet venue styling', () => {
             recovery_player: 'J. Campbell', offense_positions: ['QB', 'RB', 'T', 'G', 'C', 'G', 'T'],
           },
         },
-        onclose: () => undefined,
       },
     });
 

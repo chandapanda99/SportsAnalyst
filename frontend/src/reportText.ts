@@ -27,6 +27,3 @@ export function gameLabel(play: Pick<Evidence, 'game_id' | 'season'>) {
   return play.season ? `${play.season} game` : 'Recorded game';
 }
 
-export function windowLabel(window: Evidence['window']) {
-  return window === 'baseline' ? 'First period' : window === 'comparison' ? 'Second period' : '';
-}

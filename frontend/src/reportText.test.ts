@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {gameLabel, modelTextSegments, windowLabel} from './reportText';
+import {gameLabel, modelTextSegments} from './reportText';
 
 describe('modelTextSegments', () => {
   it('turns inline markdown into styled text', () => {
@@ -29,10 +29,3 @@ describe('gameLabel', () => {
   });
 });
 
-describe('windowLabel', () => {
-  it('names periods in reader terms', () => {
-    expect(windowLabel('baseline')).toBe('First period');
-    expect(windowLabel('comparison')).toBe('Second period');
-    expect(windowLabel(undefined)).toBe('');
-  });
-});

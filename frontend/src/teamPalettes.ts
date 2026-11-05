@@ -268,8 +268,10 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
             }
             const mark = node.mark as Record<string, unknown> | undefined;
             if (mark?.type === 'text') {
+                // A label placed below its point (the lower of two sides in a season) stays below.
+                const below = typeof mark.dy === 'number' && mark.dy > 0;
                 node.mark = {...mark, align: categoryRows ? 'left' : 'center', dx: categoryRows ? 8 : 0,
-                    dy: categoryRows ? 0 : -12, fontSize: 12};
+                    dy: categoryRows ? 0 : below ? 18 : -12, fontSize: 12};
                 if (nestedEncoding) nestedEncoding.color = {value: '#EDF5FA'};
             }
             if (mark?.type === 'point' && mark.opacity !== 0.001) {

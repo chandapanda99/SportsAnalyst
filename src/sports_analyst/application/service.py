@@ -213,6 +213,12 @@ class AnalystApplication:
         return predicate
 
     def analysis_options(self, sport: str = "nfl", competition: str | None = None) -> AnalysisOptions:
+        from sports_analyst.application.preparation import current_season
+
+        options = self._analysis_options(sport, competition)
+        return options.model_copy(update={"current_season": current_season(sport, competition or "eng.1")})
+
+    def _analysis_options(self, sport: str, competition: str | None) -> AnalysisOptions:
         connector, plugin = self._sport(sport)
         manifests = [item for item in self.store.manifests(sport=sport,
             **({"provider_id": None, "processing_version": None} if sport == "soccer" else {})) if item.row_count > 0]

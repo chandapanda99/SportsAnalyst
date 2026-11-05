@@ -471,8 +471,14 @@ def test_head_to_head_season_range_pairs_each_season(tmp_path: Path, pbp_pair) -
     assert {(play.window, play.season) for play in bundle.play_evidence} == {
         ("baseline", 2024), ("baseline", 2025), ("comparison", 2024), ("comparison", 2025)}
     assert any("compared one at a time" in caveat for caveat in bundle.methodological_caveats)
+    # One plot per metric: seasons left to right, one line per team, and each season's higher value labelled above.
     chart = bundle.charts[0].specification
-    assert chart["usermeta"]["comparisonKind"] == "subject-comparison"
-    assert [plot["title"]["text"] for plot in chart["vconcat"]][:2] == ["EPA/dropback · 2024", "EPA/dropback · 2025"]
+    assert chart["usermeta"]["comparisonKind"] == "subject-trend"
+    assert chart["usermeta"]["colorLabels"] == ["Kansas City Chiefs", "Buffalo Bills"]
+    assert [plot["title"]["text"] for plot in chart["vconcat"]][0] == "EPA/dropback"
+    epa_rows = chart["vconcat"][0]["data"]["values"]
+    assert [(row["season"], row["subject"]) for row in epa_rows] == [
+        ("2024", "Kansas City Chiefs"), ("2024", "Buffalo Bills"), ("2025", "Kansas City Chiefs"), ("2025", "Buffalo Bills")]
+    assert [row["label_above"] for row in epa_rows] == [False, True, False, True]
     # The deterministic report leads with the latest season.
     assert "EPA/dropback · 2025" in bundle.summary and bundle.summary.startswith("Buffalo Bills led")

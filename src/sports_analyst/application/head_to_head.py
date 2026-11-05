@@ -157,17 +157,27 @@ def compare_sides(first: Side, second: Side, metrics: list[str], execution_id: s
 
 
 def comparison_chart(evidence: list[AggregateEvidence], labels: list[str], period: str) -> ChartArtifact:
-    # Season-range rows are already labelled "Metric · Season": one row of the two subjects per season,
-    # grouped by metric in the order the metrics were chosen.
+    # One plot per metric, in the order the metrics were chosen. Across a season range, seasons run left to
+    # right with one line per subject, so the lead and how it changes read at a glance.
     order = list(dict.fromkeys(item.metric for item in evidence))
-    rows = [{"metric": item.label, "subject": label, "value": value, "unit": item.unit, "sample_size": sample}
-            for item in sorted(evidence, key=lambda item: (order.index(item.metric), item.context.get("season", 0)))
+    ordered = sorted(evidence, key=lambda item: (order.index(item.metric), item.context.get("season", 0)))
+    season_range = any(item.context.get("season_label") for item in ordered)
+    rows = [{"metric": item.context.get("metric_label", item.label) if season_range else item.label,
+             **({"season": item.context["season_label"]} if season_range else {}),
+             "subject": label, "value": value, "unit": item.unit, "sample_size": sample}
+            for item in ordered
             for label, value, sample in zip(labels, (item.baseline_value, item.comparison_value),
                                             (item.context["baseline_sample"], item.context["comparison_sample"]), strict=True)]
+    if season_range:
+        seasons = list(dict.fromkeys(row["season"] for row in rows))
+        specification = metric_row_comparison_spec(rows, series_field="season", series_order=seasons,
+                                                   comparison_kind="subject-trend", color_field="subject")
+    else:
+        specification = metric_row_comparison_spec(rows, series_field="subject", series_order=labels, comparison_kind="subject-comparison")
     return ChartArtifact(
         chart_id=stable_id("chart", {"type": "head-to-head", "evidence": [item.evidence_id for item in evidence]}),
         title=f"{labels[0]} vs {labels[1]} · {period}",
-        specification=metric_row_comparison_spec(rows, series_field="subject", series_order=labels, comparison_kind="subject-comparison"),
+        specification=specification,
         evidence_ids=[item.evidence_id for item in evidence],
     )
 

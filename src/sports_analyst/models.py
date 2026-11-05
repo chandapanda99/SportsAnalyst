@@ -347,6 +347,8 @@ class AnalysisOptions(BaseModel):
     season_segments: list[dict[str, str]] = Field(default_factory=list)
     segment_availability: dict[str, list[str]] = Field(default_factory=dict)
     optional_capabilities: dict[str, bool] = Field(default_factory=dict)
+    # The season still being played; the form defaults to the latest completed ones.
+    current_season: int | None = None
 
 
 class SportOption(BaseModel):

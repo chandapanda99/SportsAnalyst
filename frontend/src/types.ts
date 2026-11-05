@@ -95,6 +95,7 @@ export type AnalysisOptions = {
   season_segments?: Array<{value: string; label: string; description: string}>;
   segment_availability?: Record<string, string[]>;
   optional_capabilities?: Record<string, boolean>;
+  current_season?: number | null;
 };
 export type InvestigationRequest = {
   sport: string;

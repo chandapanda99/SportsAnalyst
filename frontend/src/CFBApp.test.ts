@@ -70,7 +70,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   await screen.findByText('Saved college comparison');
   expect(document.querySelector('.recent-subject-badge img')?.getAttribute('src')).toBe('https://a.espncdn.com/i/teamlogos/ncaa/500/1.png');
   await screen.findByRole('option', {name: 'Selected Conference'});
-  const subject = screen.getByRole('region', {name: 'Choose Your Subject'});
+  const subject = screen.getByRole('region', {name: 'Who do you want to understand?'});
   const dataSetup = document.getElementById('data-setup')!;
   expect(subject.compareDocumentPosition(dataSetup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(dataSetup.compareDocumentPosition(document.getElementById('comparison-heading')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -138,7 +138,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     expect((player as HTMLInputElement).value).toContain('School Player');
     expect(fetch.mock.calls.filter(([input]) => String(input).includes('/cfb/players?')).every(([input]) => String(input).includes('team_id=1'))).toBe(true);
     if (workflow === 'player head-to-head') {
-      await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+      await fireEvent.click(screen.getByRole('button', {name: /Head-to-head/}));
       const schools = await waitFor(() => {
         const found = screen.getAllByLabelText('School') as HTMLSelectElement[];
         expect(found[1]?.disabled).toBe(false);
@@ -159,7 +159,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     return;
   }
   if (workflow === 'head-to-head') {
-    await fireEvent.change(screen.getByLabelText('Comparison type'), {target: {value: 'head_to_head'}});
+    await fireEvent.click(screen.getByRole('button', {name: /Head-to-head/}));
     // A second school browser picks the other school, starting from the first school's conference.
     const schools = await waitFor(() => {
       const found = screen.getAllByLabelText('School') as HTMLSelectElement[];
@@ -170,7 +170,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     await fireEvent.change(schools[1], {target: {value: '1'}});
     expect(await screen.findByText('Choose a different school from the first one.')).toBeTruthy();
     await fireEvent.change(schools[1], {target: {value: '2'}});
-    await fireEvent.input(screen.getByLabelText('Your Question:'), {target: {value: 'Which school won more often?'}});
+    await fireEvent.input(screen.getByLabelText('What do you want to know?'), {target: {value: 'Which school won more often?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: /Run analysis/}) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', {name: /Run analysis/}));
     await waitFor(() => expect(submitted?.sport).toBe('cfb'));
@@ -182,7 +182,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   await fireEvent.click(await screen.findByRole('button', {name: 'Show 5 more examples'}));
   const coverageQuestion = screen.getByRole('button', {name: /How reliable is the results trend given unequal game counts/});
   await fireEvent.click(coverageQuestion);
-  expect((screen.getByLabelText('Your Question:') as HTMLTextAreaElement).value).toBe(coverageQuestion.textContent?.trim());
+  expect((screen.getByLabelText('What do you want to know?') as HTMLTextAreaElement).value).toBe(coverageQuestion.textContent?.trim());
   const season = await screen.findByRole('checkbox', {name: '2025 season'});
   if (!(season as HTMLInputElement).checked) await fireEvent.click(season);
   await screen.findByText('Limited source coverage · recheck hourly');
