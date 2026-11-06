@@ -69,3 +69,18 @@ describe('collegePlaymakers', () => {
       participants: [actor('scorer', '31', 'Corner', '1')]})).toEqual(['Interception: Corner']);
   });
 });
+
+describe('defensive line depth', () => {
+  it('keeps down linemen on the line on runs with no recorded pass rush', async () => {
+    const {buildPlaySchematic} = await import('./playSchematic');
+    const schematic = buildPlaySchematic({
+      play_type: 'run', pass_rushers: 0, yardline_100: 60, defense_positions: ['DE', 'DT', 'DT', 'DE', 'MLB', 'MLB', 'OLB', 'CB', 'CB', 'FS', 'SS'],
+      defense_names: Array.from({length: 11}, (_, index) => `D${index}`)
+    } as never);
+    const defense = schematic.players.filter(player => player.side === 'defense');
+    const line = defense.filter(player => ['DE', 'DT'].includes(player.position));
+    const backers = defense.filter(player => player.position === 'MLB');
+    expect(Math.max(...line.map(player => player.x))).toBeLessThan(Math.min(...backers.map(player => player.x)) - 2);
+    expect(line.every(player => !player.rushRole)).toBe(true);
+  });
+});

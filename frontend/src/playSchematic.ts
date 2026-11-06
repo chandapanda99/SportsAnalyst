@@ -641,22 +641,25 @@ function placeDefense(
   const preferredY = defensiveLateralPreferences(fronts, linebackers, backs, centerY, offensePlayers);
   const deepY = deepLateralPreferences(deepRecords, preferredY, centerY);
   const slots: Array<{record: PlayerRecord; x: number; y: number; inBox: boolean; rushRole?: 'rusher' | 'blitzer'; basis: string}> = [];
-  const rushing = [...rushers];
-  const boxRushers = rushing.filter(record => box.has(record));
-  const rushLanes = constrainedRushLanes(boxRushers, preferredY, centerY);
-  rushing.forEach((record, index) => slots.push({
+  // Down linemen always align on the line, even on runs where no pass rush is recorded; only rushers get a rush ring.
+  const atLine = [...rushers, ...fronts.filter(record => !rushers.has(record))];
+  const lineInBox = atLine.filter(record => box.has(record) || fronts.includes(record));
+  const rushLanes = constrainedRushLanes(lineInBox, preferredY, centerY);
+  atLine.forEach((record, index) => slots.push({
     record,
     x: startX + 1.35,
-    y: box.has(record)
+    y: lineInBox.includes(record)
       ? rushLanes.get(record) ?? centerY
-      : preferredY.get(record) ?? distribute(index, rushing.length, 5.5, FOOTBALL_FIELD_WIDTH - 5.5),
-    inBox: box.has(record),
-    rushRole: blitzers.has(record) ? 'blitzer' : 'rusher',
-    basis: blitzers.has(record)
-      ? 'Inferred blitz assignment; lane constrained by position and offensive-line width'
-      : 'Inferred pass-rush assignment; lane constrained by position and offensive-line width',
+      : preferredY.get(record) ?? distribute(index, atLine.length, 5.5, FOOTBALL_FIELD_WIDTH - 5.5),
+    inBox: lineInBox.includes(record),
+    rushRole: !rushers.has(record) ? undefined : blitzers.has(record) ? 'blitzer' : 'rusher',
+    basis: !rushers.has(record)
+      ? 'Down lineman aligned on the line of scrimmage; lane constrained by position and offensive-line width'
+      : blitzers.has(record)
+        ? 'Inferred blitz assignment; lane constrained by position and offensive-line width'
+        : 'Inferred pass-rush assignment; lane constrained by position and offensive-line width',
   }));
-  const boxCoverage = [...box].filter(record => !rushers.has(record));
+  const boxCoverage = [...box].filter(record => !rushers.has(record) && !fronts.includes(record));
   boxCoverage.forEach((record, index) => slots.push({
     record,
     x: startX + 4.8,

@@ -2401,6 +2401,7 @@
       {#if !historyLoading && !historyLoadError && !rootHistory.length}
         <p class="film-room-empty">No saved {activeSport === 'soccer' ? 'reports for this competition' : 'reports for this sport'} yet. Finished reports appear here.</p>
       {/if}
+      <div class="film-room-list">
       {#each showFullFilmRoom ? rootHistory : rootHistory.slice(0, filmRoomPreviewCount) as item}
         <div class="recent-report">
           <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
@@ -2423,6 +2424,7 @@
           </button>
         </div>
       {/each}
+      </div>
       {#if rootHistory.length > filmRoomPreviewCount}
         <button class="film-room-more" type="button" aria-expanded={showFullFilmRoom} on:click={() => showFullFilmRoom = !showFullFilmRoom}>
           {showFullFilmRoom ? 'Show fewer' : `Show all ${rootHistory.length}`}

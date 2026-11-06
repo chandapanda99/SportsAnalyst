@@ -900,6 +900,25 @@ summary {
     line-height: 1.5;
 }
 
+/* The Film Room scrolls on its own; the actions and heading above it stay in place. */
+.rail nav {
+    flex: 1;
+    min-height: 0;
+}
+
+.rail .film-room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+    margin-right: -6px;
+    padding-right: 6px;
+}
+
 .rail button.film-room-more {
     justify-content: center;
     margin-top: .25rem;
@@ -1261,6 +1280,11 @@ button:disabled {
 
     .rail .nav-label, .rail .recent-report, .rail .film-room-empty, .rail .film-room-more {
         display: none;
+    }
+
+    .rail .film-room-list {
+        flex-basis: 100%;
+        overflow: visible;
     }
 
     .rail .mobile-history-toggle {
