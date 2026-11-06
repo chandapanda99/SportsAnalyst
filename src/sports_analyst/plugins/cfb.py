@@ -60,22 +60,53 @@ METRICS = {
     "receiving_yards": ("Receiving yards", "player", "receiving", "receiving_yards", "total", "yards"),
     "yards_per_reception": ("Yards/reception", "player", "receiving", "receiving_yards", "receptions", "yards"),
     "receiving_touchdowns": ("Receiving touchdowns", "player", "receiving", "receiving_touchdowns", "total", "touchdowns"),
+    # Team defense: the opponent's recorded offense in the same game, plus the team's own defensive box score.
+    "yards_allowed_per_game": ("Yards allowed/game", "team", "defense", "opp_total_yards", None, "yards"),
+    "passing_yards_allowed_per_game": ("Net passing yards allowed/game", "team", "defense", "opp_passing_yards", None, "yards"),
+    "net_yards_per_pass_allowed": ("Net passing yards allowed/attempt", "team", "defense", "opp_passing_yards",
+                                   "opp_passing_attempts", "yards"),
+    "rushing_yards_allowed_per_game": ("Rushing yards allowed/game", "team", "defense", "opp_rushing_yards", None, "yards"),
+    "yards_per_rush_allowed": ("Yards/rush allowed", "team", "defense", "opp_rushing_yards", "opp_rushing_attempts", "yards"),
+    "opponent_third_down_rate": ("Opponent third-down conversion rate", "team", "defense", "opp_third_down_conversions",
+                                 "opp_third_down_attempts", "rate"),
+    "takeaways_per_game": ("Takeaways/game", "team", "defense", "takeaways", None, "turnovers"),
+    "sacks_per_game": ("Sacks/game", "team", "defense", "sacks", None, "sacks"),
+    "tackles_for_loss_per_game": ("Tackles for loss/game", "team", "defense", "tackles_for_loss", None, "count"),
+    "passes_defended_per_game": ("Passes defended/game", "team", "defense", "passes_defended", None, "count"),
+    "qb_hurries_per_game": ("QB hurries/game", "team", "defense", "qb_hurries", None, "count"),
+    # Defenders: per game in which ESPN lists the player in the defensive box score.
+    "defender_tackles_per_game": ("Tackles/game", "player", "defender", "def_tackles", None, "count"),
+    "defender_solo_tackles_per_game": ("Solo tackles/game", "player", "defender", "def_solo_tackles", None, "count"),
+    "defender_tackles_for_loss_per_game": ("Tackles for loss/game", "player", "defender", "def_tackles_for_loss", None, "count"),
+    "defender_sacks_per_game": ("Sacks/game", "player", "defender", "def_sacks", None, "sacks"),
+    "defender_passes_defended_per_game": ("Passes defended/game", "player", "defender", "def_passes_defended", None, "count"),
+    "defender_interceptions_per_game": ("Interceptions/game", "player", "defender", "def_interceptions", None, "interceptions"),
+    "defender_qb_hurries_per_game": ("QB hurries/game", "player", "defender", "def_qb_hurries", None, "count"),
 }
 DEFAULTS = {
     domain: [key for key, item in METRICS.items() if item[2] == domain]
-    for domain in ("results", "offense", "quarterback", "rushing", "receiving")
+    for domain in ("results", "offense", "defense", "quarterback", "rushing", "receiving", "defender")
 }
+# Volume-per-game lines stay selectable but are not defaults; the rates and havoc counts carry the comparison.
+DEFAULTS["defense"] = ["yards_allowed_per_game", "net_yards_per_pass_allowed", "yards_per_rush_allowed",
+                       "opponent_third_down_rate", "takeaways_per_game", "sacks_per_game", "tackles_for_loss_per_game"]
+DEFAULTS["defender"] = ["defender_tackles_per_game", "defender_tackles_for_loss_per_game", "defender_sacks_per_game",
+                        "defender_passes_defended_per_game", "defender_interceptions_per_game"]
+TEAM_DOMAINS = {"results", "offense", "defense"}
+DOMAIN_LABELS = {"defender": "Defense"}
 DOMAIN_DESCRIPTIONS = {
     "results": "Wins, points scored and points allowed per game.",
     "offense": "Yards, conversion rates and turnovers per game.",
+    "defense": "Yards and conversions allowed, takeaways, sacks and tackles for loss per game.",
     "quarterback": "A passer's completions, yards, touchdowns and interceptions.",
     "rushing": "A runner's carries, yards and touchdowns.",
     "receiving": "A receiver's catches, yards and touchdowns.",
+    "defender": "A defender's tackles, tackles for loss, sacks, passes defended and interceptions per game.",
 }
 DATASET_DESCRIPTIONS = {
     "schedules": "Game dates, opponents and final scores.",
-    "team_stats": "Team yards, conversions and turnovers per game.",
-    "player_stats": "Player passing, rushing and receiving per game.",
+    "team_stats": "Team yards, conversions and turnovers per game, and the same figures allowed on defense.",
+    "player_stats": "Player passing, rushing, receiving and defensive box scores per game.",
     "rosters": "Player names, positions and classes.",
     "scoring_events": "Each score with its time and type.",
     "recorded_plays": "Recorded plays for play examples.",
@@ -143,8 +174,24 @@ HIGHER_IS_BETTER = {
     "passing_yards_per_game": True, "net_yards_per_pass_attempt": True, "rushing_yards_per_game": True, "yards_per_rush": True,
     "third_down_rate": True, "fourth_down_rate": True, "turnovers_per_game": False, "completion_rate": True,
     "passing_yards_per_attempt": True, "rushing_yards_per_attempt": True, "yards_per_reception": True,
+    **{metric: metric.startswith("defender_") or metric in {
+        "takeaways_per_game", "sacks_per_game", "tackles_for_loss_per_game", "passes_defended_per_game", "qb_hurries_per_game"}
+       for metric, item in METRICS.items() if item[2] in {"defense", "defender"}},
 }
 NEUTRAL_ADVANCED_METRICS = {"pass_over_expected", "expected_pass_rate"}
+DEFENSE_LIMITATIONS = {
+    "defense": [
+        "Allowed figures are the opponent's recorded box score in the same game; they also reflect the opponent's offense and pace.",
+        "Sacks, tackles for loss, passes defended and hurries are summed from ESPN's defensive box score; "
+        "games without one are excluded, not counted as zero.",
+    ],
+    "defender": [
+        "Per game counts only games in which ESPN lists the player in the defensive box score; "
+        "ESPN omits defenders with no recorded statistic, so quiet appearances are not in the denominator.",
+        "Box-score credit is not snap-weighted: ESPN does not publish college snap counts or on-field lineups.",
+        "Tackles for loss include sacks; passes defended can include interceptions, depending on the scorer.",
+    ],
+}
 
 
 class CFBPlugin:
@@ -182,9 +229,9 @@ class CFBPlugin:
             analysis_domains=[
                 {
                     "value": name,
-                    "label": name.title(),
+                    "label": DOMAIN_LABELS.get(name, name.title()),
                     "description": DOMAIN_DESCRIPTIONS[name],
-                    "subject_type": "team" if name in {"results", "offense"} else "player",
+                    "subject_type": "team" if name in TEAM_DOMAINS else "player",
                 }
                 for name in DEFAULTS
             ],
@@ -294,6 +341,7 @@ class CFBPlugin:
             limitations=[
                 "Missing values are excluded, never replaced with zero.",
                 "Unequal schedules, FBS/FCS opposition and transfers can affect comparisons.",
+                *DEFENSE_LIMITATIONS.get(domain, []),
             ],
         )
 

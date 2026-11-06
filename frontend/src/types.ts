@@ -133,6 +133,7 @@ export type PlayVisualization = {
   yards_gained?: number; passer?: string; receiver?: string; rusher?: string; touchdown?: boolean; turnover?: boolean;
   complete_pass?: boolean; interception?: boolean; fumble?: boolean; fumble_lost?: boolean; return_yards?: number;
   return_team?: string; turnover_player?: string; recovery_player?: string; recovery_team?: string; recovery_yards?: number;
+  defensive_playmakers?: Array<{role: string; players: string[]}>;
   sack?: boolean; penalty?: boolean; first_down?: boolean; win_probability?: number; win_probability_added?: number;
   defenders_in_box?: number; pass_rushers?: number; route?: string; coverage_type?: string; man_zone?: string;
   pressure?: boolean; time_to_throw?: number; motion?: boolean; play_action?: boolean; rpo?: boolean; screen?: boolean;

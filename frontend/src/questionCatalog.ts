@@ -22,6 +22,13 @@ export const questionBanks: QuestionBank = {
         "How much of the offensive change came from play mix versus performance within the passing and rushing games?",
         "Was the offense's improvement or decline broad-based across the window, or concentrated in a few games?",
         "Which plays provide the clearest evidence for—and against—the overall offensive trend?"
+      ],
+      defense: [
+        "Did the defense allow less EPA per play, and was that driven by the pass defense, the run defense, or takeaways?",
+        "Did the defense get better at stopping plays, or did fewer big plays allowed account for most of the change?",
+        "How did the defense perform against man and zone coverage, and with four rushers versus extra rushers?",
+        "Was the defensive change broad-based across the window, or concentrated in a few games?",
+        "Which plays provide the clearest evidence for—and against—the defensive trend?"
       ]
     },
     player: {
@@ -45,6 +52,13 @@ export const questionBanks: QuestionBank = {
         "Was the rushing change consistent across games, or driven by a few large performances?",
         "Did increased workload come with better efficiency, diminishing returns, or no meaningful change?",
         "Which carries best represent the runner's efficiency trend and its counterexamples?"
+      ],
+      defender: [
+        "Did this defender make more disruptive plays per snap: sacks, tackles for loss, breakups or forced fumbles?",
+        "Did this defender's role change, and did his per-snap production hold up with more or fewer snaps?",
+        "How did this defender's pass rush change: sacks, QB hits and PFR pressures per game?",
+        "Was this defender's change sustained across the season, or driven by a few big games?",
+        "Which plays best show this defender's impact, and which run against the trend?"
       ]
     }
   },
@@ -193,6 +207,11 @@ export const supplementalQuestionBanks: QuestionBank = {
         "Which phase—passing, rushing, sacks, or turnovers—accounted for the largest share of the offensive change?",
         "Did the offense improve across score states and field zones, or mostly when game conditions were favorable?",
         "How robust is the offensive trend after accounting for opponent strength and outlier games?"
+      ],
+      defense: [
+        "Did the defense hold opponents below their usual output once opponent strength is accounted for?",
+        "How did the defense fare on third downs and in the red zone compared with the rest of the field?",
+        "Did a change in nickel and dime usage or box counts line up with the run-defense change?"
       ]
     },
     player: {

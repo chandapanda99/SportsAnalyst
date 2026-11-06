@@ -51,6 +51,53 @@ def special_teams_context(row):
             "no_play": row.get("play_type") == "no_play", "source": "Recorded nflverse play-by-play fields"}
 
 
+def defensive_playmakers(row) -> list[dict]:
+    """Name the defenders the play-by-play credits, most decisive first.
+
+    Takeaways and sacks are always credited, so a sacker who also forces the fumble gets both. Lesser credits
+    (breakups, tackles for loss, QB hits, tackles) skip defenders already named: an interceptor is also logged
+    as a pass defender, and a sacker as a tackler. Tackles count only for the defending team, because a return
+    after a turnover is tackled by the offense.
+    """
+    defense = _row_text(row, "defteam")
+
+    def names(*columns, team_columns=()):
+        found = []
+        for index, column in enumerate(columns):
+            name = _row_text(row, column)
+            team = _row_text(row, team_columns[index]) if index < len(team_columns) else None
+            if name and (team is None or defense is None or team == defense) and name not in found:
+                found.append(name)
+        return found
+
+    recovered = (_row_text(row, "fumble_recovery_1_player_name")
+                 if defense and _row_text(row, "fumble_recovery_1_team") == defense else None)
+    # (role, players, skip defenders already credited)
+    roles = [
+        ("Interception", names("interception_player_name"), False),
+        ("Sack", names("sack_player_name"), False),
+        ("Half sack", names("half_sack_1_player_name", "half_sack_2_player_name"), False),
+        ("Forced fumble", names("forced_fumble_player_1_player_name", "forced_fumble_player_2_player_name",
+                                team_columns=("forced_fumble_player_1_team", "forced_fumble_player_2_team")), False),
+        ("Fumble recovery", [recovered] if recovered else [], False),
+        ("Pass breakup", names("pass_defense_1_player_name", "pass_defense_2_player_name"), True),
+        ("Tackle for loss", names("tackle_for_loss_1_player_name", "tackle_for_loss_2_player_name"), True),
+        ("QB hit", names("qb_hit_1_player_name", "qb_hit_2_player_name"), True),
+        ("Tackle", names("solo_tackle_1_player_name", "solo_tackle_2_player_name", "tackle_with_assist_1_player_name",
+                         "tackle_with_assist_2_player_name", "assist_tackle_1_player_name", "assist_tackle_2_player_name",
+                         team_columns=("solo_tackle_1_team", "solo_tackle_2_team", "tackle_with_assist_1_team",
+                                       "tackle_with_assist_2_team", "assist_tackle_1_team", "assist_tackle_2_team")), True),
+    ]
+    credited: set[str] = set()
+    result = []
+    for role, players, skip_credited in roles:
+        fresh = [player for player in players if not (skip_credited and player in credited)]
+        credited.update(fresh)
+        if fresh:
+            result.append({"role": role, "players": fresh})
+    return result
+
+
 class NFLPresentationMixin:
     """Provide evidence selection and report-chart construction methods."""
 
@@ -112,7 +159,8 @@ class NFLPresentationMixin:
                         outcome_value=numeric_metric,
                         relevance=relevance,
                         context_quality=context_quality,
-                        opponent=str(row.get("defteam") or ""),
+                        # On a defensive report the team is the defending side, so the opponent has the ball.
+                        opponent=str((row.get("posteam") if row.get("defteam") == team else row.get("defteam")) or ""),
                         period=str(row.get("qtr") or ""),
                     )
                 )
@@ -165,6 +213,7 @@ class NFLPresentationMixin:
                 turnover_player=_row_text(row, "interception_player_name")
                 or _row_text(row, "fumble_recovery_1_player_name"),
                 recovery_player=_row_text(row, "fumble_recovery_1_player_name"),
+                defensive_playmakers=defensive_playmakers(row),
                 recovery_team=_row_text(row, "fumble_recovery_1_team"),
                 recovery_yards=_row_number(row, "fumble_recovery_1_yards"),
                 passer=_row_text(row, "passer_player_name"),
@@ -211,7 +260,8 @@ class NFLPresentationMixin:
         primary_metric: str = "epa_per_dropback",
         analysis_domain: str = "passing",
     ) -> list[ChartArtifact]:
-        domain_title = {"passing": "Passing efficiency", "rushing": "Rushing performance", "offense": "Overall offense"}[analysis_domain]
+        domain_title = {"passing": "Passing efficiency", "rushing": "Rushing performance", "offense": "Overall offense",
+                        "defense": "Defense"}[analysis_domain]
         window_labels = [f"{window.season} W{window.weeks[0]}–{window.weeks[1]}" for window in windows]
         metric_items = [item for item in evidence if item.metric in METRICS]
         if season_frames:

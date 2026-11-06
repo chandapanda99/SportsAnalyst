@@ -39,6 +39,27 @@ POSITIVE_IS_BETTER = {
     "overall_yards_per_play",
 }
 LOWER_IS_BETTER = {"sack_rate", "interception_rate", "stuff_rate", "turnover_rate"}
+# NFL defense: "allowed" measures read lower-is-better; the defense's own outcomes read higher-is-better.
+LOWER_IS_BETTER.update({
+    "epa_per_play_allowed",
+    "success_rate_allowed",
+    "epa_per_dropback_allowed",
+    "epa_per_rush_allowed",
+    "yards_per_play_allowed",
+    "explosive_play_rate_allowed",
+    "opponent_adjusted_epa_per_play_allowed",
+})
+POSITIVE_IS_BETTER.update({"defensive_sack_rate", "takeaway_rate", "run_stuff_rate", "third_down_stop_rate"})
+POSITIVE_IS_BETTER.update({"defender_snaps_per_game", "defender_havoc_rate", "defender_tackle_rate", "defender_sack_rate",
+                           "defender_qb_hit_rate", "defender_pass_breakup_rate", "defender_tfl_rate"})
+LOWER_IS_BETTER.add("defender_epa_allowed_on_field")
+# College football defense: allowed measures fall when the defense improves; havoc counts rise.
+LOWER_IS_BETTER.update({"yards_allowed_per_game", "passing_yards_allowed_per_game", "net_yards_per_pass_allowed",
+                        "rushing_yards_allowed_per_game", "yards_per_rush_allowed", "opponent_third_down_rate"})
+POSITIVE_IS_BETTER.update({"takeaways_per_game", "sacks_per_game", "tackles_for_loss_per_game", "passes_defended_per_game",
+                           "qb_hurries_per_game", "defender_tackles_per_game", "defender_solo_tackles_per_game",
+                           "defender_tackles_for_loss_per_game", "defender_sacks_per_game", "defender_passes_defended_per_game",
+                           "defender_interceptions_per_game", "defender_qb_hurries_per_game"})
 POSITIVE_IS_BETTER.update(
     {
         "qb_epa_per_dropback",
@@ -333,6 +354,12 @@ def _fallback_synthesis(
         "impact": "plus_minus_per_game",
         "lineups": "lineup_net_rating",
     }.get(analysis_domain, metrics[0].metric if metrics else "")
+    if sport == "nfl" and analysis_domain == "defense":
+        preferred_metric = "epa_per_play_allowed"
+    if sport == "nfl" and analysis_domain == "defender":
+        preferred_metric = "defender_havoc_rate"
+    if sport == "cfb" and analysis_domain == "defense":
+        preferred_metric = "yards_allowed_per_game"
     primary = next((item for item in metrics if item.metric == preferred_metric), metrics[0] if metrics else None)
     if primary is None:
         raise ValueError("analysis produced no comparable metrics")
@@ -392,7 +419,7 @@ def _fallback_synthesis(
         sign = -1 if float(primary.value or 0) < 0 else 1
         largest = max(accounting, key=lambda item: sign * float(item.value))
         summary += (f" {largest.label} supplied the largest accounting contribution in the direction of the EPA/play change "
-                    f"({float(largest.value):+.4f} EPA per qualifying offensive play). "
+                    f"({float(largest.value):+.4f} {largest.unit}). "
                     "This is an exclusive descriptive breakdown, not a causal estimate.")
         claims.append(Claim(claim_id=stable_id("claim", {"accounting": largest.evidence_id}), claim_type=ClaimType.MEASURED,
             statement=f"{largest.label} contributed {float(largest.value):+.4f} EPA/play to the change; categories reconcile to the overall change.",
@@ -497,7 +524,8 @@ def _head_to_head_fallback(subjects: tuple[str, str], aggregate: list[AggregateE
     figures = f"{first} {float(primary.baseline_value):.3f}, {second} {float(primary.comparison_value):.3f}"
     summary = f"{ahead} led on {primary.label} ({figures})." if ahead else f"On {primary.label}, the measurements were {figures}."
     summary += (" Each value is that subject's own measurement over the same period; differences are gaps between "
-                f"the two {'teams' if analysis_domain in {'passing', 'rushing', 'offense'} else 'subjects'}, not changes over time.")
+                f"the two {'teams' if analysis_domain in {'passing', 'rushing', 'offense', 'defense'} else 'subjects'}, "
+                "not changes over time.")
     claims = [
         Claim(
             claim_id=stable_id("claim", {"head_to_head": item.evidence_id}),

@@ -29,6 +29,8 @@ from sports_analyst.models import (
 from sports_analyst.plugins.nfl_accounting import classified, phase_accounting
 from sports_analyst.plugins.nfl_personnel import NFLPersonnelMixin
 from sports_analyst.plugins.nfl_player import (
+    DEFENSIVE_CREDIT_COLUMNS,
+    DEFENSIVE_NAME_COLUMNS,
     PLAYER_DEFAULTS,
     PLAYER_METRICS,
     NFLPlayerAnalysisMixin,
@@ -43,6 +45,7 @@ from sports_analyst.plugins.nfl_shared import (
     DEFAULT_METRICS,
     DEFAULT_METRICS_BY_DOMAIN,
     DEFAULT_SPLITS,
+    DEFAULT_SPLITS_BY_DOMAIN,
     HIGHER_IS_BETTER,
     LATEST_SYNCABLE_SEASON,
     METRIC_DOMAINS,
@@ -51,6 +54,8 @@ from sports_analyst.plugins.nfl_shared import (
     METRIC_METADATA,
     METRICS,
     NFL_TEAMS,
+    PARTICIPATION_FALLBACK_SPLITS,
+    PARTICIPATION_SPLITS,
     SPLIT_COLUMNS,
     SPLIT_DIMENSIONS,
     TEAM_ALIASES,
@@ -64,6 +69,7 @@ from sports_analyst.plugins.nfl_shared import (
     _opponent_adjusted_epa,
     _scope_plays,
     _sha,
+    attach_participation_splits,
 )
 from sports_analyst.plugins.nfl_supplemental import NFLSupplementalMixin
 from sports_analyst.plugins.nfl_trends import NFLTrendMixin
@@ -129,6 +135,32 @@ PBP_ANALYSIS_COLUMNS = {
     "return_yards",
     "return_team",
     "interception_player_name",
+    # Defenders credited on the play, for the play viewer's "made the play" line.
+    "sack_player_name",
+    "half_sack_1_player_name",
+    "half_sack_2_player_name",
+    "qb_hit_1_player_name",
+    "qb_hit_2_player_name",
+    "pass_defense_1_player_name",
+    "pass_defense_2_player_name",
+    "tackle_for_loss_1_player_name",
+    "tackle_for_loss_2_player_name",
+    "forced_fumble_player_1_player_name",
+    "forced_fumble_player_1_team",
+    "forced_fumble_player_2_player_name",
+    "forced_fumble_player_2_team",
+    "solo_tackle_1_player_name",
+    "solo_tackle_1_team",
+    "solo_tackle_2_player_name",
+    "solo_tackle_2_team",
+    "tackle_with_assist_1_player_name",
+    "tackle_with_assist_1_team",
+    "tackle_with_assist_2_player_name",
+    "tackle_with_assist_2_team",
+    "assist_tackle_1_player_name",
+    "assist_tackle_1_team",
+    "assist_tackle_2_player_name",
+    "assist_tackle_2_team",
     "fumble_recovery_1_team",
     "fumble_recovery_1_yards",
     "fumble_recovery_1_player_name",
@@ -148,10 +180,22 @@ DOMAIN_DATASETS = {
     "quarterback": {"nextgen_passing", "pfr_passing"},
     "receiving": {"nextgen_receiving", "pfr_receiving"},
     "running": {"nextgen_rushing", "pfr_rushing"},
+    "defense": {"pfr_defense"},
+    "defender": {"pfr_defense", "participation"},
+}
+# Offense-only tools: they describe the team's own passers, receivers and ball carriers.
+OFFENSE_ONLY_TOOLS = {
+    "compare_player_usage",
+    "analyze_qb_receiver_pairs",
+    "join_nextgen_passing_metrics",
+    "join_nextgen_receiving_metrics",
+    "join_nextgen_rushing_metrics",
 }
 
 
 PLAYER_RESULT_LIMIT = 10_000
+# Weekly player-stat columns that show a player recorded defensive activity.
+DEFENDER_ACTIVITY = ("def_tackles_solo", "def_tackle_assists", "def_sacks", "def_qb_hits", "def_pass_defended", "def_interceptions")
 
 
 class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSupplementalMixin, NFLPresentationMixin):
@@ -162,7 +206,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
 
     def required_play_by_play_columns(self, request: AnalysisRequest) -> set[str]:
         del request
-        return set(PBP_ANALYSIS_COLUMNS)
+        # Defensive credit identifiers attribute sacks, hits, breakups and tackles to a defender.
+        return set(PBP_ANALYSIS_COLUMNS) | {column for columns in DEFENSIVE_CREDIT_COLUMNS.values() for column in columns}
 
     def required_supplemental_datasets(self, request: AnalysisRequest) -> set[str]:
         question = request.question.lower()
@@ -202,7 +247,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             ToolDefinition(name="find_representative_plays", description="Return supporting and counterexample plays for a diagnosis."),
             ToolDefinition(name="explain_metric", description="Return a metric definition, formula, qualifying rules, and limitations."),
             ToolDefinition(name="decompose_metric_change", description="Separate metric changes into mix and within-group performance."),
-            ToolDefinition(name="account_offensive_epa_change", description="Reconcile exclusive passing, rushing, sack and turnover contributions to EPA/play change."),
+            ToolDefinition(name="account_offensive_epa_change", description="Reconcile exclusive passing, rushing, sack and turnover "
+                           "contributions to the change in EPA/play, or EPA/play allowed for a defense."),
             ToolDefinition(name="adjust_for_opponents", description="Compare raw performance with leave-one-game-out opponent context."),
             ToolDefinition(name="analyze_game_state", description="Analyze performance while leading, tied, and trailing."),
             ToolDefinition(name="compare_play_mix", description="Measure changes in formation, personnel, tempo, and situational shares."),
@@ -293,12 +339,26 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                       )
                       for value in METRICS
                   ] + player_metric_options(seasons_with)
+        participation_seasons = {
+            manifest.season: set(manifest.columns)
+            for manifest in manifests
+            if manifest.dataset == "participation" and manifest.season > 0
+        }
+        def split_seasons(value: str, required: set[str]) -> list[int]:
+            charted = {season for season, columns in participation_seasons.items() if required <= columns}
+            if value in PARTICIPATION_SPLITS:
+                return sorted(charted)
+            if value in PARTICIPATION_FALLBACK_SPLITS:
+                # Participation only helps where the season's play-by-play is synced too.
+                return sorted(set(seasons_with(required)) | (charted & set(available_seasons)))
+            return seasons_with(required)
+
         splits = [
             SplitDimensionOption(
                 value=value,
                 label=metadata[0],
                 description=metadata[1],
-                available_seasons=seasons_with(metadata[2]),
+                available_seasons=split_seasons(value, metadata[2]),
             )
             for value, metadata in SPLIT_DIMENSIONS.items()
         ]
@@ -346,6 +406,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     "subject_type": "team",
                 },
                 {
+                    "value": "defense",
+                    "label": "Defense",
+                    "description": "Opponent dropbacks and rushes against the team's defense.",
+                    "subject_type": "team",
+                },
+                {
                     "value": "quarterback",
                     "label": "Quarterback",
                     "description": "Passing efficiency and outcomes attributed to one quarterback.",
@@ -361,6 +427,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     "value": "running",
                     "label": "Rushing",
                     "description": "Carries, efficiency, and production attributed to one ball carrier.",
+                    "subject_type": "player",
+                },
+                {
+                    "value": "defender",
+                    "label": "Defense",
+                    "description": "Snaps, sacks, hits, breakups and tackles for one defender, per snap on the field.",
                     "subject_type": "player",
                 },
             ],
@@ -408,6 +480,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 "passing": "Team quarterback dropbacks within the selected season type and inclusive week window.",
                 "rushing": "Team rushing attempts excluding kneels and spikes within the selected season type and week window.",
                 "offense": "Team quarterback dropbacks and rushing attempts, excluding kneels and spikes, within the selected window.",
+                "defense": "Opponent quarterback dropbacks and rushing attempts against the team, excluding kneels and spikes, "
+                "within the selected window.",
             }[METRIC_DOMAINS[normalized]],
             interpretation=METRIC_INTERPRETATIONS[normalized],
             higher_is_better=HIGHER_IS_BETTER[normalized],
@@ -428,6 +502,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 ("passer_player_id", "passer_player_name", "posteam", None),
                 ("receiver_player_id", "receiver_player_name", "posteam", None),
                 ("rusher_player_id", "rusher_player_name", "posteam", None),
+                *((column, name, "defteam", None) for column, name in DEFENSIVE_NAME_COLUMNS.items()),
             ]
             for id_column, name_column, team_column, position_column in candidates:
                 if id_column not in frame.columns or name_column not in frame.columns:
@@ -435,7 +510,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 selected_columns = [id_column, name_column]
                 selected_columns.extend(column for column in (team_column, position_column) if column and column in frame.columns)
                 activity_columns = [
-                    column for column in ("attempts", "targets", "carries") if column in frame.columns
+                    column for column in ("attempts", "targets", "carries", *DEFENDER_ACTIVITY) if column in frame.columns
                 ]
                 selected_columns.extend(activity_columns)
                 for row in frame.select(selected_columns).drop_nulls([id_column, name_column]).unique().iter_rows(named=True):
@@ -450,7 +525,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                             "positions": set(),
                             "activity_seasons": set(),
                             "listed_seasons": set(),
-                            "domain_seasons": {"quarterback": set(), "receiving": set(), "running": set()},
+                            "domain_seasons": {"quarterback": set(), "receiving": set(), "running": set(), "defender": set()},
                         },
                     )
                     record["aliases"].add(name)
@@ -466,7 +541,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                             "passer_player_id",
                             "receiver_player_id",
                             "rusher_player_id",
-                        }
+                        } or id_column in DEFENSIVE_NAME_COLUMNS
                         published_activity = any(float(row.get(column) or 0) > 0 for column in activity_columns)
                         if role_attribution or published_activity:
                             record["activity_seasons"].add(season)
@@ -475,8 +550,12 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                             "receiver_player_id": "receiving",
                             "rusher_player_id": "running",
                         }.get(id_column)
+                        if id_column in DEFENSIVE_NAME_COLUMNS:
+                            role_domain = "defender"
                         if role_domain:
                             record["domain_seasons"][role_domain].add(season)
+                        if any(float(row.get(column) or 0) > 0 for column in DEFENDER_ACTIVITY):
+                            record["domain_seasons"]["defender"].add(season)
                         if float(row.get("attempts") or 0) > 0:
                             record["domain_seasons"]["quarterback"].add(season)
                         if float(row.get("targets") or 0) > 0:
@@ -544,13 +623,14 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     purpose="Ground the analysis in plays attributed to the selected player.",
                 ),
             ]
-            if request.analysis_domain == "quarterback":
+            if request.analysis_domain in {"quarterback", "defender"}:
                 calls.insert(
                     2,
                     PlannedToolCall(
                         tool="compare_player_published_stats",
                         arguments={"player_id": request.subject.id},
-                        purpose="Supplement sparse play-derived results with compatible synced published quarterback statistics.",
+                        purpose=f"Supplement play-derived results with compatible synced published "
+                                f"{'defender' if request.analysis_domain == 'defender' else 'quarterback'} statistics.",
                     ),
                 )
             payload = {
@@ -561,6 +641,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             }
             return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
         default_metrics = DEFAULT_METRICS_BY_DOMAIN[request.analysis_domain]
+        default_splits = DEFAULT_SPLITS_BY_DOMAIN.get(request.analysis_domain, DEFAULT_SPLITS)
+        defense = request.analysis_domain == "defense"
         calls = [
             PlannedToolCall(
                 tool="validate_analysis_scope",
@@ -606,19 +688,20 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 tool="decompose_metric_change",
                 arguments={
                     "metric": request.metrics[0] if request.metrics else default_metrics[0],
-                    "splits": request.splits or DEFAULT_SPLITS,
+                    "splits": request.splits or default_splits,
                 },
                 purpose="Separate situational mix changes from performance changes.",
             ),
             PlannedToolCall(
                 tool="adjust_for_opponents",
-                arguments={"metric": "epa_per_dropback"},
+                arguments={"metric": "epa_per_play_allowed" if defense else "epa_per_dropback"},
                 purpose="Check whether opponent quality helps explain the result.",
             ),
             PlannedToolCall(
                 tool="compare_play_mix",
-                arguments={"splits": request.splits or DEFAULT_SPLITS},
-                purpose="Measure how the offense's situational and structural mix changed.",
+                arguments={"splits": request.splits or default_splits},
+                purpose=("Measure how the situations and looks the defense faced and used changed." if defense
+                         else "Measure how the offense's situational and structural mix changed."),
             ),
             PlannedToolCall(
                 tool="identify_change_points",
@@ -697,7 +780,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             ),
         ]
         required_datasets = self.required_supplemental_datasets(request)
-        if request.analysis_domain == "offense":
+        if request.analysis_domain in {"offense", "defense"}:
             calls.append(PlannedToolCall(tool="account_offensive_epa_change", arguments={},
                 purpose="Reconcile exclusive phase contributions against the overall EPA/play change when recorded fields are complete."))
         tool_datasets = {
@@ -716,6 +799,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             "join_pfr_advanced_stats": {"pfr_passing", "pfr_rushing", "pfr_receiving", "pfr_defense"},
         }
         calls = [call for call in calls if call.tool not in tool_datasets or bool(tool_datasets[call.tool] & required_datasets)]
+        if defense:
+            calls = [call for call in calls if call.tool not in OFFENSE_ONLY_TOOLS]
         payload = {"question": request.question, "scope": request.scope.model_dump(), "calls": [item.model_dump() for item in calls]}
         return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
 
@@ -742,8 +827,16 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         for window, frame in zip(windows, (datasets[endpoint_seasons[0]], datasets[endpoint_seasons[1]]), strict=True):
             if window.weeks != (1, 22) and "week" not in frame.columns:
                 raise ValueError(f"season {window.season} does not contain the week field required for a custom window")
-        baseline = _scope_plays(datasets[endpoint_seasons[0]], team, request.scope.season_type, windows[0].weeks, analysis_domain)
-        comparison = _scope_plays(datasets[endpoint_seasons[1]], team, request.scope.season_type, windows[1].weeks, analysis_domain)
+        defense = analysis_domain == "defense"
+        participation_frames = supplemental.get("participation", {})
+        baseline = attach_participation_splits(
+            _scope_plays(datasets[endpoint_seasons[0]], team, request.scope.season_type, windows[0].weeks, analysis_domain),
+            participation_frames.get(endpoint_seasons[0]),
+        )
+        comparison = attach_participation_splits(
+            _scope_plays(datasets[endpoint_seasons[1]], team, request.scope.season_type, windows[1].weeks, analysis_domain),
+            participation_frames.get(endpoint_seasons[1]),
+        )
         if baseline.height < 30 or comparison.height < 30:
             raise ValueError(f"each comparison window requires at least 30 qualifying {analysis_domain} plays")
         season_frames = (
@@ -766,7 +859,7 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         unknown_splits = sorted(set(request.splits) - set(SPLIT_DIMENSIONS))
         if unknown_splits:
             raise ValueError(f"unsupported split dimensions: {unknown_splits}")
-        selected_splits = request.splits or DEFAULT_SPLITS
+        selected_splits = request.splits or DEFAULT_SPLITS_BY_DOMAIN.get(analysis_domain, DEFAULT_SPLITS)
 
         selected_manifests = list({manifests[season].manifest_id: manifests[season] for season in seasons}.values())
         validation_parameters = {
@@ -859,7 +952,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         )
         executions = [validation_execution, comparison_execution]
 
-        preferred_primary = {"passing": "epa_per_dropback", "rushing": "epa_per_rush", "offense": "epa_per_play"}[analysis_domain]
+        preferred_primary = {"passing": "epa_per_dropback", "rushing": "epa_per_rush", "offense": "epa_per_play",
+                             "defense": "epa_per_play_allowed"}[analysis_domain]
         primary_metric = preferred_primary if preferred_primary in selected_metrics else selected_metrics[0]
         decomposition_parameters = {"metric": primary_metric, "splits": selected_splits}
         decomposition_id = stable_id("execution", {"tool": "decompose_metric_change", **decomposition_parameters})
@@ -918,34 +1012,41 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
 
         scoped_download = any(item.partition_key for item in selected_manifests if item.dataset == "play_by_play")
         adjusted_values = [None, None] if scoped_download else [
-            _opponent_adjusted_epa(datasets[season], frame, team)
+            _opponent_adjusted_epa(datasets[season], frame, team, "defense" if defense else "offense")
             for season, frame in zip(endpoint_seasons, (baseline, comparison), strict=True)
         ]
         opponent_evidence: list[AggregateEvidence] = []
-        opponent_parameters = {"metric": "epa_per_dropback", "windows": [window.model_dump() for window in windows]}
+        adjusted_source = "epa_per_play_allowed" if defense else "epa_per_dropback"
+        opponent_parameters = {"metric": adjusted_source, "windows": [window.model_dump() for window in windows]}
         opponent_id = stable_id("execution", {"tool": "adjust_for_opponents", **opponent_parameters})
         opponent_started_at, opponent_started = datetime.now(UTC), perf_counter()
-        if "epa_per_dropback" in selected_metrics and all(value is not None for value in adjusted_values):
+        if adjusted_source in selected_metrics and all(value is not None for value in adjusted_values):
             base_adjusted, comp_adjusted = (float(value) for value in adjusted_values if value is not None)
+            adjusted_metric = f"opponent_adjusted_{adjusted_source}"
             payload = {
-                "metric": "opponent_adjusted_epa_per_dropback",
+                "metric": adjusted_metric,
                 "team": team,
                 "windows": [window.model_dump() for window in windows],
             }
             opponent_evidence.append(
                 AggregateEvidence(
                     evidence_id=stable_id("evidence", {**payload, "values": [round(value, 4) for value in adjusted_values]}),
-                    metric="opponent_adjusted_epa_per_dropback",
-                    label="Opponent-adjusted EPA/dropback",
+                    metric=adjusted_metric,
+                    label="Opponent-adjusted EPA/play allowed" if defense else "Opponent-adjusted EPA/dropback",
                     value=round(comp_adjusted - base_adjusted, 4),
                     baseline_value=round(base_adjusted, 4),
                     comparison_value=round(comp_adjusted, 4),
-                    unit="EPA/dropback above opponent baseline",
+                    unit="EPA/play allowed vs. what each opponent usually gains" if defense else "EPA/dropback above opponent baseline",
                     sample_size=comparison.height,
                     row_set_sha256=_sha(payload),
                     dataset_manifest_ids=[item.manifest_id for item in selected_manifests],
                     tool_execution_id=opponent_id,
-                    caveats=["Opponent baselines exclude the target game and require at least 30 other defensive dropbacks."],
+                    caveats=[
+                        "Each opponent's baseline is its offense against every other defense; negative values mean the defense "
+                        "held opponents below their usual output."
+                        if defense
+                        else "Opponent baselines exclude the target game and require at least 30 other defensive dropbacks."
+                    ],
                 )
             )
         aggregate.extend(opponent_evidence)
@@ -1030,9 +1131,10 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             aggregate.extend(depth_evidence)
             executions.append(depth_execution)
 
-        usage_evidence, usage_execution = self._player_usage_change(player_weeks, windows, player_manifests)
-        aggregate.extend(usage_evidence)
-        executions.append(usage_execution)
+        if not defense:
+            usage_evidence, usage_execution = self._player_usage_change(player_weeks, windows, player_manifests)
+            aggregate.extend(usage_evidence)
+            executions.append(usage_execution)
 
         availability_by_position = self._position_group_availability(player_weeks, windows, player_manifests)
         if availability_by_position:
@@ -1046,9 +1148,10 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             aggregate.extend(continuity_evidence)
             executions.extend(continuity_executions)
 
-        pair_evidence, pair_execution = self._qb_receiver_pairs(baseline, comparison, selected_manifests)
-        aggregate.extend(pair_evidence)
-        executions.append(pair_execution)
+        if not defense:
+            pair_evidence, pair_execution = self._qb_receiver_pairs(baseline, comparison, selected_manifests)
+            aggregate.extend(pair_evidence)
+            executions.append(pair_execution)
 
         missing_supplemental: list[str] = []
         roster_result = self._roster_context(team, windows, supplemental.get("rosters", {}), supplemental_manifests.get("rosters", {}))
@@ -1075,7 +1178,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             if any(window.season not in supplemental_manifests.get(dataset_name, {}) for window in windows):
                 missing_supplemental.append(dataset_name)
 
-        nextgen_result = self._nextgen_context(
+        # Next Gen Stats describe the team's own passers, receivers and runners, so a defensive report skips them.
+        nextgen_result = None if defense else self._nextgen_context(
             team,
             windows,
             supplemental.get("nextgen_passing", {}),
@@ -1085,10 +1189,10 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             nextgen_evidence, nextgen_execution = nextgen_result
             aggregate.extend(nextgen_evidence)
             executions.append(nextgen_execution)
-        else:
+        elif not defense:
             missing_supplemental.append("nextgen_passing")
 
-        for dataset_name, stat_type in (("nextgen_receiving", "receiving"), ("nextgen_rushing", "rushing")):
+        for dataset_name, stat_type in () if defense else (("nextgen_receiving", "receiving"), ("nextgen_rushing", "rushing")):
             context = self._nextgen_context(
                 team,
                 windows,
@@ -1112,6 +1216,14 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             "join_participation_context",
             "participation",
             {
+                "pressure_rate": "Pressure rate generated",
+                "man_coverage_rate": "Man-coverage rate",
+                "defenders_in_box": "Defenders in the box",
+                "number_of_pass_rushers": "Number of pass rushers",
+                "time_to_throw": "Opposing time to throw",
+            }
+            if defense
+            else {
                 "pressure_rate": "Pressure rate",
                 "man_coverage_rate": "Man-coverage rate",
                 "defenders_in_box": "Defenders in the box",
@@ -1137,6 +1249,17 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
             "join_ftn_charting",
             "ftn",
             {
+                "n_blitzers": "Number of blitzers",
+                "n_pass_rushers": "Number of pass rushers",
+                "n_defense_box": "Charted defenders in the box",
+                "is_qb_out_of_pocket": "Opposing quarterback out-of-pocket rate",
+                "is_interception_worthy": "Opposing interception-worthy throw rate",
+                "is_play_action": "Play action faced rate",
+                "is_screen_pass": "Screens faced rate",
+                "is_motion": "Pre-snap motion faced rate",
+            }
+            if defense
+            else {
                 "is_motion": "Pre-snap motion rate",
                 "is_play_action": "Play-action rate",
                 "is_screen_pass": "Screen rate",
@@ -1181,8 +1304,13 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                 "def_times_hurried": "Defensive hurries",
                 "def_times_hitqb": "Defensive quarterback hits",
                 "def_targets": "Coverage targets",
+                # PFR rows are one defender per game, so these read as an average per defender-game.
+                **({"def_pressures": "Pressures per defender-game",
+                    "def_missed_tackles": "Missed tackles per defender-game"} if defense else {}),
             },
         }
+        if defense:
+            pfr_metric_sets = {"pfr_defense": pfr_metric_sets["pfr_defense"]}
         for dataset_name, candidates in pfr_metric_sets.items():
             pfr_result = self._published_stat_context(
                 team,
@@ -1259,8 +1387,8 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
         )
         charts = self._charts(aggregate, baseline, comparison, windows, season_frames, primary_metric, analysis_domain)
         accounting_gap = None
-        if analysis_domain == "offense" and primary_metric == "epa_per_play":
-            accounting, execution, chart, accounting_gap = phase_accounting(baseline, comparison, selected_manifests)
+        if (analysis_domain, primary_metric) in {("offense", "epa_per_play"), ("defense", "epa_per_play_allowed")}:
+            accounting, execution, chart, accounting_gap = phase_accounting(baseline, comparison, selected_manifests, analysis_domain)
             aggregate.extend(accounting)
             if execution:
                 executions.append(execution)
@@ -1271,10 +1399,11 @@ class NFLPlugin(NFLPlayerAnalysisMixin, NFLTrendMixin, NFLPersonnelMixin, NFLSup
                     phase_examples = []
                     phase_id = stable_id("execution", {"accounting": execution.execution_id, "tool": "find_phase_examples"})
                     for item in accounting:
+                        category = item.context["category"]
                         examples = self._representative_plays(
-                            classified(comparison).filter(pl.col("phase") == item.label), team,
+                            classified(comparison).filter(pl.col("phase") == category), team,
                             manifests[windows[1].season], phase_id, per_window=1,
-                            baseline_frame=classified(baseline).filter(pl.col("phase") == item.label),
+                            baseline_frame=classified(baseline).filter(pl.col("phase") == category),
                             baseline_manifest=manifests[windows[0].season])
                         phase_examples.extend(play.model_copy(update={"selection_reason":
                             f"Recorded example of {item.label}; illustrates the category, not its aggregate contribution. "

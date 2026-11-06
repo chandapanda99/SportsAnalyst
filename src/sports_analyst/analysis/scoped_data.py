@@ -181,10 +181,16 @@ class ScopedData:
         subject = self.request.subject
         identifier = str(subject.id if subject else self.request.scope.team)
         if subject and subject.type == "player":
-            identity = [field for field in ("player_id", "athlete_id", "passer_player_id", "rusher_player_id", "receiver_player_id")
-                        if field in columns]
+            candidates = ("player_id", "athlete_id", "passer_player_id", "rusher_player_id", "receiver_player_id")
+            if self.request.analysis_domain == "defender":
+                from sports_analyst.plugins.nfl_player import DEFENSIVE_NAME_COLUMNS
+
+                candidates = (*candidates, "gsis_id", "pfr_player_id", *DEFENSIVE_NAME_COLUMNS)
+            identity = [field for field in candidates if field in columns]
         else:
-            names = ("posteam",) if self.request.sport == "nfl" and manifest.dataset == "play_by_play" else (
+            # A defensive investigation's plays are the ones the team defended.
+            pbp_team = "defteam" if self.request.analysis_domain == "defense" else "posteam"
+            names = (pbp_team,) if self.request.sport == "nfl" and manifest.dataset == "play_by_play" else (
                 ("team_abbreviation", "team_abbrev", "team", "recent_team") if self.request.sport in {"nfl", "nba"} else ("team_id",))
             identity = [field for field in names if field in columns]
         if not identity:

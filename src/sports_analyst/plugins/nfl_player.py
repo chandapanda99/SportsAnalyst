@@ -1,4 +1,4 @@
-"""First-class NFL quarterback, receiving, and rushing analysis."""
+"""First-class NFL quarterback, receiving, rushing and defender analysis."""
 
 from __future__ import annotations
 
@@ -264,7 +264,62 @@ PLAYER_METRICS: dict[str, tuple[str, str, str, str, str, str, str, bool, set[str
     ),
 }
 
+# Defenders are measured over the snaps they were on the field, from participation's on-field player list.
+_DEFENDER_COLUMNS = {"defteam", "game_id"}
+PLAYER_METRICS.update({
+    "defender_havoc_rate": (
+        "def_havoc", "Havoc rate", "Disruption", "defender",
+        "Share of his on-field snaps with a sack, tackle for loss, pass breakup, interception or forced fumble.",
+        "snaps with a havoc credit / on-field snaps",
+        "Higher values indicate more disruptive plays; credits come from the official play-by-play.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_snaps_per_game": (
+        "plays_per_game", "Defensive snaps/game", "Volume", "defender",
+        "Opponent dropbacks and rushes he was on the field for, per game played.",
+        "on-field snaps / distinct games with a snap", "Higher values indicate a larger defensive role.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_tackle_rate": (
+        "def_tackle", "Tackle rate", "Involvement", "defender",
+        "Share of his on-field snaps where he was credited with a solo or assisted tackle.",
+        "snaps with a tackle credit / on-field snaps",
+        "Higher values mean more tackles per snap, which partly reflects position and how far plays get.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_sack_rate": (
+        "def_sack", "Sack rate", "Pass rush", "defender",
+        "Sacks per opponent dropback with him on the field; a half sack counts 0.5.",
+        "sacks / on-field opponent dropbacks", "Higher values indicate more sacks per pass snap.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_qb_hit_rate": (
+        "def_qb_hit", "QB hit rate", "Pass rush", "defender",
+        "Share of opponent dropbacks with him on the field where he hit the quarterback.",
+        "dropbacks with a QB hit credit / on-field opponent dropbacks",
+        "Higher values indicate more quarterback contact per pass snap.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_pass_breakup_rate": (
+        "def_pbu", "Pass breakup rate", "Coverage", "defender",
+        "Share of opponent dropbacks with him on the field where he broke up or intercepted a pass.",
+        "dropbacks with a pass defensed or interception / on-field opponent dropbacks",
+        "Higher values indicate more passes defended per pass snap; it does not measure targets allowed.", True, _DEFENDER_COLUMNS,
+    ),
+    "defender_tfl_rate": (
+        "def_tfl", "Tackle-for-loss rate", "Run defense", "defender",
+        "Share of his on-field snaps with a tackle for loss.",
+        "snaps with a tackle-for-loss credit / on-field snaps", "Higher values indicate more plays stopped behind the line.",
+        True, _DEFENDER_COLUMNS,
+    ),
+    "defender_epa_allowed_on_field": (
+        "epa", "EPA/play allowed on field", "Team context", "defender",
+        "Expected points the opponent added per play while he was on the field.",
+        "mean(epa) over his on-field snaps",
+        "Lower is better. It describes the whole defense with him on the field, not his own assignments.", False,
+        {"defteam", "epa"},
+    ),
+})
+DEFENDER_METRICS = [metric for metric, item in PLAYER_METRICS.items() if item[3] == "defender"]
+
 PLAYER_DEFAULTS = {
+    # Havoc rate leads: the first metric drives the trend chart, weekly checks and example plays.
+    "defender": ["defender_havoc_rate", "defender_snaps_per_game", "defender_tackle_rate", "defender_epa_allowed_on_field"],
     "quarterback": ["qb_epa_per_dropback", "qb_success_rate", "qb_cpoe", "qb_yards_per_dropback"],
     "receiving": ["receiver_targets_per_game", "receiver_epa_per_target", "receiver_catch_rate", "receiver_yards_per_target"],
     "running": ["rusher_carries_per_game", "rusher_epa_per_carry", "rusher_success_rate", "rusher_yards_per_carry"],
@@ -286,6 +341,24 @@ PLAYER_ID_COLUMNS = (
 )
 PLAYER_NAME_COLUMNS = ("player_name", "player_display_name", "display_name", "full_name", "player")
 PLAYER_TEAM_COLUMNS = ("recent_team", "team", "team_abbr")
+
+# Play-by-play credit columns that carry a defender's nflverse (gsis) identifier.
+DEFENSIVE_CREDIT_COLUMNS = {
+    "sack": ("sack_player_id",),
+    "half_sack": ("half_sack_1_player_id", "half_sack_2_player_id"),
+    "qb_hit": ("qb_hit_1_player_id", "qb_hit_2_player_id"),
+    "pbu": ("pass_defense_1_player_id", "pass_defense_2_player_id", "interception_player_id"),
+    "interception": ("interception_player_id",),
+    "tfl": ("tackle_for_loss_1_player_id", "tackle_for_loss_2_player_id"),
+    "forced_fumble": ("forced_fumble_player_1_player_id", "forced_fumble_player_2_player_id"),
+    "tackle": ("solo_tackle_1_player_id", "solo_tackle_2_player_id", "tackle_with_assist_1_player_id",
+               "tackle_with_assist_2_player_id", "assist_tackle_1_player_id", "assist_tackle_2_player_id"),
+}
+DEFENSIVE_NAME_COLUMNS = {
+    column: column.removesuffix("_id") + "_name"
+    for columns in DEFENSIVE_CREDIT_COLUMNS.values()
+    for column in columns
+}
 
 PUBLISHED_QB_METRICS = {
     "nextgen_passing": {
@@ -388,6 +461,65 @@ def _scope_player(
             "_complete_pass"
         ),
         (pl.col("touchdown").cast(pl.Float64, strict=False) if "touchdown" in scoped.columns else pl.lit(None)).alias("_touchdown"),
+    )
+
+
+def _credited(frame: pl.DataFrame, columns: tuple[str, ...], identifiers: list[str]) -> pl.Expr:
+    present = [column for column in columns if column in frame.columns]
+    if not present:
+        return pl.lit(False)
+    return pl.any_horizontal([pl.col(column).cast(pl.String, strict=False).is_in(identifiers).fill_null(False) for column in present])
+
+
+def _scope_defender(
+    frame: pl.DataFrame,
+    request: AnalysisRequest,
+    season: int,
+    weeks: tuple[int, int],
+    identifiers: set[str],
+    participation: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """Return opponent dropbacks and rushes with the defender on the field, marked with his play-by-play credits."""
+    subject = request.subject
+    if subject is None or subject.type != "player":
+        raise ValueError("NFL defender analysis requires a player subject")
+    if participation is None or participation.is_empty() or "defense_players" not in participation.columns:
+        raise ValueError(
+            f"Defender analysis needs the Participation package for {season} to know which snaps a defender played. "
+            "Sync it from Manage Data and run the analysis again."
+        )
+    team = subject.team_id or request.scope.team
+    scoped_team = team.upper() if team and team.upper() not in {"NFL", "ALL"} else None
+    teams = [scoped_team] if scoped_team else (
+        [str(value) for value in frame["defteam"].drop_nulls().unique().to_list()] if "defteam" in frame.columns else [])
+    frames = [_scope_plays(frame, candidate, request.scope.season_type, weeks, "defense") for candidate in teams]
+    plays = pl.concat(frames, how="diagonal_relaxed") if frames else frame.head(0)
+    ids = sorted(identifiers)
+    game = next(column for column in ("nflverse_game_id", "game_id") if column in participation.columns)
+    play = next(column for column in ("nflverse_play_id", "play_id") if column in participation.columns)
+    on_field = participation.select(
+        pl.col(game).cast(pl.String).alias("_join_game"),
+        pl.col(play).cast(pl.Int64, strict=False).alias("_join_play"),
+    ).filter(
+        participation["defense_players"].cast(pl.String).str.split(";").list.eval(pl.element().str.strip_chars().is_in(ids)).list.any()
+    ).unique()
+    plays = plays.with_columns(
+        pl.col("game_id").cast(pl.String).alias("_join_game"),
+        pl.col("play_id").cast(pl.Int64, strict=False).alias("_join_play"),
+    ).join(on_field, on=["_join_game", "_join_play"], how="inner").drop("_join_game", "_join_play")
+    dropback = (pl.col("qb_dropback") == 1 if "qb_dropback" in plays.columns else pl.col("play_type") == "pass").fill_null(False)
+    credit = {role: _credited(plays, columns, ids) for role, columns in DEFENSIVE_CREDIT_COLUMNS.items()}
+    sack = pl.when(credit["sack"]).then(1.0).when(credit["half_sack"]).then(0.5).otherwise(0.0)
+    havoc = credit["sack"] | credit["half_sack"] | credit["tfl"] | credit["pbu"] | credit["forced_fumble"]
+    return plays.with_columns(
+        pl.when(dropback).then(sack).otherwise(None).alias("_def_sack"),
+        pl.when(dropback).then(credit["qb_hit"].cast(pl.Float64)).otherwise(None).alias("_def_qb_hit"),
+        pl.when(dropback).then(credit["pbu"].cast(pl.Float64)).otherwise(None).alias("_def_pbu"),
+        credit["tfl"].cast(pl.Float64).alias("_def_tfl"),
+        credit["tackle"].cast(pl.Float64).alias("_def_tackle"),
+        havoc.cast(pl.Float64).alias("_def_havoc"),
+        # Plays he made, for representative examples; on-field snaps without a credit are not "his" plays.
+        (havoc | credit["tackle"] | credit["qb_hit"]).alias("_def_involved"),
     )
 
 
@@ -505,7 +637,55 @@ def _player_stats_summary(frame: pl.DataFrame) -> dict[str, tuple[str, float, in
     return summary
 
 
-def _published_summary(dataset: str, frame: pl.DataFrame) -> dict[str, tuple[str, float, int, str]]:
+def _defender_published_summary(dataset: str, frame: pl.DataFrame) -> dict[str, tuple[str, float, int, str]]:
+    """Per-game defender figures from the weekly box score, PFR charting and snap counts."""
+    games = frame.height
+    if not games:
+        return {}
+
+    def total(column: str) -> float | None:
+        values = _numeric_values(frame, column)
+        return float(values.sum()) if values.len() else None
+
+    summary: dict[str, tuple[str, float, int, str]] = {}
+    per_game = {
+        "player_stats": {
+            "def_sacks": "Sacks/game", "def_qb_hits": "QB hits/game", "def_tackles_for_loss": "Tackles for loss/game",
+            "def_pass_defended": "Passes defensed/game", "def_interceptions": "Interceptions/game",
+            "def_fumbles_forced": "Forced fumbles/game",
+        },
+        "pfr_defense": {"def_pressures": "Pressures/game (PFR)", "def_times_hurried": "Hurries/game (PFR)",
+                        "def_targets": "Targets allowed/game (PFR)"},
+        "snap_counts": {"defense_snaps": "Defensive snaps/game (published)"},
+    }.get(dataset, {})
+    for column, label in per_game.items():
+        value = total(column)
+        if value is not None:
+            summary[column] = (label, value / games, games, "per game")
+    if dataset == "player_stats":
+        solo, assisted = total("def_tackles_solo"), total("def_tackle_assists")
+        if solo is not None:
+            summary["tackles"] = ("Tackles/game (solo + assisted)", (solo + (assisted or 0)) / games, games, "per game")
+    if dataset == "pfr_defense":
+        targets, completions, yards = total("def_targets"), total("def_completions_allowed"), total("def_yards_allowed")
+        if targets:
+            if completions is not None:
+                summary["completion_rate_allowed"] = ("Completion rate allowed (PFR)", completions / targets, int(targets), "rate")
+            if yards is not None:
+                summary["yards_per_target_allowed"] = ("Yards/target allowed (PFR)", yards / targets, int(targets), "yards/target")
+        missed, combined = total("def_missed_tackles"), total("def_tackles_combined")
+        if missed is not None and combined is not None and missed + combined:
+            summary["missed_tackle_rate"] = ("Missed-tackle rate (PFR)", missed / (missed + combined), int(missed + combined), "rate")
+    if dataset == "snap_counts":
+        share = _numeric_values(frame, "defense_pct")
+        if share.len():
+            summary["defense_pct"] = ("Defensive snap share", float(share.mean()), share.len(), "rate")
+    return summary
+
+
+def _published_summary(dataset: str, frame: pl.DataFrame, domain: str = "quarterback") -> dict[str, tuple[str, float, int, str]]:
+    if domain == "defender":
+        return _defender_published_summary(dataset, frame)
     if dataset == "player_stats":
         return _player_stats_summary(frame)
     summary: dict[str, tuple[str, float, int, str]] = {}
@@ -664,7 +844,10 @@ class NFLPlayerAnalysisMixin:
         identifiers, names = _player_identity(subject.id, directory)
         evidence: list[AggregateEvidence] = []
         executions = []
-        for dataset in ("player_stats", "nextgen_passing", "pfr_passing"):
+        domain = request.analysis_domain
+        datasets = ("player_stats", "pfr_defense", "snap_counts") if domain == "defender" else (
+            "player_stats", "nextgen_passing", "pfr_passing")
+        for dataset in datasets:
             frames = supplemental.get(dataset, {})
             manifests = supplemental_manifests.get(dataset, {})
             if any(window.season not in frames or window.season not in manifests for window in windows):
@@ -682,6 +865,7 @@ class NFLPlayerAnalysisMixin:
                 _published_summary(
                     dataset,
                     _scope_published_player(frames[window.season], request, window, identifiers, names),
+                    domain,
                 )
                 for window in windows
             ]
@@ -750,17 +934,17 @@ class NFLPlayerAnalysisMixin:
         windows = [request.scope.baseline, request.scope.comparison]
         directory = supplemental.get("players", {}).get(0)
         identifiers, names = _player_identity(subject.id, directory)
-        baseline = _scope_player(
-            datasets[windows[0].season], request, windows[0].season, windows[0].weeks, identifiers, names
-        )
-        comparison = _scope_player(
-            datasets[windows[1].season], request, windows[1].season, windows[1].weeks, identifiers, names
-        )
+        participation = supplemental.get("participation", {})
+
+        def scope(season: int, weeks: tuple[int, int]) -> pl.DataFrame:
+            if domain == "defender":
+                return _scope_defender(datasets[season], request, season, weeks, identifiers, participation.get(season))
+            return _scope_player(datasets[season], request, season, weeks, identifiers, names)
+
+        baseline = scope(windows[0].season, windows[0].weeks)
+        comparison = scope(windows[1].season, windows[1].weeks)
         season_frames = (
-            {
-                season: _scope_player(datasets[season], request, season, (1, 22), identifiers, names)
-                for season in seasons
-            }
+            {season: scope(season, (1, 22)) for season in seasons}
             if request.scope.comparison_design == "full_seasons"
             else None
         )
@@ -817,7 +1001,7 @@ class NFLPlayerAnalysisMixin:
                 )
             )
         executions = [_execution_record("compare_player_windows", execution_id, parameters, evidence, selected_manifests, started_at, started)]
-        if domain == "quarterback":
+        if domain in {"quarterback", "defender"}:
             published_evidence, published_executions = self._published_player_context(
                 request, windows, supplemental, supplemental_manifests
             )
@@ -843,7 +1027,7 @@ class NFLPlayerAnalysisMixin:
                     )
                     if name_column in frame.columns and frame[name_column][0] is not None
                 ),
-                subject.id,
+                subject.display_name or subject.id,
             )
             requested = f"{windows[0].season} and {windows[1].season}"
             available = ", ".join(str(season) for season in available_seasons) or "none"
@@ -852,7 +1036,9 @@ class NFLPlayerAnalysisMixin:
                 f"Available {domain} seasons in this range: {available}. Choose two seasons with recorded activity."
             )
 
-        primary = next((metric for metric in selected_metrics if any(item.metric == metric for item in evidence)), selected_metrics[0])
+        # The focus's lead default (e.g. havoc rate for a defender) stays primary whatever order the metrics arrive in.
+        ranked = [*(metric for metric in PLAYER_DEFAULTS[domain] if metric in selected_metrics), *selected_metrics]
+        primary = next((metric for metric in ranked if any(item.metric == metric for item in evidence)), selected_metrics[0])
         primary_item = next((item for item in evidence if item.metric == primary), None)
         if primary_item is not None:
             primary_improved = _metric_improved(primary, primary_item.value)
@@ -934,7 +1120,7 @@ class NFLPlayerAnalysisMixin:
         published_metric_evidence = [
             item
             for item in evidence
-            if item.metric.startswith(("player_stats_", "nextgen_passing_", "pfr_passing_"))
+            if item.metric.startswith(("player_stats_", "nextgen_passing_", "pfr_passing_", "pfr_defense_", "snap_counts_"))
         ][:8]
         if published_metric_evidence:
             published_values = [
@@ -948,7 +1134,7 @@ class NFLPlayerAnalysisMixin:
             charts.append(
                 ChartArtifact(
                     chart_id=stable_id("chart", {"type": "published-player-metric-comparison", **parameters}),
-                    title="Supplemental published quarterback statistics",
+                    title=f"Supplemental published {'defender' if domain == 'defender' else 'quarterback'} statistics",
                     specification=metric_row_comparison_spec(
                         published_values,
                         series_field="window",
@@ -976,8 +1162,14 @@ class NFLPlayerAnalysisMixin:
                 )
             )
 
+        side = "defteam" if domain == "defender" else "posteam"
         team = subject.team_id or (
-            str(comparison["posteam"][0]) if "posteam" in comparison.columns and comparison.height else request.scope.team
+            str(comparison[side][0]) if side in comparison.columns and comparison.height else request.scope.team
+        )
+        # A defender's examples are plays he made, not every snap he was on the field for.
+        play_baseline, play_comparison = (
+            (baseline.filter(pl.col("_def_involved")), comparison.filter(pl.col("_def_involved")))
+            if domain == "defender" else (baseline, comparison)
         )
         play_parameters = {
             "subject": subject.id,
@@ -990,11 +1182,11 @@ class NFLPlayerAnalysisMixin:
         play_id = stable_id("execution", {"tool": "find_player_representative_plays", **play_parameters})
         play_started_at, play_started = datetime.now(UTC), perf_counter()
         plays = self._representative_plays(
-            comparison,
+            play_comparison,
             team,
             manifests[windows[1].season],
             play_id,
-            baseline_frame=baseline,
+            baseline_frame=play_baseline,
             baseline_manifest=manifests[windows[0].season],
             primary_source=PLAYER_METRICS[primary][0],
             metric_label=PLAYER_METRICS[primary][1],

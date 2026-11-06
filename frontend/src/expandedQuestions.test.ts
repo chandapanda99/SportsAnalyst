@@ -3,7 +3,7 @@ import {expandedQuestions} from './expandedQuestions';
 
 it('covers every CFB, soccer, and basketball analysis domain with distinct, subject-specific prompts', () => {
   const domains = {
-    cfb: {team: ['results', 'offense'], player: ['quarterback', 'rushing', 'receiving']},
+    cfb: {team: ['results', 'offense', 'defense'], player: ['quarterback', 'rushing', 'receiving', 'defender']},
     soccer: {team: ['results', 'attack', 'defense', 'control'], player: ['usage', 'scoring', 'discipline']},
     nba: {team: ['offense', 'defense', 'shooting', 'playmaking', 'rebounding', 'turnovers', 'lineups'],
       player: ['scoring', 'shooting', 'playmaking', 'rebounding', 'turnovers', 'usage', 'impact', 'lineups']}

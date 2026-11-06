@@ -4,7 +4,7 @@
   import PlayerPortrait from './PlayerPortrait.svelte';
   import {footballHash} from './surfaceGeometry';
   import FootballSchematic from './FootballSchematic.svelte';
-  import {adaptCollegePlay, collegeProviderContext} from './cfbSchematic';
+  import {adaptCollegePlay, collegePlaymakers, collegeProviderContext} from './cfbSchematic';
   import {buildPlaySchematic} from './playSchematic';
   import FootballTablet from './FootballTablet.svelte';
 
@@ -22,6 +22,7 @@
   $: adapted = adaptCollegePlay(event, teams, roster, showProjected);
   $: projectionAvailable = adaptCollegePlay(event, teams, roster, true).projectedCount > 0;
   $: providerFields = Object.entries(collegeProviderContext(event));
+  $: playmakers = collegePlaymakers(event);
   $: sourceFields = fieldSources(event.source_provenance_json);
   $: sourceDetail = sourceDetails(event.source_provenance_json);
   $: conflicts = Object.entries(sourceDetail.conflicts ?? {});
@@ -104,7 +105,14 @@
     movementLabel={adapted.inference.airYardsAvailable ? 'Ball flight · provider-derived distance' : 'Illustrative movement (net yards)'}
     showFieldPosition={event.yards_to_goal != null && event.yards_to_goal >= 0 && event.yards_to_goal <= 100}/>
   <p class="legend">{adapted.note} College hashes are 20 yards from each sideline. Attack direction is normalized left-to-right.</p>
-  <div class="play-details"><p>{event.text}</p></div>
+  <div class="play-details"><p>{event.text}</p>
+    {#if !adapted.visualization.special_teams && defense}
+      <section class="defense-summary" aria-label={`${defense.name ?? 'Defense'} defense on this play`}>
+        <h4>{defense.name ?? 'Defense'} defense</h4>
+        <dl><div><dt>Made the play</dt><dd>{playmakers.length ? playmakers.join(' · ') : 'No defender credited in the play-by-play'}</dd></div></dl>
+      </section>
+    {/if}
+  </div>
   <div class="values situation"><span>Recorded score after play: {event.away_score ?? '—'}–{event.home_score ?? '—'} (away–home)</span>
     <span>Modeled EPA: {event.epa == null ? 'Not prepared/available' : event.epa.toFixed(3)}</span>
     <span>Spread-free WPA: {event.wpa == null ? 'Not prepared/available' : `${(event.wpa * 100).toFixed(2)} pp`}</span></div>

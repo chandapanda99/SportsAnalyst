@@ -1,4 +1,4 @@
-"""Exclusive, reconciled EPA accounting on the same qualifying offense sample."""
+"""Exclusive, reconciled EPA accounting on the same qualifying offense (or opponent) sample."""
 from __future__ import annotations
 
 import math
@@ -10,6 +10,9 @@ from sports_analyst.analysis.calculations import digest
 from sports_analyst.models import AggregateEvidence, ChartArtifact, ToolExecutionRecord, stable_id
 
 CATEGORIES = ("Passing (non-turnover, non-sack)", "Rushing (non-turnover)", "Sacks (non-turnover)", "Turnovers", "Other")
+# A defensive report accounts for the opponent's plays, so the same categories read from the defense's side.
+DEFENSE_LABELS = dict(zip(CATEGORIES, ("Passes allowed (non-turnover, non-sack)", "Runs allowed (non-turnover)",
+                                       "Sacks by the defense (non-turnover)", "Takeaways", "Other"), strict=True))
 
 
 def classified(frame):
@@ -21,7 +24,8 @@ def classified(frame):
         .otherwise(pl.lit(CATEGORIES[4])).alias("phase"))
 
 
-def phase_accounting(baseline, comparison, manifests):
+def phase_accounting(baseline, comparison, manifests, side="offense"):
+    defense = side == "defense"
     required = {"_epa", "play_type", "sack", "interception", "fumble_lost"}
     windows = []
     for frame in (baseline, comparison):
@@ -39,7 +43,7 @@ def phase_accounting(baseline, comparison, manifests):
         groups = {row["phase"]: {"plays": row["plays"], "epa_total": row["epa_total"]}
             for row in grouped.group_by("phase").agg(pl.len().alias("plays"), pl.col("_epa").sum().alias("epa_total")).to_dicts()}
         windows.append({"plays": frame.height, "epa_mean": frame["_epa"].mean(), "groups": groups})
-    parameters = {"method": "exclusive_epa_accounting_v1", "windows": windows,
+    parameters = {"method": "exclusive_epa_accounting_v1", "windows": windows, **({"side": "defense"} if defense else {}),
         "precedence": ["interception or lost fumble", "sack", "pass-coded", "run-coded", "other"],
         "formula": "comparison_category_epa / comparison_plays - baseline_category_epa / baseline_plays"}
     execution_id = stable_id("execution", {**parameters, "manifests": [item.manifest_id for item in manifests]})
@@ -48,15 +52,18 @@ def phase_accounting(baseline, comparison, manifests):
         contributions = [window["groups"].get(category, {"epa_total": 0})["epa_total"] / window["plays"] for window in windows]
         payload = {**parameters, "category": category}
         evidence.append(AggregateEvidence(evidence_id=stable_id("evidence", {"execution": execution_id, "category": category}),
-            metric="epa_phase_contribution", label=category, value=contributions[1] - contributions[0],
-            baseline_value=contributions[0], comparison_value=contributions[1], unit="EPA per qualifying offensive play",
+            metric="epa_phase_contribution", label=DEFENSE_LABELS[category] if defense else category,
+            value=contributions[1] - contributions[0], baseline_value=contributions[0], comparison_value=contributions[1],
+            unit="EPA per qualifying opponent play" if defense else "EPA per qualifying offensive play",
             sample_size=windows[1]["plays"], row_set_sha256=digest(payload),
             dataset_manifest_ids=[item.manifest_id for item in manifests],
             tool_execution_id=execution_id, context={"method": parameters["method"], "category": category, "windows": windows,
                 "role": "accounting_contribution", "validation": "exclusive_partition_and_reconciled"},
             caveats=["Descriptive accounting, not causal attribution. Turnovers take priority over sacks, passing and rushing; "
                      "categories do not overlap. Passing/rushing are recorded play-type categories; scrambles remain run-coded. "
-                     "Category values use the whole-offense denominator, not category efficiency."]))
+                     "Category values use the whole-offense denominator, not category efficiency."
+                     + (" Values are the opponent's EPA against this defense, so positive contributions made the defense worse."
+                        if defense else "")]))
     delta = windows[1]["epa_mean"] - windows[0]["epa_mean"]
     if not math.isclose(sum(item.value for item in evidence), delta, abs_tol=1e-9):
         raise ValueError("EPA accounting failed reconciliation")
@@ -64,10 +71,12 @@ def phase_accounting(baseline, comparison, manifests):
         started_at=datetime.now(UTC), duration_ms=0, result_sha256=digest([item.model_dump() for item in evidence]),
         dataset_manifest_ids=[item.manifest_id for item in manifests])
     rows = [{"phase": item.label, "contribution": item.value} for item in evidence]
-    chart = ChartArtifact(chart_id=stable_id("chart", execution_id), title="Where the EPA/play change came from",
+    chart = ChartArtifact(chart_id=stable_id("chart", execution_id),
+        title="Where the EPA/play allowed change came from" if defense else "Where the EPA/play change came from",
         evidence_ids=[item.evidence_id for item in evidence], specification={"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
             "data": {"values": rows}, "mark": "bar", "height": 180, "width": "container",
             "encoding": {"y": {"field": "phase", "type": "nominal", "sort": "-x", "title": None},
-                "x": {"field": "contribution", "type": "quantitative", "title": "Contribution to EPA/play change", "scale": {"zero": True}},
+                "x": {"field": "contribution", "type": "quantitative", "scale": {"zero": True},
+                      "title": "Contribution to EPA/play allowed change" if defense else "Contribution to EPA/play change"},
                 "tooltip": [{"field": "phase"}, {"field": "contribution", "format": "+.4f"}]}})
     return evidence, execution, chart, None

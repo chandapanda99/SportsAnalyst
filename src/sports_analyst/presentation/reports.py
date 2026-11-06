@@ -46,7 +46,7 @@ def _scope_label(scope) -> str:
 
 
 def _domain_label(domain: str) -> str:
-    return {"passing": "passing", "rushing": "rushing", "offense": "overall offensive"}.get(domain, domain)
+    return {"passing": "passing", "rushing": "rushing", "offense": "overall offensive", "defense": "defensive"}.get(domain, domain)
 
 
 def _play_context(play) -> str:

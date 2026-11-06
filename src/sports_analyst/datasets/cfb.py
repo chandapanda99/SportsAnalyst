@@ -45,7 +45,18 @@ PLAYER_FIELDS = {
     "passing": {"YDS": "passing_yards", "TD": "passing_touchdowns", "INT": "passing_interceptions"},
     "rushing": {"CAR": "rushing_attempts", "YDS": "rushing_yards", "TD": "rushing_touchdowns"},
     "receiving": {"REC": "receptions", "YDS": "receiving_yards", "TD": "receiving_touchdowns"},
+    "defensive": {"TOT": "def_tackles", "SOLO": "def_solo_tackles", "SACKS": "def_sacks", "TFL": "def_tackles_for_loss",
+                  "PD": "def_passes_defended", "QB HUR": "def_qb_hurries", "TD": "def_touchdowns"},
+    "interceptions": {"INT": "def_interceptions", "YDS": "def_interception_yards", "TD": "def_interception_touchdowns"},
 }
+# Team defensive totals summed from the team's own defensive box score.
+TEAM_DEFENSE_TOTALS = {"def_sacks": "sacks", "def_tackles_for_loss": "tackles_for_loss",
+                       "def_passes_defended": "passes_defended", "def_qb_hurries": "qb_hurries"}
+# The opponent's offensive line in the same game, kept on the team row as yards and conversions allowed.
+OPPONENT_FIELDS = ("total_yards", "passing_yards", "passing_attempts", "passing_completions", "rushing_yards", "rushing_attempts",
+                   "third_down_conversions", "third_down_attempts", "turnovers", "first_downs")
+# Bumped when parsed box-score columns change, so prepared seasons are rebuilt from cached summaries.
+STATISTICS_VERSION = 2
 
 
 def number(value):
@@ -359,7 +370,8 @@ class SportsDataverseCFBConnector:
                 "game_id": str(event["id"]),
                 "date": event.get("date"),
                 "season": season,
-                "week": (event.get("week") or {}).get("number"),
+                # Schedules nest the week ({"number": 3}); game-summary headers give the number itself.
+                "week": week.get("number") if isinstance(week := event.get("week"), dict) else week,
                 "season_type": "POST" if (event.get("seasonType") or {}).get("type") == 3 else "REG",
                 "completed": bool(((competition.get("status") or event.get("status") or {}).get("type") or {}).get("completed")),
             }
@@ -667,12 +679,17 @@ class SportsDataverseCFBConnector:
             if any(value is not None for key, value in row.items() if key not in {"game_id", "team_id", "season"}):
                 teams.append(row)
         directory = {}
+        defensive_teams, interception_teams = set(), set()
         for entry in (raw.get("boxscore") or {}).get("players") or []:
             team_id = str(entry["team"]["id"])
             for category in entry.get("statistics") or []:
                 name = category.get("name")
                 if name not in PLAYER_FIELDS:
                     continue
+                if name == "defensive" and category.get("athletes"):
+                    defensive_teams.add(team_id)
+                if name == "interceptions":
+                    interception_teams.add(team_id)
                 for item in category.get("athletes") or []:
                     athlete = item.get("athlete") or {}
                     identity = str(athlete.get("id") or "")
@@ -689,10 +706,26 @@ class SportsDataverseCFBConnector:
                             row[field] = number(values[label])
                     if name == "passing" and "C/ATT" in values:
                         row["passing_completions"], row["passing_attempts"] = pair(values["C/ATT"])
+        for (team_id, _), row in directory.items():
+            # ESPN lists only players with an interception, so a listed defender without one recorded none.
+            if row.get("def_tackles") is not None and row.get("def_interceptions") is None and team_id in interception_teams:
+                row["def_interceptions"] = 0.0
         players.extend(row for row in directory.values() if any(
             value is not None for key, value in row.items()
             if key not in {"game_id", "team_id", "athlete_id", "name", "season"}
         ))
+        by_team = {row["team_id"]: row for row in teams}
+        for row in teams:
+            if row["team_id"] in defensive_teams:
+                listed = [player for player in directory.values() if player["team_id"] == row["team_id"]]
+                for source, target in TEAM_DEFENSE_TOTALS.items():
+                    values = [player[source] for player in listed if player.get(source) is not None]
+                    row[target] = float(sum(values)) if values else None
+            opponents = [other for team_id, other in by_team.items() if team_id != row["team_id"]]
+            if len(opponents) == 1:
+                for field in OPPONENT_FIELDS:
+                    row[f"opp_{field}"] = opponents[0].get(field)
+                row["takeaways"] = opponents[0].get("turnovers")
         for event in raw.get("scoringPlays") or []:
             scoring.append(
                 {
@@ -799,7 +832,7 @@ class SportsDataverseCFBConnector:
         identity = self.validate_id(athlete_id if athlete_id else team_id)
         partition = f"{'player' if athlete_id else 'team'}:{identity}"
         selection = sorted(datasets or CFB_BASE_DATASETS)
-        marker = f"prepared/v2/{partition.replace(':', '/')}/{season}/{'-'.join(selection)}.json"
+        marker = f"prepared/v{STATISTICS_VERSION + 1}/{partition.replace(':', '/')}/{season}/{'-'.join(selection)}.json"
         with self.source.lease(f"prepare:{partition}:{season}", seconds=1800):
             ready = self.source._cached(marker, season_ttl(season))
             def reusable(item):
@@ -909,7 +942,7 @@ class SportsDataverseCFBConnector:
             raise ValueError("No usable game summaries with attributed statistics were retrieved")
         return self.snapshot(
             season, partition, {key: value for key, value in rows.items() if key in selected},
-            len(ids), completed, manifest_callback, availability
+            len(ids), completed, manifest_callback, availability, {"statistics_version": STATISTICS_VERSION}
         )
 
     def sync(self, seasons, datasets=None, progress_callback=None, manifest_callback=None, skip=None, team_ids=None, **kwargs):

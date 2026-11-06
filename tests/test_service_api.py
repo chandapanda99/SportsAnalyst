@@ -184,9 +184,11 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
         "passing",
         "rushing",
         "offense",
+        "defense",
         "quarterback",
         "receiving",
         "running",
+        "defender",
     }
     assert {item["value"] for item in options["subject_types"]} == {"team", "player"}
     assert options["default_metrics_by_domain"]["rushing"][0] == "epa_per_rush"

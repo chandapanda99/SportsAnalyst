@@ -902,10 +902,10 @@
     // Keep older saved/stale option payloads from exposing team domains to
     // player investigations when they predate explicit subject metadata.
     const inferredPlayerDomains = activeSport === 'nfl'
-        ? new Set(['quarterback', 'receiving', 'running'])
+        ? new Set(['quarterback', 'receiving', 'running', 'defender'])
         : new Set(['scoring', 'usage', 'impact']);
     const inferredTeamDomains = activeSport === 'nfl'
-        ? new Set(['passing', 'rushing', 'offense'])
+        ? new Set(['passing', 'rushing', 'offense', 'defense'])
         : new Set(['offense', 'defense', 'lineups']);
     if (inferredPlayerDomains.has(domain.value ?? '')) return type === 'player';
     if (inferredTeamDomains.has(domain.value ?? '')) return type === 'team';
@@ -1108,12 +1108,15 @@
       const role = playerRole(player);
       const preferredDomain = role === 'quarterback' ? 'quarterback'
           : role === 'running back' ? 'running'
-              : role === 'receiver' ? 'receiving' : analysisDomain;
+              : role === 'receiver' ? 'receiving'
+                  : role === 'defender' ? 'defender' : analysisDomain;
       selectAnalysisDomain(preferredDomain, true, player);
     } else if (activeSport === 'cfb') {
       const positions = new Set(player.positions.map(position => position.toUpperCase()));
       selectAnalysisDomain(positions.has('QB') ? 'quarterback'
-          : ['RB', 'FB', 'HB'].some(position => positions.has(position)) ? 'rushing' : 'receiving', true, player);
+          : ['RB', 'FB', 'HB'].some(position => positions.has(position)) ? 'rushing'
+              : ['DE', 'DT', 'NT', 'DL', 'EDGE', 'LB', 'ILB', 'MLB', 'OLB', 'CB', 'DB', 'S', 'FS', 'SS', 'SAF']
+                  .some(position => positions.has(position)) ? 'defender' : 'receiving', true, player);
     } else {
       selectAnalysisDomain(analysisDomain, true, player);
     }
@@ -1259,6 +1262,8 @@
       if (positions.has('QB') || positions.has('QUARTERBACK')) return 'quarterback';
       if (['RB', 'FB', 'RUNNING BACK', 'FULLBACK'].some(position => positions.has(position))) return 'running back';
       if (['WR', 'TE', 'WIDE RECEIVER', 'TIGHT END', 'RECEIVER'].some(position => positions.has(position))) return 'receiver';
+      if (['DE', 'DT', 'NT', 'DL', 'EDGE', 'LB', 'ILB', 'MLB', 'OLB', 'CB', 'DB', 'S', 'FS', 'SS', 'SAF']
+          .some(position => positions.has(position))) return 'defender';
       return 'player';
     }
     if ([...positions].some(position => ['PG', 'SG', 'G', 'G-F', 'GUARD', 'POINT GUARD', 'SHOOTING GUARD', 'GUARD-FORWARD'].includes(position))) return 'guard';
@@ -3464,7 +3469,7 @@
                     {#if play.season && (active.run.comparison_subject || active.run.scope.baseline.season !== active.run.scope.comparison.season)}<small>{seasonLabel(play.season)} season</small>{/if}</span>
                   <span class="play-description"><span>{play.description}</span>
                     {#if play.selection_reason}<small>{play.selection_reason}</small>{/if}</span><b
-                      class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
+                      class="play-epa">{play.epa != null ? `${play.epa.toFixed(2)} EPA${['nfl', 'cfb'].includes(activeSport) && ['defense', 'defender'].includes(active.run.analysis_domain ?? '') ? ' allowed' : ''}` : play.metric_value != null ? `${play.metric_value.toFixed(1)} ${play.selection_metric ?? 'value'}` : 'Play evidence'}</b>
                 </button>
               {/each}
             </div>

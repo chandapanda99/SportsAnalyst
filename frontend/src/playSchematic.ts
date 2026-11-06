@@ -161,15 +161,26 @@ export function describeCoverage(visualization: PlayVisualization) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
   const family = (visualization.man_zone ?? '').trim().toUpperCase();
   const familyLabel = family.includes('MAN') ? 'Man' : family.includes('ZONE') ? 'Zone' : '';
-  return [shell, familyLabel].filter(Boolean).join(' · ') || 'Not recorded';
+  // Some shells already name the family ("2 Man"), so it is not repeated.
+  const repeated = familyLabel && shell.toLowerCase().split(' ').includes(familyLabel.toLowerCase());
+  return [shell, repeated ? '' : familyLabel].filter(Boolean).join(' · ') || 'Not recorded';
 }
+
+// Participation lists specific positions ("3 CB, 2 DE, 2 DT, 1 FS, 2 ILB, 1 SS"; "1 C, 2 G, 2 T"); group them.
+const POSITION_GROUPS: Record<string, string> = {
+  DE: 'DL', DT: 'DL', NT: 'DL', DL: 'DL', EDGE: 'DL',
+  ILB: 'LB', MLB: 'LB', OLB: 'LB', LB: 'LB',
+  CB: 'DB', FS: 'DB', SS: 'DB', S: 'DB', SAF: 'DB', NB: 'DB', DB: 'DB',
+  C: 'OL', G: 'OL', T: 'OL', OG: 'OL', OT: 'OL', OL: 'OL',
+  RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB',
+};
 
 function explicitPositionCounts(value?: string): PositionCounts {
   const counts: PositionCounts = {};
   const text = value?.trim().toUpperCase() ?? '';
-  for (const match of text.matchAll(/(\d+)\s*(DL|DB|LB|WR|TE|RB|HB|FB|OL|QB)\b/g)) {
-    const position = ['HB', 'FB'].includes(match[2]) ? 'RB' : match[2];
-    counts[position] = (counts[position] ?? 0) + Number(match[1]);
+  for (const match of text.matchAll(/(\d+)\s*([A-Z]+)\b/g)) {
+    const position = POSITION_GROUPS[match[2]];
+    if (position) counts[position] = (counts[position] ?? 0) + Number(match[1]);
   }
   return counts;
 }
@@ -195,13 +206,55 @@ export function describeOffensivePersonnel(value?: string) {
   const counts = offensivePersonnelCounts(value);
   const compact = value?.trim().match(/^(\d)(\d)/);
   if (!Object.keys(counts).length) return 'Not recorded';
-  const detail = countsLabel(counts, ['OL', 'RB', 'TE', 'WR']);
-  return compact ? `${compact[1]}${compact[2]} personnel · ${detail}` : detail;
+  // A standard five-man line goes without saying; an extra lineman is worth naming.
+  const detail = countsLabel(counts, counts.OL === 5 ? ['RB', 'TE', 'WR'] : ['OL', 'RB', 'TE', 'WR']);
+  // Listed personnel ("1 C, 2 G, 1 QB, 1 RB, 2 T, 1 TE, 3 WR") gets the same backs-and-tight-ends code.
+  const code = compact ? `${compact[1]}${compact[2]}` : counts.WR != null ? `${counts.RB ?? 0}${counts.TE ?? 0}` : '';
+  return code ? `${code} personnel · ${detail}` : detail;
 }
 
 export function describeDefensivePersonnel(value?: string) {
   const counts = explicitPositionCounts(value);
   return Object.keys(counts).length ? countsLabel(counts, ['DL', 'LB', 'DB']) : 'Not recorded';
+}
+
+/** Name the defensive package from its defensive backs, with the front as DL-LB-DB ("Nickel (4-2-5)"). */
+export function defensivePackage(value?: string) {
+  const counts = explicitPositionCounts(value);
+  const backs = counts.DB;
+  if (!backs) return null;
+  const name = backs >= 7 ? 'Quarter' : backs === 6 ? 'Dime' : backs === 5 ? 'Nickel' : backs === 4 ? 'Base' : 'Heavy';
+  return `${name} (${counts.DL ?? 0}-${counts.LB ?? 0}-${backs})`;
+}
+
+/** Recorded defensive context for one play, omitting anything that was not charted. */
+export function defensiveLook(visualization: PlayVisualization) {
+  const parts: string[] = [];
+  // Runs record 0 rushers and no pressure, so those fields only describe dropbacks.
+  const pass = visualization.play_type === 'pass' || visualization.sack === true || (visualization.pass_rushers ?? 0) > 0;
+  const pkg = defensivePackage(visualization.defensive_personnel);
+  if (pkg) parts.push(pkg);
+  const box = visualization.defenders_in_box ?? visualization.defense_box_count;
+  if (box != null && box > 0) parts.push(`${box} in box`);
+  const rushers = visualization.pass_rushers;
+  if (pass && rushers != null && rushers > 0) {
+    const blitzers = visualization.blitzers ?? 0;
+    parts.push(`${rushers} rushers${blitzers > 0 ? `, ${blitzers} blitzing` : ''}`);
+  }
+  const coverage = describeCoverage(visualization);
+  if (pass && coverage !== 'Not recorded') parts.push(coverage);
+  if (pass && visualization.pressure != null) {
+    const throwTime = visualization.time_to_throw != null ? `, ${visualization.time_to_throw.toFixed(1)}s to throw` : '';
+    parts.push(`${visualization.pressure ? 'Pressured' : 'Clean pocket'}${throwTime}`);
+  }
+  return parts;
+}
+
+/** Defenders credited on the play, e.g. "Sack: A.Hutchinson · Tackle: J.Campbell". */
+export function describePlaymakers(visualization: PlayVisualization) {
+  return (visualization.defensive_playmakers ?? [])
+    .filter(item => item.players.length)
+    .map(item => `${item.role}: ${item.players.join(', ')}`);
 }
 
 function genericOffense(visualization: PlayVisualization) {

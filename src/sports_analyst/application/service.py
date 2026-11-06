@@ -204,7 +204,7 @@ class AnalystApplication:
                 predicate &= pl.col("qb_kneel").fill_null(0) != 1
             if "qb_spike" in columns:
                 predicate &= pl.col("qb_spike").fill_null(0) != 1
-        elif request.analysis_domain == "offense":
+        elif request.analysis_domain in {"offense", "defense"}:
             predicate &= dropback | rush
             if "qb_kneel" in columns:
                 predicate &= pl.col("qb_kneel").fill_null(0) != 1
@@ -372,7 +372,7 @@ class AnalystApplication:
             return parent_id
 
     def _prepare_cfb(self, request: AnalysisRequest, identifier: str):
-        from sports_analyst.datasets.cfb import CFB_DATASETS
+        from sports_analyst.datasets.cfb import CFB_DATASETS, STATISTICS_VERSION
         from sports_analyst.plugins.cfb import ADVANCED as CFB_ADVANCED_METRICS
         connector = self.connectors["cfb"]
         subject = request.subject
@@ -393,6 +393,9 @@ class AnalystApplication:
             complete = all(dataset in installed and installed[dataset].coverage.get("expected_matches", 0) > 0
                            and installed[dataset].coverage.get("completed_matches", 0) >= installed[dataset].coverage.get("expected_matches", 0)
                            for dataset in {"schedules", "team_stats", "player_stats", "scoring_events"})
+            # Seasons prepared before the defensive box-score columns are rebuilt from cached summaries.
+            complete = complete and all(installed[dataset].coverage.get("statistics_version", 1) >= STATISTICS_VERSION
+                                        for dataset in ("team_stats", "player_stats"))
 
             def progress(phase, dataset, year, completed, total, fraction=None, detail=None, force=False):
                 self.events.emit(identifier, "preparing", f"Preparing {partition} · {year} · {detail or dataset}", 0.15,
@@ -743,14 +746,15 @@ class AnalystApplication:
 
         comparison_subject = getattr(root.run, "comparison_subject", None)
         head_to_head = comparison_subject is not None
-        if (not head_to_head and root.run.sport == "nfl" and root.run.analysis_domain == "offense" and needs_phase_accounting(question)
-                and ("epa" in question.lower() or "epa_per_play" in root.run.metrics)
+        accounted_metric = {"offense": "epa_per_play", "defense": "epa_per_play_allowed"}.get(root.run.analysis_domain)
+        if (not head_to_head and root.run.sport == "nfl" and accounted_metric and needs_phase_accounting(question)
+                and ("epa" in question.lower() or accounted_metric in root.run.metrics)
                 and not any(item.metric == "epa_phase_contribution" for item in root.aggregate_evidence)):
             # Older reports may lack a now-supported calculation. Re-enter the
             # normal preparation/evidence pipeline instead of rewording a gap.
             return self._investigate(AnalysisRequest(sport=root.run.sport, subject=root.run.subject, question=question,
                 scope=root.run.scope, analysis_domain=root.run.analysis_domain,
-                metrics=list(dict.fromkeys(["epa_per_play", *root.run.metrics])),
+                metrics=list(dict.fromkeys([accounted_metric, *root.run.metrics])),
                 splits=root.run.splits, parent_investigation_id=root.run.investigation_id), identifier, trace_metadata, root_span)
         with self.telemetry.span(
                 "sports-analyst.reuse-parent-evidence", metadata=trace_metadata, parent=root_span, run_type="tool"

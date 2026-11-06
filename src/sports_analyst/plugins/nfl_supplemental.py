@@ -28,6 +28,22 @@ from sports_analyst.plugins.nfl_shared import (
     _sha,
 )
 
+# Participation and FTN fields charted only on quarterback dropbacks.
+DROPBACK_ONLY_FIELDS = {
+    "was_pressure",
+    "number_of_pass_rushers",
+    "time_to_throw",
+    "defense_man_zone_type",
+    "n_blitzers",
+    "n_pass_rushers",
+    "is_qb_out_of_pocket",
+    "is_interception_worthy",
+    "is_catchable_ball",
+    "is_drop",
+    "is_qb_fault_sack",
+    "is_throw_away",
+}
+
 
 class NFLSupplementalMixin:
     """Provide roster, availability, charting, and schedule context methods."""
@@ -340,24 +356,35 @@ class NFLSupplementalMixin:
             if not all((source_game, source_play, play_game, play_play)):
                 summaries.append({})
                 continue
+            dropback = (
+                (pl.col("qb_dropback") == 1) if "qb_dropback" in plays.columns
+                else (pl.col("play_type") == "pass") if "play_type" in plays.columns else pl.lit(True)
+            ).fill_null(False)
             keys = plays.select(
                 pl.col(play_game).cast(pl.Utf8).alias("_join_game"),
                 pl.col(play_play).cast(pl.Int64, strict=False).alias("_join_play"),
-            ).unique()
+                dropback.alias("_dropback"),
+            ).unique(subset=["_join_game", "_join_play"], keep="first")
             scoped = frame.with_columns(
                 pl.col(source_game).cast(pl.Utf8).alias("_join_game"),
                 pl.col(source_play).cast(pl.Int64, strict=False).alias("_join_play"),
             ).join(keys, on=["_join_game", "_join_play"], how="inner")
+            # Rush, pressure and passing-charting fields describe dropbacks only. Runs record 0 rushers,
+            # no pressure and blank coverage, which would otherwise dilute these averages.
+            for column in DROPBACK_ONLY_FIELDS & set(scoped.columns):
+                scoped = scoped.with_columns(pl.when(pl.col("_dropback")).then(pl.col(column)).otherwise(None).alias(column))
+            for column in {"number_of_pass_rushers", "defenders_in_box", "n_pass_rushers", "n_defense_box"} & set(scoped.columns):
+                value = pl.col(column).cast(pl.Float64, strict=False)
+                scoped = scoped.with_columns(pl.when(value > 0).then(value).otherwise(None).alias(column))
             if tool == "join_participation_context":
                 if "was_pressure" in scoped.columns:
                     scoped = scoped.with_columns(pl.col("was_pressure").cast(pl.Float64, strict=False).alias("pressure_rate"))
                 if "defense_man_zone_type" in scoped.columns:
+                    coverage = pl.col("defense_man_zone_type").cast(pl.Utf8).str.to_uppercase()
                     scoped = scoped.with_columns(
-                        pl.col("defense_man_zone_type")
-                        .cast(pl.Utf8)
-                        .str.to_uppercase()
-                        .str.contains("MAN")
-                        .cast(pl.Float64)
+                        pl.when(coverage.str.contains("MAN")).then(1.0)
+                        .when(coverage.str.contains("ZONE")).then(0.0)
+                        .otherwise(None)
                         .alias("man_coverage_rate")
                     )
             summary: dict[str, tuple[float, int]] = {}
@@ -463,6 +490,9 @@ class NFLSupplementalMixin:
             "pressure": ("was_pressure", _row_boolean),
             "time_to_throw": ("time_to_throw", _row_number),
             "defensive_personnel": ("defense_personnel", _row_text),
+            # Play-by-play files no longer carry offensive formation or personnel; participation does.
+            "formation": ("offense_formation", _row_text),
+            "personnel": ("offense_personnel", _row_text),
             "offense_names": ("offense_names", _row_text_list),
             "offense_positions": ("offense_positions", _row_text_list),
             "defense_names": ("defense_names", _row_text_list),

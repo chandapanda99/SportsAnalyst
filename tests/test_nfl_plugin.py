@@ -270,6 +270,209 @@ def test_rushing_and_overall_offense_domains_scope_the_correct_plays(pbp_pair) -
     }
 
 
+def _defensive_frames(pbp_pair) -> dict[int, pl.DataFrame]:
+    """KC's offense against BUF plus BUF's offense against KC's defense, with the same synthetic pattern."""
+    frames = {}
+    for season, offense in pbp_pair.items():
+        defended = offense.with_columns(
+            pl.lit("BUF").alias("posteam"),
+            pl.lit("KC").alias("defteam"),
+            (pl.col("play_id") + 500).alias("play_id"),
+            (pl.col("yards_gained") >= 10).cast(pl.Int64).alias("first_down"),
+            pl.format("Synthetic BUF pass play {}", pl.col("play_id")).alias("desc"),
+        )
+        frames[season] = pl.concat([offense.with_columns(pl.lit(0).alias("first_down")), defended],
+                                   how="diagonal_relaxed").with_columns(pl.lit(0).alias("fumble_lost"))
+    return frames
+
+
+def _participation(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.select(
+        pl.col("game_id").alias("nflverse_game_id"),
+        pl.col("play_id"),
+        pl.when(pl.col("play_id") % 2 == 0).then(pl.lit("MAN_COVERAGE")).otherwise(pl.lit("ZONE_COVERAGE")).alias("defense_man_zone_type"),
+        pl.when(pl.col("play_id") % 4 == 0).then(5).otherwise(4).alias("number_of_pass_rushers"),
+        pl.when(pl.col("play_id") % 3 == 0).then(7).otherwise(6).alias("defenders_in_box"),
+        pl.when(pl.col("play_id") % 2 == 0).then(pl.lit("3 CB, 2 DE, 2 DT, 1 FS, 2 ILB, 1 SS"))
+        .otherwise(pl.lit("2 CB, 2 DE, 2 DT, 1 FS, 3 ILB, 1 SS")).alias("defense_personnel"),
+        pl.lit(1.0).alias("was_pressure"),
+        # The 2023+ format lists all eleven players; it normalizes to "11" and "12".
+        pl.when(pl.col("play_id") % 2 == 0).then(pl.lit("1 C, 2 G, 1 QB, 1 RB, 2 T, 1 TE, 3 WR"))
+        .otherwise(pl.lit("1 C, 2 G, 1 QB, 1 RB, 2 T, 2 TE, 2 WR")).alias("offense_personnel"),
+        pl.when(pl.col("play_id") % 2 == 0).then(pl.lit("SHOTGUN")).otherwise(pl.lit("UNDER CENTER")).alias("offense_formation"),
+    )
+
+
+def test_defense_domain_measures_the_opponent_plays_against_the_team(pbp_pair) -> None:
+    plugin = NFLPlugin()
+    frames = _defensive_frames(pbp_pair)
+    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
+    participation = {season: _participation(frame) for season, frame in frames.items()}
+    participation_manifests = {season: manifest(season, participation[season].columns, "participation") for season in frames}
+    request = AnalysisRequest(
+        question="Did the defense improve?",
+        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        analysis_domain="defense",
+        metrics=["epa_per_play_allowed", "defensive_sack_rate", "takeaway_rate", "third_down_stop_rate", "explosive_play_rate_allowed"],
+    )
+    result = plugin.analyze(request, frames, manifests, {"participation": participation}, {"participation": participation_manifests})
+    evidence = {item.metric: item for item in result.aggregate_evidence}
+
+    # Only BUF's 160 dropbacks against KC count; KC's own offense is excluded.
+    allowed = evidence["epa_per_play_allowed"]
+    assert allowed.sample_size == 160 and allowed.value == -0.1
+    assert evidence["defensive_sack_rate"].comparison_value == 0.075  # plays 13, 26 and 39 of each 40-play game
+    assert evidence["takeaway_rate"].comparison_value == 0.025  # play 37 of each game
+    defended = frames[2025].filter(pl.col("defteam") == "KC")
+    third_downs = defended.filter(pl.col("down") == 3)
+    assert evidence["third_down_stop_rate"].comparison_value == round(1 - third_downs["first_down"].mean(), 6)
+    assert evidence["explosive_play_rate_allowed"].comparison_value == round((defended["yards_gained"] >= 20).mean(), 6)
+
+    # Participation context becomes defensive breakdowns.
+    situational = {item.label for item in result.aggregate_evidence if item.metric.startswith("situational_epa_per_play_allowed__")}
+    assert {"Man or zone: man", "Man or zone: zone", "Pass rushers: 5+ rushers", "Box count: 7+ in box",
+            "Defensive personnel: nickel", "Defensive personnel: base",
+            "Offensive personnel: 11", "Offensive personnel: 12"} <= situational
+    assert next(item for item in result.aggregate_evidence if item.metric == "participation_pressure_rate").label == "Pressure rate generated"
+
+    # Offense-only tools are skipped; plays come from the opponent's possessions.
+    tools = {item.tool for item in result.executions}
+    assert not tools & {"compare_player_usage", "analyze_qb_receiver_pairs"}
+    assert result.play_evidence and all(play.team == "KC" and play.visualization.possession_team == "BUF"
+                                        for play in result.play_evidence)
+    assert result.charts[0].title.startswith("Defense")
+    # EPA allowed is accounted by phase from the defense's side and reconciles to the overall change.
+    accounting = {item.label: item for item in result.aggregate_evidence if item.metric == "epa_phase_contribution"}
+    assert {"Passes allowed (non-turnover, non-sack)", "Sacks by the defense (non-turnover)", "Takeaways"} <= set(accounting)
+    assert round(sum(item.value for item in accounting.values()), 6) == allowed.value
+    assert result.charts[-1].title == "Where the EPA/play allowed change came from"
+
+    plan_tools = {call.tool for call in plugin.default_plan(request).calls}
+    assert "find_representative_plays" in plan_tools and not plan_tools & {"compare_player_usage", "analyze_qb_receiver_pairs"}
+    assert plugin.explain_metric("epa_per_play_allowed").higher_is_better is False
+    assert plugin.explain_metric("takeaway_rate").higher_is_better is True
+    options = plugin.analysis_options([*manifests.values(), *participation_manifests.values()])
+    assert next(item for item in options.analysis_domains if item["value"] == "defense")["subject_type"] == "team"
+    assert next(item for item in options.split_dimensions if item.value == "man_zone").available_seasons == [2024, 2025]
+
+
+def test_defender_analysis_measures_per_snap_credits_on_the_field(pbp_pair) -> None:
+    import pytest
+
+    plugin = NFLPlugin()
+    defender = "00-0000001"
+    frames = {
+        season: frame.with_columns(
+            pl.when((pl.col("defteam") == "KC") & (pl.col("sack") == 1)).then(pl.lit(defender)).alias("sack_player_id"),
+            pl.when((pl.col("defteam") == "KC") & (pl.col("play_id") % 5 == 0)).then(pl.lit(defender)).alias("solo_tackle_1_player_id"),
+            pl.when(pl.col("defteam") == "KC").then(pl.lit("KC")).alias("solo_tackle_1_team"),
+        ).with_columns(
+            pl.when(pl.col("sack_player_id").is_not_null()).then(pl.lit("T.Defender")).alias("sack_player_name"),
+            pl.when(pl.col("solo_tackle_1_player_id").is_not_null()).then(pl.lit("T.Defender")).alias("solo_tackle_1_player_name"),
+        )
+        for season, frame in _defensive_frames(pbp_pair).items()
+    }
+    manifests = {season: manifest(season, frame.columns) for season, frame in frames.items()}
+    # He plays the even-numbered snaps; another defender is always on the field.
+    participation = {
+        season: frame.select(
+            pl.col("game_id").alias("nflverse_game_id"), "play_id",
+            pl.when(pl.col("play_id") % 2 == 0).then(pl.lit(f"{defender};00-0000002")).otherwise(pl.lit("00-0000002"))
+            .alias("defense_players"),
+        )
+        for season, frame in frames.items()
+    }
+    request = AnalysisRequest(
+        question="Did he make more plays?",
+        subject=AnalysisSubject(type="player", id=defender, team_id="KC", display_name="Test Defender"),
+        scope=AnalysisScope(team="KC", baseline_season=2024, comparison_season=2025),
+        analysis_domain="defender",
+        metrics=["defender_havoc_rate", "defender_snaps_per_game", "defender_sack_rate", "defender_tackle_rate"],
+    )
+    supplemental = {"participation": participation}
+    supplemental_manifests = {"participation": {season: manifest(season, participation[season].columns, "participation")
+                                                for season in frames}}
+    result = plugin.analyze(request, frames, manifests, supplemental, supplemental_manifests)
+    evidence = {item.metric: item for item in result.aggregate_evidence}
+
+    on_field = frames[2025].filter((pl.col("defteam") == "KC") & (pl.col("play_id") % 2 == 0))
+    assert evidence["defender_snaps_per_game"].sample_size == on_field.height == 80
+    assert evidence["defender_snaps_per_game"].comparison_value == 20
+    # Only his snaps count: sacks on plays he sat out are not his.
+    assert evidence["defender_sack_rate"].comparison_value == round(on_field["sack"].mean(), 6)
+    assert evidence["defender_tackle_rate"].comparison_value == round((on_field["play_id"] % 5 == 0).mean(), 6)
+    assert evidence["defender_havoc_rate"].comparison_value == evidence["defender_sack_rate"].comparison_value
+    assert result.play_evidence and all(play.team == "KC" for play in result.play_evidence)
+    assert {play.visualization.defensive_playmakers[0].role for play in result.play_evidence} <= {"Sack", "Tackle"}
+    assert {call.tool for call in plugin.default_plan(request).calls} >= {"compare_player_windows", "compare_player_published_stats"}
+    assert plugin.explain_metric("defender_epa_allowed_on_field").higher_is_better is False
+
+    # Search credits defensive roles to the defender focus.
+    found = plugin.resolve_players("00-0000001", [(2025, frames[2025])])
+    assert found and found[0].seasons_by_domain["defender"] == [2025] and found[0].teams == ["KC"]
+
+    with pytest.raises(ValueError, match="needs the Participation package for 2024"):
+        plugin.analyze(request, frames, manifests)
+
+
+def test_defensive_playmakers_name_each_defender_once_and_skip_offensive_tacklers() -> None:
+    from sports_analyst.plugins.nfl_presentation import defensive_playmakers
+
+    sack_fumble = {
+        "defteam": "DET", "sack_player_name": "A.Hutchinson", "forced_fumble_player_1_player_name": "A.Hutchinson",
+        "forced_fumble_player_1_team": "DET", "fumble_recovery_1_player_name": "T.Nowaske", "fumble_recovery_1_team": "DET",
+        "qb_hit_1_player_name": "A.Hutchinson", "solo_tackle_1_player_name": "A.Hutchinson", "solo_tackle_1_team": "DET",
+    }
+    # The sacker keeps the forced fumble; his QB hit and tackle are implied and dropped.
+    assert defensive_playmakers(sack_fumble) == [
+        {"role": "Sack", "players": ["A.Hutchinson"]},
+        {"role": "Forced fumble", "players": ["A.Hutchinson"]},
+        {"role": "Fumble recovery", "players": ["T.Nowaske"]},
+    ]
+    # After an interception the return is tackled by the offense, which is not a defensive credit.
+    interception = {
+        "defteam": "DET", "interception_player_name": "K.Joseph", "pass_defense_1_player_name": "K.Joseph",
+        "solo_tackle_1_player_name": "J.Love", "solo_tackle_1_team": "GB",
+    }
+    assert defensive_playmakers(interception) == [{"role": "Interception", "players": ["K.Joseph"]}]
+    run = {"defteam": "DET", "tackle_for_loss_1_player_name": "J.Campbell", "solo_tackle_1_player_name": "J.Campbell",
+           "solo_tackle_1_team": "DET", "assist_tackle_1_player_name": "A.Anzalone", "assist_tackle_1_team": "DET"}
+    assert defensive_playmakers(run) == [
+        {"role": "Tackle for loss", "players": ["J.Campbell"]},
+        {"role": "Tackle", "players": ["A.Anzalone"]},
+    ]
+    assert defensive_playmakers({"defteam": "DET"}) == []
+
+
+def test_personnel_and_formation_normalize_across_participation_formats() -> None:
+    from sports_analyst.plugins.nfl_shared import _formation_family, _offense_personnel_group
+
+    personnel = pl.DataFrame({"value": [
+        "1 RB, 1 TE, 3 WR", "2 RB, 1 TE, 2 WR", "1 C, 2 G, 1 QB, 1 RB, 2 T, 2 TE, 2 WR", "1 C, 2 G, 1 QB, 1 FB, 1 RB, 2 T, 1 TE, 2 WR",
+        "6 OL, 1 RB, 2 TE, 1 WR", "5 WR", "11", None, "2 CB, 2 DE, 2 DT",
+    ]})
+    assert personnel.select(_offense_personnel_group(pl.col("value")).alias("value"))["value"].to_list() == [
+        "11", "21", "12", "21", "12", "00", "11", None, None]
+    formation = pl.DataFrame({"value": ["SHOTGUN", "EMPTY", "SINGLEBACK", "I_FORM", "UNDER CENTER", "PISTOL", "WILDCAT", None]})
+    assert formation.select(_formation_family(pl.col("value")).alias("value"))["value"].to_list() == [
+        "shotgun", "shotgun", "under center", "under center", "under center", "pistol", "wildcat", None]
+
+
+def test_defensive_opponent_adjustment_compares_against_each_offense_baseline() -> None:
+    from sports_analyst.plugins.nfl_shared import _opponent_adjusted_epa
+
+    league = pl.DataFrame({
+        "game_id": ["g1"] * 30 + ["g2"] * 30,
+        "posteam": ["BUF"] * 60,
+        "defteam": ["NYJ"] * 30 + ["KC"] * 30,
+        "qb_dropback": [1] * 60,
+        "epa": [0.2] * 30 + [0.0] * 30,
+    })
+    target = league.filter(pl.col("defteam") == "KC").with_columns(pl.col("epa").alias("_epa"))
+    # BUF usually gains 0.2 EPA/play against other defenses; KC held it to 0.0.
+    assert _opponent_adjusted_epa(league, target, "KC", "defense") == -0.2
+
+
 def test_selected_metrics_and_week_windows_constrain_analysis(pbp_pair) -> None:
     plugin = NFLPlugin()
     request = AnalysisRequest(

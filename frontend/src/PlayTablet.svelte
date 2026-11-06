@@ -7,7 +7,9 @@
 
     import {
         buildPlaySchematic,
+        defensiveLook,
         describeHash,
+        describePlaymakers,
         describeQbAlignment
     } from './playSchematic';
     import {colorContrastRatio, NFL_TEAM_NAMES, teamChartPalette, teamLogoUrl} from './teamPalettes';
@@ -31,6 +33,8 @@
     $: sourcePackages = play.visualization?.source_packages ?? ['play_by_play'];
     $: offensePlayers = playerRows(play.visualization?.offense_names, play.visualization?.offense_positions);
     $: defensePlayers = playerRows(play.visualization?.defense_names, play.visualization?.defense_positions);
+    $: look = defensiveLook(play.visualization ?? {});
+    $: playmakers = describePlaymakers(play.visualization ?? {});
 
     function sourceLabel(source: string) {
         return source === 'play_by_play' ? 'Play-by-play' : source === 'participation' ? 'Participation'
@@ -75,6 +79,15 @@
     <FootballSchematic play={diagramPlay} {homeTeamName} {homeTeam} {homeLogo} {homePalette} {offensePalette} {defensePalette} {endzoneTextColor} fieldLabel={`${specialTeams ? 'Special teams diagram' : 'Reconstructed play'} on ${homeTeam}'s home field`}/>
     <div class="play-details">
         <p>{play.description}</p>
+        {#if !specialTeams}
+            <section class="defense-summary" aria-label={`${defenseTeam || 'Defense'} defense on this play`}>
+                <h4>{defenseTeam ? `${NFL_TEAM_NAMES[defenseTeam.toUpperCase()] ?? defenseTeam} defense` : 'Defense'}</h4>
+                <dl>
+                    <div><dt>Look</dt><dd>{look.length ? look.join(' · ') : 'Not charted for this play'}</dd></div>
+                    <div><dt>Made the play</dt><dd>{playmakers.length ? playmakers.join(' · ') : 'No defender credited in the play-by-play'}</dd></div>
+                </dl>
+            </section>
+        {/if}
         {#if !specialTeams}<dl>
             <div>
                 <dt>Formation <i>PBP</i></dt>
@@ -102,7 +115,7 @@
             </div>
             <div>
                 <dt>Coverage & read <i>PART/FTN</i></dt>
-                <dd>{schematic.context.coverage}{play.visualization?.read_thrown ? ` · ${play.visualization.read_thrown} read` : ''}</dd>
+                <dd>{schematic.context.coverage}{play.visualization?.read_thrown && play.visualization.read_thrown !== '0' ? ` · ${play.visualization.read_thrown} read` : ''}</dd>
             </div>
             <div>
                 <dt>Target context <i>PART/FTN</i></dt>

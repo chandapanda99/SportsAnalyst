@@ -26,6 +26,14 @@ export const expandedQuestions: QuestionBank = {
         "Where modeled pass expectation is available, did pass rate over expected change alongside offensive efficiency?",
         "Which recorded plays illustrate—and contradict—the offensive trend without treating examples as the whole sample?",
         "How do opponent subdivision and schedule composition limit the offensive comparison?"
+      ],
+      defense: [
+        "Did this team's defense allow fewer yards per pass and per rush, and how much did the opponents faced change?",
+        "Did the defense get off the field more often on third down?",
+        "Did takeaways, sacks and tackles for loss change, and did they move with yards allowed?",
+        "Was the defensive change against the pass, the run, or both?",
+        "Was the defensive change sustained across games, or driven by a few weak opponents?",
+        "Which recorded plays show the defense's trend, and which run against it?"
       ]
     },
     player: {
@@ -58,6 +66,14 @@ export const expandedQuestions: QuestionBank = {
         "Where modeled EPA and target attribution are available, did per-target efficiency support the receiving trend?",
         "How reliable is the comparison given covered games and incomplete target attribution?",
         "If this receiver transferred, which verified schools and games are represented in each window?"
+      ],
+      defender: [
+        "Did this defender make more tackles for loss, sacks and passes defended per game?",
+        "Did this defender's tackle volume change, and did his disruptive plays change with it?",
+        "Did this defender create more takeaways: interceptions and passes defended?",
+        "Was this defender's change sustained across games, or driven by a few big performances?",
+        "Which recorded plays best show this defender's impact, and which run against the trend?",
+        "If this defender transferred, which verified schools and games are represented in each window?"
       ]
     }
   },

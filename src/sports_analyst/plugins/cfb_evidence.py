@@ -47,20 +47,27 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
             roles = {}
             for actor in row.get("participants") or []:
                 roles.setdefault(actor.get("role"), set()).add(actor.get("athlete_id"))
-            if subject.type == "player":
-                role = {"quarterback": "passer", "rushing": "rusher", "receiving": "receiver"}.get(request.analysis_domain)
-                if not role or roles.get(role) != {subject.id}:
+            if subject.type == "player" and request.analysis_domain == "defender":
+                credits = defender_credits(row).get(subject.id)
+                if not credits:
                     continue
-            elif metric == "points_allowed_per_game":
-                if row.get("team_id") == subject.id:
+                value = defender_play_value(row, metric, credits)
+            else:
+                if subject.type == "player":
+                    role = {"quarterback": "passer", "rushing": "rusher", "receiving": "receiver"}.get(request.analysis_domain)
+                    if not role or roles.get(role) != {subject.id}:
+                        continue
+                elif metric == "points_allowed_per_game" or metric in DEFENSE_PLAY_METRICS or metric in DEFENSE_EVENTS:
+                    if row.get("team_id") == subject.id:
+                        continue
+                elif row.get("team_id") != subject.id:
                     continue
-            elif row.get("team_id") != subject.id:
-                continue
-            value = play_value(row, metric, advanced)
+                value = play_value(row, metric, advanced)
             if value is None:
                 continue
-            contextual = metric in {"win_rate", "points_per_game", "points_allowed_per_game",
-                                    "passing_attempts", "rushing_attempts", "receptions"}
+            contextual = request.analysis_domain == "defender" or metric in {
+                "win_rate", "points_per_game", "points_allowed_per_game", "passing_attempts", "rushing_attempts", "receptions",
+                *DEFENSE_EVENTS}
             opponent = game["away_team_id"] if game["home_team_id"] == row.get("team_id") else game["home_team_id"]
             candidates.append(EvidenceCandidate(
                 key=f"{window}:{year}:{row['game_id']}:{row['play_id']}", window=window, game_id=row["game_id"],
@@ -96,6 +103,7 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
                 air_yards=row.get("air_yards"), yards_after_catch=row.get("yards_after_catch"),
                 pass_location=row.get("pass_direction"), run_location=row.get("rush_direction"),
                 pass_length=row.get("pass_depth"), formation=row.get("formation"), yards_gained=row.get("yards_gained"),
+                defensive_playmakers=defensive_playmakers(row),
                 cfb_statistics={"selected_play": row, "rows": stat_rows,
                                 "source_provenance": json.loads(row.get("source_provenance_json") or "{}"),
                                 "provider_context": json.loads(row.get("provider_context_json") or "{}"),
@@ -107,7 +115,110 @@ def select_plays(request, schedules, supplemental, manifests, aggregates, execut
     return evidence
 
 
+# Team-defense metrics are the opponent's offense, so a defensive play reads like the matching offensive play.
+DEFENSE_PLAY_METRICS = {
+    "yards_allowed_per_game": "total_yards_per_game", "passing_yards_allowed_per_game": "passing_yards_per_game",
+    "net_yards_per_pass_allowed": "net_yards_per_pass_attempt", "rushing_yards_allowed_per_game": "rushing_yards_per_game",
+    "yards_per_rush_allowed": "yards_per_rush", "opponent_third_down_rate": "third_down_rate",
+}
+DEFENSIVE_ROLES = {"sackedBy": "Sack", "forcedBy": "Forced fumble", "recoverer": "Fumble recovery",
+                   "passDefender": "Pass breakup", "tackler": "Tackle", "assistedBy": "Tackle"}
+
+
+def _context(row):
+    try:
+        return json.loads(row.get("provider_context_json") or "{}")
+    except ValueError:
+        return {}
+
+
+def _sack(row):
+    return bool(_context(row).get("sack")) or any(actor.get("role") == "sackedBy" for actor in row.get("participants") or [])
+
+
+def _loss(row):
+    return row.get("yards_gained") is not None and row["yards_gained"] < 0
+
+
+# Plays that show a defensive event; each counts once.
+DEFENSE_EVENTS = {
+    "takeaways_per_game": lambda row: bool(row.get("turnover")),
+    "sacks_per_game": _sack,
+    "tackles_for_loss_per_game": lambda row: _loss(row) and (bool(row.get("rush")) or _sack(row)),
+    "passes_defended_per_game": lambda row: any(actor.get("role") == "passDefender" for actor in row.get("participants") or []),
+    "qb_hurries_per_game": lambda row: bool(_context(row).get("qb_hurry")),
+}
+
+
+def defender_credits(row):
+    """Defensive credits by athlete, limited to the team without the ball.
+
+    ESPN sometimes leaves a participant's school blank; such credits are kept unless the athlete also has an
+    offensive role on the play. Interceptions are logged as pass defenses with a return, so an interception
+    play credits its pass defender with the interception instead of a breakup.
+    """
+    participants = row.get("participants") or []
+    offense = row.get("team_id")
+    offensive = {actor.get("athlete_id") for actor in participants
+                 if actor.get("role") in {"passer", "rusher", "receiver", "fumbler"}}
+    context = _context(row)
+    intercepted = bool(row.get("interception")) or bool(context.get("int"))
+    fumble = bool(context.get("fumble_vec")) or any(actor.get("role") == "fumbler" for actor in participants)
+    credits = {}
+    for actor in participants:
+        role, athlete, team = actor.get("role"), actor.get("athlete_id"), actor.get("team_id")
+        if role not in DEFENSIVE_ROLES or not athlete or (team and team == offense) or (not team and athlete in offensive):
+            continue
+        if role == "recoverer" and not fumble:
+            continue
+        label = "Interception" if role == "passDefender" and intercepted else DEFENSIVE_ROLES[role]
+        entry = credits.setdefault(athlete, {"name": actor.get("name"), "roles": []})
+        if label not in entry["roles"]:
+            entry["roles"].append(label)
+    # Scoring-summary plays carry the interceptor only in the parsed text; used when no pass defender was logged at all.
+    named = context.get("interception_player_name")
+    offense_names = {actor.get("name") for actor in participants if actor.get("athlete_id") in offensive}
+    if intercepted and named and named not in offense_names and not any(
+            actor.get("role") == "passDefender" for actor in participants):
+        credits.setdefault(f"text:{named}", {"name": named, "roles": ["Interception"]})
+    return credits
+
+
+def defensive_playmakers(row):
+    """Name the credited defenders, most decisive first; a tackler already named for a bigger play is not repeated."""
+    credits = defender_credits(row)
+    named, result = set(), []
+    for role in ("Interception", "Sack", "Forced fumble", "Fumble recovery", "Pass breakup", "Tackle"):
+        players = [entry["name"] for athlete, entry in credits.items()
+                   if role in entry["roles"] and entry["name"] and not (role == "Tackle" and athlete in named)]
+        named |= {athlete for athlete, entry in credits.items() if role in entry["roles"]}
+        if players:
+            result.append({"role": role, "players": players})
+    return result
+
+
+def defender_play_value(row, metric, credits):
+    """A credited defender play: yards gained on his tackles, otherwise 1 for the event the metric counts."""
+    roles = set(credits["roles"])
+    if metric in {"defender_tackles_per_game", "defender_solo_tackles_per_game"}:
+        return row.get("yards_gained") if roles & {"Tackle", "Sack"} else None
+    event = {
+        "defender_sacks_per_game": "Sack" in roles,
+        "defender_interceptions_per_game": "Interception" in roles,
+        "defender_passes_defended_per_game": bool(roles & {"Pass breakup", "Interception"}),
+        "defender_tackles_for_loss_per_game": bool(roles & {"Tackle", "Sack"}) and _loss(row),
+    }.get(metric, True)
+    return 1.0 if event else None
+
+
 def play_value(row, metric, advanced):
+    if metric in DEFENSE_EVENTS:
+        return 1.0 if row.get("scrimmage") and DEFENSE_EVENTS[metric](row) else None
+    if metric in DEFENSE_PLAY_METRICS:
+        # A turnover's recorded yards are the return, not yards the defense allowed.
+        if row.get("turnover") or row.get("interception") or _context(row).get("int"):
+            return None
+        metric = DEFENSE_PLAY_METRICS[metric]
     if metric in advanced:
         field, reducer, kind, _ = advanced[metric]
         if not row.get("scrimmage") or (kind and not row.get(kind)):

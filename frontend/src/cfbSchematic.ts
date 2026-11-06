@@ -47,6 +47,50 @@ function projectStarters(visualization: PlayVisualization, event: CFBRecordedPla
   return projectedCount;
 }
 
+const creditedRoles: Record<string, string> = {sackedBy: 'Sack', forcedBy: 'Forced fumble', recoverer: 'Fumble recovery',
+  passDefender: 'Pass breakup', tackler: 'Tackle', assistedBy: 'Tackle'};
+const playmakerOrder = ['Interception', 'Sack', 'Forced fumble', 'Fumble recovery', 'Pass breakup', 'Tackle'];
+
+/**
+ * Defenders ESPN credits on a recorded play, most decisive first, e.g. "Sack: A. Smith · Tackle: B. Jones".
+ * Only the team without the ball is credited (a blank school counts unless the athlete also has an offensive
+ * role); an interception is logged as a pass defense, and a tackler already named for a bigger play is not repeated.
+ */
+export function collegePlaymakers(event: CFBRecordedPlay) {
+  const participants = event.participants ?? [];
+  const context = collegeProviderContext(event);
+  const offensive = new Set(participants.filter(actor => ['passer', 'rusher', 'receiver', 'fumbler'].includes(actor.role))
+    .map(actor => actor.athlete_id));
+  const intercepted = Boolean(event.interception || context.int);
+  const fumble = Boolean(context.fumble_vec) || participants.some(actor => actor.role === 'fumbler');
+  const credits = new Map<string, {name: string; roles: Set<string>}>();
+  for (const actor of participants) {
+    const base = creditedRoles[actor.role];
+    if (!base || !actor.athlete_id || !actor.name) continue;
+    if (actor.team_id ? actor.team_id === event.team_id : offensive.has(actor.athlete_id)) continue;
+    if (actor.role === 'recoverer' && !fumble) continue;
+    const entry = credits.get(actor.athlete_id) ?? {name: actor.name, roles: new Set<string>()};
+    entry.roles.add(actor.role === 'passDefender' && intercepted ? 'Interception' : base);
+    credits.set(actor.athlete_id, entry);
+  }
+  // Scoring-summary plays carry the interceptor only in the parsed text; used when no pass defender was logged at all.
+  const textInterceptor = typeof context.interception_player_name === 'string' ? context.interception_player_name : '';
+  const offenseNames = new Set(participants.filter(actor => offensive.has(actor.athlete_id)).map(actor => actor.name));
+  if (intercepted && textInterceptor && !offenseNames.has(textInterceptor)
+      && !participants.some(actor => actor.role === 'passDefender')) {
+    credits.set(`text:${textInterceptor}`, {name: textInterceptor, roles: new Set(['Interception'])});
+  }
+  const named = new Set<string>();
+  const lines: string[] = [];
+  for (const role of playmakerOrder) {
+    const players = [...credits].filter(([id, entry]) => entry.roles.has(role) && !(role === 'Tackle' && named.has(id)))
+      .map(([, entry]) => entry.name);
+    for (const [id, entry] of credits) if (entry.roles.has(role)) named.add(id);
+    if (players.length) lines.push(`${role}: ${players.join(', ')}`);
+  }
+  return lines;
+}
+
 export function collegeProviderContext(event: CFBRecordedPlay): Record<string, string | number | boolean> {
   try {
     const data = JSON.parse(event.provider_context_json || '{}');

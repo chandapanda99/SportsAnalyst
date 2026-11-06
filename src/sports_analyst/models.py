@@ -435,6 +435,14 @@ class SpecialTeamsContext(BaseModel):
     source: str | None = None
 
 
+class DefensivePlaymakers(BaseModel):
+    """Defenders the play-by-play credits with one kind of play, such as a sack or a pass breakup."""
+
+    model_config = ConfigDict(frozen=True)
+    role: str
+    players: list[str]
+
+
 class PlayVisualization(BaseModel):
     model_config = ConfigDict(frozen=True)
     sport: str = "nfl"
@@ -474,6 +482,7 @@ class PlayVisualization(BaseModel):
     return_yards: float | None = None
     return_team: str | None = None
     turnover_player: str | None = None
+    defensive_playmakers: list[DefensivePlaymakers] = Field(default_factory=list)
     recovery_player: str | None = None
     recovery_team: str | None = None
     recovery_yards: float | None = None

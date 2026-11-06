@@ -159,8 +159,29 @@ DOMAIN_GUIDANCE = {
     "rushing": "Rushing: distinguish workload, success and explosive gains; outcomes do not isolate runner vision or offensive-line "
     "performance.",
     "defense": "Defense: distinguish recorded tackles, sacks, turnovers and team/unit prevention. Counts alone do not establish coverage "
-    "quality or assignments.",
+    "quality or assignments. Measures named 'allowed' describe the opponent's offense against this defense, so lower values are "
+    "better; say 'allowed fewer' or 'held opponents to', never 'the defense's EPA rose'. Takeaways and sacks swing a lot between "
+    "seasons; weigh them against EPA and success rate allowed. Coverage, rusher and box breakdowns are charted context, not "
+    "assignments.",
+    "defender": "Defender: rates are per snap he was on the field (sack, hit and breakup rates per opponent dropback). Credits "
+    "come from the official play-by-play, so a defender who is rarely targeted or schemed away from the ball can look quiet. "
+    "EPA/play allowed on field describes the whole defense with him playing, not his own assignment. PFR coverage figures "
+    "(targets, completions and yards allowed) are charted estimates. Compare like roles: an edge rusher's tackle rate is not "
+    "comparable to a linebacker's.",
     "usage": "Usage: opportunity and availability are not efficiency or impact; starts/appearances are not minutes.",
+}
+# Where a sport's data differ from the shared domain guidance, its own text replaces it.
+SPORT_DOMAIN_GUIDANCE = {
+    ("cfb", "defense"): "Defense: 'allowed' measures are the opponent's recorded box score in the same game, so lower is better; "
+    "say 'allowed fewer' or 'held opponents to'. They also reflect the opponents' quality and pace, and FBS/FCS mix, so name "
+    "the schedule. Sacks, tackles for loss, passes defended and hurries are summed from ESPN's defensive box score; tackles "
+    "for loss include sacks. Takeaways and sacks swing a lot between seasons; weigh them against yards per play allowed. "
+    "No snap counts, coverage, box or rusher data exist for college games.",
+    ("cfb", "defender"): "Defender: figures are per game in which ESPN lists him in the defensive box score; defenders with "
+    "no recorded statistic are omitted, so quiet games drop out of the denominator. College box scores have no snap counts, "
+    "so rates are not per snap and role or playing-time changes cannot be measured directly; say so when volume changes. "
+    "Tackles for loss include sacks, and passes defended may include interceptions. Play credits come from ESPN's play "
+    "narrative and can be incomplete. Compare like roles: an edge rusher's tackle count is not comparable to a linebacker's.",
 }
 
 REVIEW_CONTRACT = """
@@ -208,7 +229,8 @@ def season_trajectories(aggregate: list[AggregateEvidence]) -> list[dict[str, An
 
 def analysis_guidance(sport: str, domain: str) -> str:
     return "\n\n".join(
-        part for part in (ANALYTICAL_CONTRACT, SPORT_GUIDANCE.get(sport, ""), DOMAIN_GUIDANCE.get(domain, ""), NARRATIVE_CONTRACT) if part
+        part for part in (ANALYTICAL_CONTRACT, SPORT_GUIDANCE.get(sport, ""),
+                          SPORT_DOMAIN_GUIDANCE.get((sport, domain), DOMAIN_GUIDANCE.get(domain, "")), NARRATIVE_CONTRACT) if part
     )
 
 

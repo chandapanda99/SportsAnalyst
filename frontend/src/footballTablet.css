@@ -486,6 +486,42 @@
         line-height: 1.45
     }
 
+    /* Defense summary: one wide row per line, so the look and the playmakers read as sentences. */
+    .football-tablet .defense-summary {
+        margin: 14px 0 0;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--mint);
+        background: var(--color-surface-raised)
+    }
+
+    .football-tablet .defense-summary h4 {
+        margin: 0;
+        padding: 9px 12px 0;
+        color: var(--color-text-secondary);
+        font-size: 12px;
+        letter-spacing: .04em;
+        text-transform: uppercase
+    }
+
+    .football-tablet .defense-summary dl {
+        grid-template-columns: 1fr;
+        gap: 0;
+        margin: 0
+    }
+
+    .football-tablet .defense-summary dl div {
+        display: grid;
+        grid-template-columns: 8.5rem minmax(0, 1fr);
+        align-items: baseline;
+        gap: 12px;
+        padding: 7px 12px;
+        background: none
+    }
+
+    .football-tablet .defense-summary dd {
+        margin: 0
+    }
+
     .football-tablet .on-field {
         margin: 14px 0;
         border: 1px solid var(--line);
@@ -569,6 +605,11 @@
 
         .football-tablet dl {
             grid-template-columns:1fr 1fr
+        }
+
+        .football-tablet .defense-summary dl div {
+            grid-template-columns: 1fr;
+            gap: 2px
         }
 
         .football-tablet .on-field-heading {

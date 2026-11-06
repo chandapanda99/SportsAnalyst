@@ -1167,3 +1167,185 @@ def test_only_accounted_provider_warnings_are_silenced():
         warnings.warn("period steps back", PlayOrderWarning, stacklevel=1)
         warnings.warn("something else", UserWarning, stacklevel=1)
     assert [str(item.message) for item in caught] == ["something else"]
+
+
+def _box(game, defensive):
+    """An ESPN summary with both teams' lines; team 1 lists defenders and one interception."""
+    lines = {"1": ("320", "200", "20/30", "120", "30", "4-12", "1"), "2": ("250", "150", "15/31", "100", "33", "3-14", "2")}
+    teams = [{"team": {"id": team}, "statistics": [
+        {"name": "totalYards", "displayValue": total}, {"name": "netPassingYards", "displayValue": passing},
+        {"name": "completionAttempts", "displayValue": attempts}, {"name": "rushingYards", "displayValue": rushing},
+        {"name": "rushingAttempts", "displayValue": carries}, {"name": "thirdDownEff", "displayValue": third},
+        {"name": "turnovers", "displayValue": turnovers}]} for team, (total, passing, attempts, rushing, carries, third, turnovers)
+        in lines.items()]
+    labels = ["TOT", "SOLO", "SACKS", "TFL", "PD", "QB HUR", "TD"]
+    players = [{"team": {"id": "1"}, "statistics": [
+        {"name": "defensive", "labels": labels, "athletes": [
+            {"athlete": {"id": athlete, "displayName": name}, "stats": stats} for athlete, name, stats in defensive]},
+        {"name": "interceptions", "labels": ["INT", "YDS", "TD"],
+         "athletes": [{"athlete": {"id": "31", "displayName": "Corner"}, "stats": ["1", "12", "0"]}]},
+    ]}]
+    return {"boxscore": {"teams": teams, "players": players}}
+
+
+def test_summary_header_week_may_be_a_plain_number():
+    header = {**event("20241", 2024), "week": 3}
+    assert SportsDataverseCFBConnector.schedule_rows({"events": [header]}, "1", 2024)[0]["week"] == 3
+
+
+def test_box_score_keeps_opponent_lines_team_defense_totals_and_defender_rows():
+    defensive = [("30", "Edge", ["4", "3", "1.5", "2", "0", "2", "0"]), ("31", "Corner", ["5", "4", "0", "0", "2", "0", "0"])]
+    teams, players, _ = SportsDataverseCFBConnector.statistics(_box("g1", defensive), "g1", 2024)
+    home, away = (next(row for row in teams if row["team_id"] == team) for team in ("1", "2"))
+    # Allowed figures are the opponent's offense in the same game.
+    assert (home["opp_total_yards"], home["opp_passing_attempts"], home["opp_third_down_conversions"]) == (250, 31, 3)
+    assert home["takeaways"] == 2 and away["takeaways"] == 1
+    assert (home["sacks"], home["tackles_for_loss"], home["passes_defended"], home["qb_hurries"]) == (1.5, 2, 2, 2)
+    # Team 2 has no defensive box score: its totals stay missing, never zero.
+    assert "sacks" not in away
+    edge, corner = (next(row for row in players if row["athlete_id"] == athlete) for athlete in ("30", "31"))
+    assert edge["def_sacks"] == 1.5 and edge["def_interceptions"] == 0.0
+    assert corner["def_interceptions"] == 1 and corner["def_interception_yards"] == 12
+
+
+def _windows(stat_rows):
+    import types
+
+    schedules, frames, manifests = {}, {}, {}
+    for season, rows in stat_rows.items():
+        schedules[season] = pl.DataFrame([{
+            "game_id": row["game_id"], "completed": True, "season_type": "REG", "date": f"{season}-09-0{index + 1}T19:00Z",
+            "week": index + 1, "home_team_id": "1", "away_team_id": "2", "home_team_name": "Home", "away_team_name": "Away",
+            "home_score": 21, "away_score": 14} for index, row in enumerate(rows)])
+        frames[season] = pl.DataFrame(rows)
+        manifests[season] = types.SimpleNamespace(manifest_id=f"m{season}", dataset="schedules", coverage={},
+                                                  partition_key="team:1", season=season)
+    return schedules, frames, manifests
+
+
+def _season(season):
+    import types
+
+    return types.SimpleNamespace(season=season)
+
+
+def test_team_defense_compares_allowed_rates_and_havoc_counts():
+    rows = {
+        2024: [{"game_id": "a1", "team_id": "1", "opp_total_yards": 400.0, "opp_passing_yards": 250.0, "opp_passing_attempts": 25.0,
+                "opp_rushing_yards": 150.0, "opp_rushing_attempts": 30.0, "opp_third_down_conversions": 6.0,
+                "opp_third_down_attempts": 12.0, "takeaways": 1.0, "sacks": 1.0, "tackles_for_loss": 4.0}],
+        2025: [{"game_id": "b1", "team_id": "1", "opp_total_yards": 300.0, "opp_passing_yards": 150.0, "opp_passing_attempts": 25.0,
+                "opp_rushing_yards": 150.0, "opp_rushing_attempts": 50.0, "opp_third_down_conversions": 3.0,
+                "opp_third_down_attempts": 12.0, "takeaways": 3.0, "sacks": 4.0, "tackles_for_loss": None},
+               {"game_id": "b2", "team_id": "1", "opp_total_yards": 200.0, "opp_passing_yards": 100.0, "opp_passing_attempts": 25.0,
+                "opp_rushing_yards": 100.0, "opp_rushing_attempts": 25.0, "opp_third_down_conversions": 3.0,
+                "opp_third_down_attempts": 12.0, "takeaways": 1.0, "sacks": 2.0, "tackles_for_loss": 6.0}],
+    }
+    schedules, frames, manifests = _windows(rows)
+    plugin = CFBPlugin()
+    options = plugin.analysis_options([_season(2024), _season(2025)])
+    domains = {item["value"]: item for item in options.analysis_domains}
+    assert domains["defense"]["subject_type"] == "team" and domains["defender"]["subject_type"] == "player"
+    assert domains["defender"]["label"] == "Defense"
+    request = AnalysisRequest(
+        sport="cfb", question="Did the defense improve?", analysis_domain="defense", subject={"type": "team", "id": "1"},
+        metrics=options.default_metrics_by_domain["defense"],
+        scope={"team": "1", "baseline_season": 2024, "comparison_season": 2025, "comparison_design": "full_seasons"})
+    result = plugin.analyze(request, schedules, manifests, {"team_stats": frames})
+    values = {item.metric: (item.baseline_value, item.comparison_value) for item in result.aggregate_evidence}
+    assert values["yards_allowed_per_game"] == (400, 250)
+    assert values["net_yards_per_pass_allowed"] == (10, 5)
+    assert values["yards_per_rush_allowed"] == (5, pytest.approx(250 / 75))
+    assert values["opponent_third_down_rate"] == (0.5, 0.25)
+    assert values["takeaways_per_game"] == (1, 2) and values["sacks_per_game"] == (1, 3)
+    # A game without a defensive box score drops out of the denominator instead of counting as zero.
+    assert values["tackles_for_loss_per_game"] == (4, 6)
+    assert plugin.explain_metric("yards_allowed_per_game").higher_is_better is False
+    assert plugin.explain_metric("opponent_third_down_rate").higher_is_better is False
+    assert plugin.explain_metric("sacks_per_game").higher_is_better is True
+    assert any("opponent's recorded box score" in item for item in plugin.explain_metric("yards_allowed_per_game").limitations)
+
+
+def test_defender_per_game_metrics_and_guidance():
+    from sports_analyst.analysis.instructions import analysis_guidance
+
+    rows = {2024: [{"game_id": "a1", "team_id": "1", "athlete_id": "30", "def_tackles": 4.0, "def_sacks": 1.0,
+                    "def_tackles_for_loss": 1.0, "def_passes_defended": 0.0, "def_interceptions": 0.0}],
+            2025: [{"game_id": "b1", "team_id": "1", "athlete_id": "30", "def_tackles": 6.0, "def_sacks": 2.0,
+                    "def_tackles_for_loss": 3.0, "def_passes_defended": 1.0, "def_interceptions": 1.0},
+                   {"game_id": "b2", "team_id": "1", "athlete_id": "30", "def_tackles": 8.0, "def_sacks": 0.0,
+                    "def_tackles_for_loss": 1.0, "def_passes_defended": 1.0, "def_interceptions": 0.0}]}
+    schedules, frames, manifests = _windows(rows)
+    request = AnalysisRequest(
+        sport="cfb", question="Did he make more plays?", analysis_domain="defender", subject={"type": "player", "id": "30"},
+        metrics=["defender_tackles_per_game", "defender_sacks_per_game", "defender_interceptions_per_game"],
+        scope={"team": "1", "baseline_season": 2024, "comparison_season": 2025, "comparison_design": "full_seasons"})
+    result = CFBPlugin().analyze(request, schedules, manifests, {"player_stats": frames})
+    values = {item.metric: (item.baseline_value, item.comparison_value) for item in result.aggregate_evidence}
+    assert values == {"defender_tackles_per_game": (4, 7), "defender_sacks_per_game": (1, 1),
+                      "defender_interceptions_per_game": (0, 0.5)}
+    guidance = analysis_guidance("cfb", "defender")
+    assert "no snap counts" in guidance and "per snap he was on the field" not in guidance
+    assert "per snap he was on the field" in analysis_guidance("nfl", "defender")
+
+
+def test_play_credits_follow_the_defending_team_and_interception_quirks():
+    from sports_analyst.plugins.cfb_evidence import defender_credits, defender_play_value, defensive_playmakers, play_value
+
+    def actor(role, athlete, name, team):
+        return {"role": role, "athlete_id": athlete, "name": name, "team_id": team}
+
+    sack_fumble = {"team_id": "2", "scrimmage": True, "yards_gained": -7, "pass": True,
+                   "provider_context_json": json.dumps({"sack": True, "fumble_vec": True}),
+                   "participants": [actor("passer", "20", "QB", "2"), actor("sackedBy", "30", "Edge", "1"),
+                                    actor("forcedBy", "30", "Edge", "1"), actor("recoverer", "33", "Tackle", None),
+                                    actor("tackler", "30", "Edge", "1")]}
+    assert defensive_playmakers(sack_fumble) == [
+        {"role": "Sack", "players": ["Edge"]}, {"role": "Forced fumble", "players": ["Edge"]},
+        {"role": "Fumble recovery", "players": ["Tackle"]}]
+    assert defender_play_value(sack_fumble, "defender_tackles_for_loss_per_game", defender_credits(sack_fumble)["30"]) == 1.0
+    assert play_value(sack_fumble, "sacks_per_game", {}) == 1.0
+    assert play_value(sack_fumble, "tackles_for_loss_per_game", {}) == 1.0
+    # ESPN can log the offense's own receiver as the "pass defender" on an interception: he is not credited.
+    receiver_logged = {"team_id": "2", "interception": True, "participants": [
+        actor("passer", "20", "QB", "2"), actor("passDefender", "21", "Receiver", "2"), actor("tackler", "22", "Lineman", "2")]}
+    assert defender_credits(receiver_logged) == {} and defensive_playmakers(receiver_logged) == []
+    pick = {"team_id": "2", "interception": True, "yards_gained": 0, "participants": [
+        actor("passer", "20", "QB", "2"), actor("passDefender", "31", "Corner", "1"), actor("returner", "31", "Corner", "1"),
+        actor("tackler", "20", "QB", "2")]}
+    assert defensive_playmakers(pick) == [{"role": "Interception", "players": ["Corner"]}]
+    assert defender_play_value(pick, "defender_interceptions_per_game", defender_credits(pick)["31"]) == 1.0
+    assert defender_play_value(pick, "defender_tackles_per_game", defender_credits(pick)["31"]) is None
+    # Allowed-yardage metrics read the opponent's play like the matching offensive play.
+    run = {"team_id": "2", "scrimmage": True, "rush": True, "yards_gained": 6, "participants": []}
+    assert play_value(run, "yards_per_rush_allowed", {}) == 6 and play_value(run, "net_yards_per_pass_allowed", {}) is None
+    pick_six = {"team_id": "1", "scrimmage": True, "pass": True, "interception": True, "yards_gained": 58,
+                "provider_context_json": json.dumps({"int": True, "interception_player_name": "Corner"}),
+                "participants": [actor("scorer", "31", "Corner", "1")]}
+    # Return yards are not yards allowed, and a scoring-summary interceptor is named from the parsed text.
+    assert play_value(pick_six, "yards_allowed_per_game", {}) is None
+    assert defensive_playmakers(pick_six) == [{"role": "Interception", "players": ["Corner"]}]
+
+
+def test_prepared_seasons_without_defensive_columns_are_rebuilt(tmp_path, source):
+    from sports_analyst.datasets.cfb import STATISTICS_VERSION
+
+    application = AnalystApplication(Settings(_env_file=None, data_dir=tmp_path, model_provider="ollama", langsmith_tracing=False))
+    request = AnalysisRequest(
+        sport="cfb", question="Did the defense improve?", analysis_domain="defense", subject={"type": "team", "id": "1"},
+        metrics=["yards_allowed_per_game"],
+        scope={"team": "1", "baseline_season": 2024, "comparison_season": 2025, "comparison_design": "full_seasons"})
+    partition, _ = application._prepare_cfb(request, "defense-prepare")
+    manifest = application.store.manifest_for_season(2024, "team_stats", "cfb", partition_key=partition)
+    assert manifest.coverage["statistics_version"] == STATISTICS_VERSION and "opp_total_yards" in manifest.columns
+    # A season prepared before the defensive columns existed is prepared again.
+    prepared = []
+    connector = application.connectors["cfb"]
+    original = connector.prepare
+    connector.prepare = lambda season, **kwargs: prepared.append(season) or original(season, **kwargs)
+    application._prepare_cfb(request, "defense-prepare-again")
+    assert 2024 not in prepared
+    application.store.save_manifest(manifest.model_copy(update={"coverage": {
+        key: value for key, value in manifest.coverage.items() if key != "statistics_version"}}))
+    application._prepare_cfb(request, "defense-prepare-stale")
+    assert 2024 in prepared
