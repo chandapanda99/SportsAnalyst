@@ -38,5 +38,15 @@ export default defineConfig({
     port: 5173,
     proxy: { '/api': apiTarget }
   },
-  test: { environment: 'jsdom' }
+  test: {
+    environment: 'jsdom',
+    // The jsdom + Svelte render suites are CPU-bound, and each file's first
+    // test pays for cold component and lazy-module transforms. With the
+    // default worker count (CPUs - 1) the workers starve each other: those
+    // first tests ran 5-9s and tripped the 5s default timeout at random.
+    // Half the cores finished faster (about 41s vs 54s on a 12-core machine)
+    // with the slowest test near 5s; 20s leaves headroom for slower machines.
+    maxWorkers: '50%',
+    testTimeout: 20_000
+  }
 });
