@@ -281,6 +281,16 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
     assert child.run.metrics == bundle.run.metrics
     assert child.summary.startswith("Follow-up:")
     assert child.plan.calls[0].tool == "reuse_parent_evidence"
+    import json
+
+    from sports_analyst.analysis.prompt_fingerprint import prompt_fingerprint
+    from sports_analyst.models import InvestigationBundle
+    assert bundle.prompt_fingerprint == child.prompt_fingerprint == prompt_fingerprint()
+    saved = json.loads((tmp_path / "investigations" / child.run.investigation_id / "bundle.json").read_text(encoding="utf-8"))
+    assert saved["prompt_fingerprint"] == prompt_fingerprint()
+    # Reports saved before fingerprints existed load without one rather than being stamped with today's prompts.
+    saved.pop("prompt_fingerprint")
+    assert InvestigationBundle.model_validate(saved).prompt_fingerprint is None
     assert synthesis_metadata[1]["investigation_id"] == child.run.investigation_id
     assert synthesis_metadata[1]["thread_id"] == bundle.run.investigation_id
     assert {name for name, _metadata in telemetry.spans} >= {

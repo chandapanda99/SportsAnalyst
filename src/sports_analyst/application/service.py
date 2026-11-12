@@ -12,6 +12,7 @@ from typing import Any
 
 import polars as pl
 
+from sports_analyst.analysis.prompt_fingerprint import prompt_fingerprint
 from sports_analyst.application.runtime import LazyRegistry, sport_registries
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import (
@@ -66,6 +67,9 @@ class AnalystApplication:
         self.connectors, self.plugins = sport_registries(self.settings, self.store.persistence)
         self._runtime_lock = RLock()
         self._analysis_enabled = analysis_runtime
+        if analysis_runtime:
+            # Fingerprint the prompt text once per process; traces and saved reports carry it.
+            logger.info("prompt_fingerprint=%s", prompt_fingerprint())
         self._agent = None
         self._telemetry = None
         self.events = EventRegistry()
@@ -680,6 +684,7 @@ class AnalystApplication:
                 methodological_caveats=result.caveats,
                 model_id=model_id,
                 fallback_used=fallback,
+                prompt_fingerprint=prompt_fingerprint(),
             )
             # Doubles as the last cancellation check before anything is saved.
             self.events.emit(identifier, "saving", "Saving your report", 0.97)
@@ -930,6 +935,7 @@ class AnalystApplication:
                 ],
                 model_id=model_id,
                 fallback_used=fallback,
+                prompt_fingerprint=prompt_fingerprint(),
             )
             self.events.emit(identifier, "saving", "Saving your answer", 0.97)
             self.store.save_investigation(bundle)

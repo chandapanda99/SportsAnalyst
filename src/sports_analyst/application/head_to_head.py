@@ -220,6 +220,7 @@ def _gap_caveats(gaps: dict[str, list[str]], unmeasured_seasons: list[str], seas
 
 def investigate_head_to_head(app, request: AnalysisRequest, identifier: str, trace_metadata: dict[str, Any]) -> InvestigationBundle:
     from sports_analyst.analysis.instructions import evidence_brief
+    from sports_analyst.analysis.prompt_fingerprint import prompt_fingerprint
 
     if request.sport not in SUPPORTED_SPORTS:
         raise ValueError("Head-to-head comparisons are available for the NFL, NBA, soccer and college football.")
@@ -300,7 +301,7 @@ def investigate_head_to_head(app, request: AnalysisRequest, identifier: str, tra
         run=run, plan=plugin.default_plan(side_request(request, subjects[0])), summary=draft.summary, claims=draft.claims,
         aggregate_evidence=evidence, play_evidence=plays, charts=[comparison_chart(evidence, labels, period)],
         executions=executions, dataset_manifests=list(manifests.values()), methodological_caveats=caveats,
-        model_id=model_id, fallback_used=fallback,
+        model_id=model_id, fallback_used=fallback, prompt_fingerprint=prompt_fingerprint(),
     )
     # Doubles as the last cancellation check before anything is saved.
     app.events.emit(identifier, "saving", "Saving your report", 0.97)

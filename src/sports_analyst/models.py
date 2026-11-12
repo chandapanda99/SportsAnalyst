@@ -651,6 +651,8 @@ class InvestigationBundle(BaseModel):
     methodological_caveats: list[str]
     model_id: str | None = None
     fallback_used: bool = False
+    # The prompt text in effect when this report was made; None for reports saved before it was recorded.
+    prompt_fingerprint: str | None = None
 
     @model_validator(mode="after")
     def validate_citations(self) -> InvestigationBundle:

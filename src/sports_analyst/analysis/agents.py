@@ -12,11 +12,11 @@ from sports_analyst.analysis.instructions import (
     CONVERSATION_CONTRACT,
     HEAD_TO_HEAD_CONTRACT,
     NARRATIVE_CONTRACT,
-    PROMPT_VERSION,
     REVIEW_CONTRACT,
     analysis_guidance,
     season_trajectories,
 )
+from sports_analyst.analysis.prompt_fingerprint import prompt_fingerprint
 from sports_analyst.config import Settings, get_settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, PlayEvidence, stable_id
 from sports_analyst.providers import get_provider
@@ -827,7 +827,7 @@ class EvidenceBoundAgent:
                 "analysis_model_id": resolved.model_id,
                 "chat_model_id": conversational.model_id if conversational else resolved.model_id,
                 "synthesis_mode": synthesis_mode,
-                "prompt_version": PROMPT_VERSION,
+                "prompt_fingerprint": prompt_fingerprint(),
             }
             invocation_tags = [
                 "open-sports-analyst",

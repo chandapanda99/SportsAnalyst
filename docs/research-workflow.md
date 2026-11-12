@@ -1,6 +1,12 @@
 # Analysis and evidence workflow
 
-The current prompt contract version is recorded in synthesis trace metadata. Shared
+A prompt fingerprint (`prompts-` plus 12 hex characters) identifies the prompt text in
+effect. It is computed once at startup from every text literal in `instructions.py`,
+`agents.py` and `calculations.py`, so any wording change produces a new value with no
+manual version to bump. It is recorded in synthesis trace metadata and on each saved
+report (`prompt_fingerprint`; absent on reports saved before it existed). It is not sent
+to the model. Non-prompt text in those modules (log messages) can also change it, and it
+is stable only for a given Python version. Shared
 rules, sport/domain guidance and reviewer requirements live in
 `src/sports_analyst/analysis/instructions.py`; agent construction is in
 `src/sports_analyst/analysis/agents.py`.
@@ -273,7 +279,7 @@ provider usage and are not part of the default test suite. Use these acceptance 
 
 Score each response for numerical fidelity, citation entailment, scope/coverage fidelity,
 sport terminology, causal restraint and directness. Any invented number, unsupported
-tactical assertion, or source/window mismatch fails the case. Record prompt version,
+tactical assertion, or source/window mismatch fails the case. Record prompt fingerprint,
 model/version, source snapshot and reviewer rationale when comparing runs in LangSmith.
 
 Citation schema validation checks that references exist; it does not establish semantic

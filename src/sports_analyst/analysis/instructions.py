@@ -6,8 +6,6 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.10"
-
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
 specific answer, then build a connected explanation: what changed, which evidence matters, what it
@@ -273,7 +271,6 @@ def evidence_brief(
         "eligibility": "Recorded matches in the calendar month and selected window; use each evidence record's sample and caveats",
     } for item in aggregate if item.metric == "soccer_monthly" and item.context.get("definition")}
     return {
-        "prompt_version": PROMPT_VERSION,
         "scope": scope or {},
         "metric_definitions": [item.model_dump(mode="json") for item in definitions if item.value in used_metrics],
         "supplemental_metric_definitions": list(monthly_definitions.values()),

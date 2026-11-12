@@ -14,7 +14,8 @@ from sports_analyst.analysis.agents import (
     _resolve_citation_draft,
 )
 from sports_analyst.analysis.calculations import conversation_brief
-from sports_analyst.analysis.instructions import PROMPT_VERSION, analysis_guidance, domain_guidance, evidence_brief, season_trajectories
+from sports_analyst.analysis.instructions import analysis_guidance, domain_guidance, evidence_brief, season_trajectories
+from sports_analyst.analysis.prompt_fingerprint import prompt_fingerprint
 from sports_analyst.config import Settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, DatasetManifest, MetricDefinition, PlayEvidence
 
@@ -235,7 +236,8 @@ def test_sport_analysis_contract_and_coverage_reach_every_agent(sport, domain, q
         assert "whether a material contradiction was" in prompt
         assert "do not invent a threshold" in " ".join(prompt.lower().split())
     assert "Verify every material sentence" in captured["system_prompt"]
-    assert captured["config"]["metadata"]["prompt_version"] == PROMPT_VERSION
+    assert captured["config"]["metadata"]["prompt_fingerprint"] == prompt_fingerprint()
+    assert "prompt_version" not in brief and "prompt_fingerprint" not in brief
 
 
 def seasonal(season: int, value: float, metric: str = "seasonal_epa_per_play") -> AggregateEvidence:
@@ -306,3 +308,26 @@ def test_planner_history_is_bounded_and_marked_as_unverified():
     assert "not verified evidence" in brief
     assert "Question 2" not in brief and "Question 3" in brief and "Question 8" in brief
     assert "x" * 1501 not in brief
+
+
+@pytest.mark.parametrize("module,name,key", [
+    ("sports_analyst.analysis.instructions", "SPORT_GUIDANCE", "nba"),
+    ("sports_analyst.analysis.agents", "SOCCER_ANALYST_VOICE_GUIDE", None),
+])
+def test_prompt_fingerprint_changes_whenever_prompt_text_changes(module, name, key, monkeypatch):
+    import importlib
+
+    original = prompt_fingerprint()
+    assert original.startswith("prompts-") and len(original) == len("prompts-") + 12
+    target = importlib.import_module(module)
+    value = getattr(target, name)
+    changed = {**value, key: value[key] + " One more rule."} if key else value + " One more rule."
+    monkeypatch.setattr(target, name, changed)
+    prompt_fingerprint.cache_clear()
+    try:
+        assert prompt_fingerprint() != original
+        monkeypatch.setattr(target, name, value)
+        prompt_fingerprint.cache_clear()
+        assert prompt_fingerprint() == original
+    finally:
+        prompt_fingerprint.cache_clear()
