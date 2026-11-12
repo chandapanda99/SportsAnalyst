@@ -10,9 +10,11 @@ from sports_analyst.analysis.agents import (
     _citation_response_model,
     _fallback_synthesis,
     _formulate_user_message,
+    _higher_is_better,
     _resolve_citation_draft,
 )
-from sports_analyst.analysis.instructions import PROMPT_VERSION, evidence_brief, season_trajectories
+from sports_analyst.analysis.calculations import conversation_brief
+from sports_analyst.analysis.instructions import PROMPT_VERSION, analysis_guidance, domain_guidance, evidence_brief, season_trajectories
 from sports_analyst.config import Settings
 from sports_analyst.models import AggregateEvidence, AnalysisWindow, Claim, ClaimType, DatasetManifest, MetricDefinition, PlayEvidence
 
@@ -262,3 +264,45 @@ def test_fallback_summary_reports_a_reversal_instead_of_only_the_endpoints():
                                 [primary, seasonal(2023, -0.049), seasonal(2024, -0.082), seasonal(2025, 0.079)],
                                 [2023, 2024, 2025], analysis_domain="offense")
     assert "not steady: 2023: -0.049, 2024: -0.082, 2025: 0.079" in draft.summary
+
+
+@pytest.mark.parametrize("sport", ["nba", "soccer"])
+def test_football_defense_guidance_never_reaches_another_sport(sport):
+    guidance = analysis_guidance(sport, "defense")
+    for football_term in ("tackles", "sacks", "EPA and success rate allowed", "rusher"):
+        assert football_term not in domain_guidance(sport, "defense")
+    assert "lower is better" in " ".join(guidance.split())
+    assert domain_guidance(sport, "quarterback") == ""
+    # Shared, sport-neutral guidance is still inherited.
+    assert domain_guidance(sport, "usage").startswith("Usage:")
+
+
+def test_nfl_ball_carrier_reports_receive_rushing_guidance():
+    assert domain_guidance("nfl", "running") == domain_guidance("nfl", "rushing") != ""
+    assert "tackles" in domain_guidance("nfl", "defense")
+    assert "ESPN's defensive box score" in domain_guidance("cfb", "defense")
+
+
+def test_metric_definition_direction_overrides_the_shared_tables():
+    assert _higher_is_better("epa_per_dropback") is True
+    assert _higher_is_better("sack_rate") is False
+    assert _higher_is_better("xga_per_match") is None
+    context = {"metric_definitions": [{"value": "xga_per_match", "higher_is_better": False},
+                                      {"value": "air_yards", "higher_is_better": None}]}
+    assert _higher_is_better("xga_per_match", context) is False
+    assert _higher_is_better("air_yards", context) is None
+    conceded = aggregate_evidence().model_copy(update={
+        "metric": "xga_per_match", "label": "xG against per match", "baseline_value": 1.4, "comparison_value": 1.1, "value": -0.3})
+    arguments = ("Did the defense improve?", "ARS", AnalysisWindow(season=2024), AnalysisWindow(season=2025), [conceded])
+    assert "changed from" in _fallback_synthesis(*arguments, analysis_domain="defense", sport="soccer").summary
+    described = _fallback_synthesis(*arguments, analysis_domain="defense", sport="soccer", analytical_context=context)
+    assert "improved from" in described.summary
+
+
+def test_planner_history_is_bounded_and_marked_as_unverified():
+    assert conversation_brief(None) is None and conversation_brief([]) is None
+    turns = [{"question": f"Question {index}", "summary": "x" * 5000} for index in range(9)]
+    brief = conversation_brief(turns)
+    assert "not verified evidence" in brief
+    assert "Question 2" not in brief and "Question 3" in brief and "Question 8" in brief
+    assert "x" * 1501 not in brief

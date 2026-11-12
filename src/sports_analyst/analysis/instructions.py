@@ -6,7 +6,7 @@ from typing import Any
 
 from sports_analyst.models import AggregateEvidence, DatasetManifest, MetricDefinition
 
-PROMPT_VERSION = "1.9"
+PROMPT_VERSION = "1.10"
 
 NARRATIVE_CONTRACT = """
 Write for the person who asked the question, not for a generic report template. Lead with a direct,
@@ -170,8 +170,21 @@ DOMAIN_GUIDANCE = {
     "comparable to a linebacker's.",
     "usage": "Usage: opportunity and availability are not efficiency or impact; starts/appearances are not minutes.",
 }
+# NFL player reports name the ball-carrier domain "running"; team reports name it "rushing".
+DOMAIN_GUIDANCE["running"] = DOMAIN_GUIDANCE["rushing"]
+# These describe football records (tackles, sacks, EPA); other sports must never inherit them.
+FOOTBALL_ONLY_DOMAINS = frozenset({"quarterback", "receiving", "rushing", "running", "defense", "defender"})
+FOOTBALL_SPORTS = frozenset({"nfl", "cfb"})
 # Where a sport's data differ from the shared domain guidance, its own text replaces it.
 SPORT_DOMAIN_GUIDANCE = {
+    ("nba", "defense"): "Defense: defensive rating and opponent scoring describe what opponents did against this team, so lower "
+    "is better; say 'allowed fewer points per 100 possessions' or 'held opponents to'. They reflect opponent quality, pace and "
+    "shooting luck as well as defensive play. Steals, blocks and defensive rebounds are box-score counts; they do not establish "
+    "matchup assignments, switching, rim protection or individual defensive quality.",
+    ("soccer", "defense"): "Defense: goals against and xG against describe what opponents produced against this team, so lower "
+    "is better; say 'conceded fewer' or 'allowed lower-quality chances'. Compare goals conceded and xG against on the same "
+    "covered matches. Conceding fewer goals than xG against is descriptive, not demonstrated goalkeeping or defensive skill. "
+    "These totals do not establish pressing, defensive shape, line height or individual defending.",
     ("cfb", "defense"): "Defense: 'allowed' measures are the opponent's recorded box score in the same game, so lower is better; "
     "say 'allowed fewer' or 'held opponents to'. They also reflect the opponents' quality and pace, and FBS/FCS mix, so name "
     "the schedule. Sacks, tackles for loss, passes defended and hurries are summed from ESPN's defensive box score; tackles "
@@ -227,10 +240,19 @@ def season_trajectories(aggregate: list[AggregateEvidence]) -> list[dict[str, An
     return trajectories
 
 
+def domain_guidance(sport: str, domain: str) -> str:
+    """A sport's own text wins; shared football text never reaches another sport."""
+    if (sport, domain) in SPORT_DOMAIN_GUIDANCE:
+        return SPORT_DOMAIN_GUIDANCE[(sport, domain)]
+    if domain in FOOTBALL_ONLY_DOMAINS and sport not in FOOTBALL_SPORTS:
+        return ""
+    return DOMAIN_GUIDANCE.get(domain, "")
+
+
 def analysis_guidance(sport: str, domain: str) -> str:
     return "\n\n".join(
-        part for part in (ANALYTICAL_CONTRACT, SPORT_GUIDANCE.get(sport, ""),
-                          SPORT_DOMAIN_GUIDANCE.get((sport, domain), DOMAIN_GUIDANCE.get(domain, "")), NARRATIVE_CONTRACT) if part
+        part for part in (ANALYTICAL_CONTRACT, SPORT_GUIDANCE.get(sport, ""), domain_guidance(sport, domain), NARRATIVE_CONTRACT)
+        if part
     )
 
 

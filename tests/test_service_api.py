@@ -296,6 +296,31 @@ def test_full_deterministic_investigation(tmp_path: Path, pbp_pair, monkeypatch)
         bundle.run.investigation_id,
         child.run.investigation_id,
     ]
+    # A measurement registered by one follow-up stays citable in the next; the root report is not rewritten.
+    measured = child.aggregate_evidence[0].model_copy(update={
+        "evidence_id": "evidence-follow-up-measurement", "metric": "scoped_aggregate", "label": "Follow-up measurement"})
+    (tmp_path / "investigations" / child.run.investigation_id / "bundle.json").write_text(
+        child.model_copy(update={"aggregate_evidence": [*child.aggregate_evidence, measured]}).model_dump_json(), encoding="utf-8")
+    contexts = []
+    synthesize = application.agent.synthesize
+
+    def capture_context(*args, **kwargs):
+        contexts.append((args[4], kwargs["analytical_context"]))
+        return synthesize(*args, **kwargs)
+
+    monkeypatch.setattr(application.agent, "synthesize", capture_context)
+    second = application.follow_up(child.run.investigation_id, "How does that compare with the first answer?")
+    assert second.run.parent_investigation_id == bundle.run.investigation_id
+    assert "evidence-follow-up-measurement" in {item.evidence_id for item in second.aggregate_evidence}
+    assert "evidence-follow-up-measurement" in {item.evidence_id for item in contexts[0][0]}
+    assert "evidence-follow-up-measurement" not in {
+        item.evidence_id for item in application.store.get_investigation(bundle.run.investigation_id).aggregate_evidence}
+    follow_up_context = contexts[0][1]
+    assert {item["value"] for item in follow_up_context["metric_definitions"]} >= set(bundle.run.metrics)
+    assert follow_up_context["scope"]["domain"] == bundle.run.analysis_domain
+    assert follow_up_context["scope"]["subject"]["id"] == bundle.run.subject.id
+    assert follow_up_context["scope"]["as_of"]
+    application.store.delete_investigation(second.run.investigation_id)
     investigation_directory = tmp_path / "investigations" / bundle.run.investigation_id
     child_directory = tmp_path / "investigations" / child.run.investigation_id
     assert client.delete(f"/api/investigations/{bundle.run.investigation_id}").status_code == 204

@@ -262,6 +262,16 @@ class AnalystApplication:
     def explain_metric(self, metric: str, sport: str = "nfl") -> MetricDefinition:
         return self._sport(sport)[1].explain_metric(metric)
 
+    def _metric_definitions(self, evidence: list[Any], sport: str) -> list[MetricDefinition]:
+        definitions = []
+        for metric in sorted({item.metric for item in evidence}):
+            try:
+                definitions.append(self.explain_metric(metric, sport))
+            except (ValueError, KeyError):
+                # Derived split/trend evidence may not have a registered metric definition.
+                pass
+        return definitions
+
     def tool_definitions(self, sport: str = "nfl") -> list[ToolDefinition]:
         return self._sport(sport)[1].tools()
 
@@ -585,13 +595,7 @@ class AnalystApplication:
                     {"question": item.run.question, "summary": item.summary}
                     for item in self.store.investigation_thread(request.parent_investigation_id)
                 ]
-            definitions = []
-            for metric in sorted({item.metric for item in result.aggregate_evidence}):
-                try:
-                    definitions.append(self.explain_metric(metric, request.sport))
-                except (ValueError, KeyError):
-                    # Derived split/trend evidence may not have a registered metric definition.
-                    pass
+            definitions = self._metric_definitions(result.aggregate_evidence, request.sport)
             source_manifests = {item.manifest_id: item for item in manifests.values()}
             for packages in supplemental_manifests.values():
                 source_manifests.update({item.manifest_id: item for item in packages.values()})
@@ -761,14 +765,32 @@ class AnalystApplication:
         ) as reuse_span:
             self.events.emit(identifier, "planning", "Reviewing the report", 0.1)
             self.events.emit(identifier, "analyzing", "Reusing the report's validated evidence", 0.55)
-            conversation_context = [
-                {"question": item.run.question, "summary": item.summary} for item in
-                self.store.investigation_thread(root.run.investigation_id)
-            ]
+            thread = self.store.investigation_thread(root.run.investigation_id)
+            conversation_context = [{"question": item.run.question, "summary": item.summary} for item in thread]
+            # Measurements registered by earlier follow-ups stay citable; the root report's evidence is never altered.
+            thread_evidence = list(root.aggregate_evidence)
+            thread_executions = list(root.executions)
+            thread_manifests = {m.manifest_id: m for m in root.dataset_manifests}
+            known_evidence = {item.evidence_id for item in thread_evidence}
+            known_executions = {item.execution_id for item in thread_executions}
+            for earlier in thread:
+                if earlier.run.investigation_id == root.run.investigation_id:
+                    continue
+                for item in earlier.aggregate_evidence:
+                    if item.evidence_id not in known_evidence:
+                        known_evidence.add(item.evidence_id)
+                        thread_evidence.append(item)
+                for item in earlier.executions:
+                    if item.execution_id not in known_executions:
+                        known_executions.add(item.execution_id)
+                        thread_executions.append(item)
+                for manifest in earlier.dataset_manifests:
+                    thread_manifests.setdefault(manifest.manifest_id, manifest)
             self.telemetry.add_outputs(
                 reuse_span,
                 {
                     "conversation_turn_count": len(conversation_context),
+                    "thread_evidence_count": len(thread_evidence) - len(root.aggregate_evidence),
                     "aggregate_evidence_count": len(root.aggregate_evidence),
                     "play_evidence_count": len(root.play_evidence),
                 },
@@ -805,20 +827,29 @@ class AnalystApplication:
                                    scoped_data(side_request(request, comparison_subject), f"{identifier}:second-subject"))
         else:
             scoped = scoped_data(request, identifier)
-        work = SimpleNamespace(aggregate_evidence=list(root.aggregate_evidence), executions=[],
+        work = SimpleNamespace(aggregate_evidence=thread_evidence, executions=[],
                                caveats=[], charts=list(root.charts))
-        complete_calculations(self.settings, question, work, request.scope.model_dump(mode="json"), scoped, second)
+        subject_scope = (request.subject.model_dump(mode="json") if request.subject
+                         else {"type": "team", "id": request.scope.team})
+        complete_calculations(self.settings, question, work, {
+            "sport": request.sport, "subject": subject_scope, "domain": request.analysis_domain,
+            "scope": request.scope.model_dump(mode="json"),
+            **({"comparison_subject": comparison_subject.model_dump(mode="json")} if head_to_head else {}),
+        }, scoped, second, conversation_context=conversation_context)
         if not head_to_head:
             # Research charts label series by period, which would merge the two subjects' measurements.
             add_research_charts(work, request=request, data_access=scoped)
-        source_manifests = {m.manifest_id: m for m in root.dataset_manifests}
+        source_manifests = dict(thread_manifests)
         used = {key for e in work.aggregate_evidence for key in e.dataset_manifest_ids}
         for access in (scoped, *([second.access] if second else [])):
             source_manifests.update({key: m for key, m in access.manifests.items() if key in used})
         from sports_analyst.analysis.instructions import evidence_brief
-        context = evidence_brief(work.aggregate_evidence, [], list(source_manifests.values()),
-                                 {"sport": request.sport, "comparison": request.scope.model_dump(mode="json"),
-                                  **({"comparison_kind": "head_to_head"} if head_to_head else {})})
+        context = evidence_brief(work.aggregate_evidence, self._metric_definitions(work.aggregate_evidence, request.sport),
+                                 list(source_manifests.values()),
+                                 {"sport": request.sport, "domain": request.analysis_domain, "subject": subject_scope,
+                                  "comparison": request.scope.model_dump(mode="json"), "as_of": datetime.now(UTC).isoformat(),
+                                  **({"comparison_kind": "head_to_head",
+                                      "comparison_subject": comparison_subject.model_dump(mode="json")} if head_to_head else {})})
         subjects = (second.first_label, second.label) if second else None
         context["question_coverage_reviews"] = [{"plan": e.parameters.get("plan"), "review": e.parameters.get("question_review")}
                                                 for e in work.executions if e.tool == "complete_calculations"]
@@ -890,7 +921,7 @@ class AnalystApplication:
                 aggregate_evidence=work.aggregate_evidence,
                 play_evidence=root.play_evidence,
                 charts=work.charts,
-                executions=[*root.executions, *work.executions],
+                executions=[*thread_executions, *work.executions],
                 dataset_manifests=list(source_manifests.values()),
                 methodological_caveats=[
                     *root.methodological_caveats,

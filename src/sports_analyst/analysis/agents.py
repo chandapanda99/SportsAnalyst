@@ -101,6 +101,16 @@ POSITIVE_IS_BETTER.update({"points_per_match", "win_rate", "goals_for_per_match"
 LOWER_IS_BETTER.update({"goals_against_per_match", "loss_rate", "cards"})
 
 
+def _higher_is_better(metric: str, analytical_context: dict[str, Any] | None = None) -> bool | None:
+    """Prefer the sport plugin's own metric definition; the shared tables only cover metrics it does not define."""
+    for definition in (analytical_context or {}).get("metric_definitions", []):
+        if definition.get("value") == metric and definition.get("higher_is_better") is not None:
+            return bool(definition["higher_is_better"])
+    if metric in POSITIVE_IS_BETTER:
+        return True
+    return False if metric in LOWER_IS_BETTER else None
+
+
 def _sample_confidence(sample_size: int) -> Literal["low", "medium", "high"]:
     if sample_size < 10:
         return "low"
@@ -338,6 +348,7 @@ def _fallback_synthesis(
     analysis_domain: str = "passing",
     sport: str = "nfl",
     competition: str | None = None,
+    analytical_context: dict[str, Any] | None = None,
 ) -> SynthesisDraft:
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     preferred_metric = {
@@ -364,11 +375,11 @@ def _fallback_synthesis(
     if primary is None:
         raise ValueError("analysis produced no comparable metrics")
     change = float(primary.value or 0)
-    if change == 0 or primary.metric not in POSITIVE_IS_BETTER | LOWER_IS_BETTER:
+    higher_is_better = _higher_is_better(primary.metric, analytical_context)
+    if change == 0 or higher_is_better is None:
         direction = "was unchanged" if change == 0 else "changed"
     else:
-        improved = change > 0 if primary.metric in POSITIVE_IS_BETTER else change < 0
-        direction = "improved" if improved else "declined"
+        direction = "improved" if (change > 0) == higher_is_better else "declined"
     if sport == "soccer":
         from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS, soccer_season_label
 
@@ -502,7 +513,7 @@ def _fallback_synthesis(
 
 
 def _head_to_head_fallback(subjects: tuple[str, str], aggregate: list[AggregateEvidence],
-                           analysis_domain: str) -> SynthesisDraft:
+                           analysis_domain: str, analytical_context: dict[str, Any] | None = None) -> SynthesisDraft:
     first, second = subjects
     metrics = [item for item in aggregate if item.baseline_value is not None and item.comparison_value is not None]
     if not metrics:
@@ -512,9 +523,10 @@ def _head_to_head_fallback(subjects: tuple[str, str], aggregate: list[AggregateE
 
     def leader(item: AggregateEvidence) -> str | None:
         difference = float(item.value or 0)
-        if difference == 0 or item.metric not in POSITIVE_IS_BETTER | LOWER_IS_BETTER:
+        higher_is_better = _higher_is_better(item.metric, analytical_context)
+        if difference == 0 or higher_is_better is None:
             return None
-        return second if (difference > 0) == (item.metric in POSITIVE_IS_BETTER) else first
+        return second if (difference > 0) == higher_is_better else first
 
     def sample(item: AggregateEvidence) -> int:
         return int(item.sample_size)
@@ -574,9 +586,9 @@ class EvidenceBoundAgent:
                 progress_callback(message, progress)
 
         report_progress("Organizing the validated evidence", 0.76)
-        fallback = _head_to_head_fallback(subjects, aggregate, analysis_domain) if subjects else _fallback_synthesis(
-            question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context, analysis_domain, sport, competition
-        )
+        fallback = (_head_to_head_fallback(subjects, aggregate, analysis_domain, analytical_context) if subjects
+                    else _fallback_synthesis(question, team, baseline, comparison, aggregate, analysis_seasons, conversation_context,
+                                             analysis_domain, sport, competition, analytical_context))
         logger.debug(
             "synthesis_requested provider=%s aggregate_count=%d play_count=%d",
             self.settings.model_provider,
