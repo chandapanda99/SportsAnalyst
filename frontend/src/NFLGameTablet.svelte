@@ -77,22 +77,22 @@
   .nfl-game-browser { padding: 20px; border: 1px solid #315063; background: #071724; margin-top: 12px; min-width: 0; }
   header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
   header > div { min-width: 0; }
-  h3 { margin: 8px 0; font-size: 18px; line-height: 1.4; }
+  h3 { margin: 8px 0; font-size: var(--text-lg); line-height: 1.4; }
   p, small { color: #94afbf; }
-  p { font-size: 13px; line-height: 1.6; }
+  p { font-size: var(--text-sm); line-height: 1.6; }
   header p { margin: 8px 0 0; }
-  small { font-size: 11px; letter-spacing: .08em; }
+  small { font-size: var(--text-2xs); letter-spacing: .08em; }
   .context-note { margin: 20px 0; }
-  .selection-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+  .selection-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: var(--text-sm); }
   .play-controls { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(240px, 2.4fr) auto auto; gap: 12px; align-items: end; margin: 18px 0; }
-  label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; color: #e6f3fa; }
-  select, input { box-sizing: border-box; width: 100%; min-width: 0; height: 40px; padding: 9px; background: #102336; color: #e6f3fa; border: 1px solid #315063; border-radius: 4px; font: inherit; }
-  button { min-height: 36px; padding: 8px 12px; border: 1px solid #315063; border-radius: 4px; background: #102336; color: #e6f3fa; font: inherit; font-size: 12px; cursor: pointer; }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-xs); min-width: 0; color: #e6f3fa; }
+  select, input { box-sizing: border-box; width: 100%; min-width: 0; height: 40px; padding: 9px; background: #102336; color: #e6f3fa; border: 1px solid #315063; border-radius: var(--radius-xs); font: inherit; }
+  button { min-height: 36px; padding: 8px 12px; border: 1px solid #315063; border-radius: var(--radius-xs); background: #102336; color: #e6f3fa; font: inherit; font-size: var(--text-xs); cursor: pointer; }
   .play-controls > button { height: 40px; white-space: nowrap; }
   button:hover:not(:disabled) { border-color: var(--mint, #7ce1c4); background: #173346; }
   button:disabled { opacity: .4; cursor: default; }
   input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--mint, #7ce1c4); outline-offset: 2px; }
-  .close-browser { width: 36px; height: 36px; flex: 0 0 36px; padding: 0; font-size: 20px; }
+  .close-browser { width: 36px; height: 36px; flex: 0 0 36px; padding: 0; font-size: var(--text-xl); }
   .return-cited { color: var(--mint, #7ce1c4); }
   @media (max-width: 850px) { .play-controls { grid-template-columns: 1fr 1fr; } .play-controls label { grid-column: 1 / -1; } }
   @media (max-width: 480px) { .nfl-game-browser { padding: 12px; } .play-controls { gap: 10px; } .play-controls label:first-child { grid-column: 1 / -1; } }

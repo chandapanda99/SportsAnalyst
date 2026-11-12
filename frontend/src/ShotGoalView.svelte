@@ -23,9 +23,9 @@
   <small>Goal: 7.32 m wide × 2.44 m high · FotMob</small>
 </section>
 <style>
-  .goal-view {margin-top:14px;padding:14px;background:#0b211d;border:1px solid #31564c;border-radius:8px;}
-  h5 {margin:0 0 10px;color:#e6f3fa;font-size:1rem;}svg {display:block;width:100%;max-height:240px;animation:goal-reveal .5s ease-out;}
+  .goal-view {margin-top:14px;padding:14px;background:#0b211d;border:1px solid #31564c;border-radius:var(--radius-md);}
+  h5 {margin:0 0 10px;color:#e6f3fa;font-size:var(--text-base);}svg {display:block;width:100%;max-height:240px;animation:goal-reveal .5s ease-out;}
   @keyframes goal-reveal {from {opacity:0;clip-path:inset(0 0 100% 0);}to {opacity:1;clip-path:inset(0);}}
   @media(prefers-reduced-motion:reduce) {svg {animation:none;}}
-  p,small {color:#bcd2cd;font-size:.8rem;line-height:1.5;}p {margin:8px 0;}
+  p,small {color:#bcd2cd;font-size:var(--text-sm);line-height:1.5;}p {margin:8px 0;}
 </style>

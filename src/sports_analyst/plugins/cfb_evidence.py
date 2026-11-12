@@ -175,6 +175,12 @@ def defender_credits(row):
         entry = credits.setdefault(athlete, {"name": actor.get("name"), "roles": []})
         if label not in entry["roles"]:
             entry["roles"].append(label)
+    # ESPN sometimes logs an offensive player as the interceptor. The game box score's credit replaces that.
+    for conflict in json.loads(row.get("attribution_conflicts_json") or "[]"):
+        if conflict.get("role") == "Interception" and conflict.get("box_score_athlete_id"):
+            entry = credits.setdefault(conflict["box_score_athlete_id"], {"name": conflict.get("box_score_name"), "roles": []})
+            if "Interception" not in entry["roles"]:
+                entry["roles"].append("Interception")
     # Scoring-summary plays carry the interceptor only in the parsed text; used when no pass defender was logged at all.
     named = context.get("interception_player_name")
     offense_names = {actor.get("name") for actor in participants if actor.get("athlete_id") in offensive}

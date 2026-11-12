@@ -24,15 +24,15 @@
 </div>
 
 <style>
-  .comparison-matrix {overflow-x:auto; margin:.75rem 0; border:1px solid var(--line); border-radius:.4rem;}
-  table {width:100%; border-collapse:collapse; font-size:.88rem;}
+  .comparison-matrix {overflow-x:auto; margin:.75rem 0; border:1px solid var(--line); border-radius:var(--radius-sm);}
+  table {width:100%; border-collapse:collapse; font-size:var(--text-md);}
   th,td {padding:.7rem .85rem; border-bottom:1px solid var(--line); vertical-align:top;}
   thead th {background:var(--color-surface-control); white-space:nowrap;}
   th {text-align:left; color:var(--color-text-primary);}
   td,thead th:not(:first-child) {text-align:right; font-variant-numeric:tabular-nums;}
   td {min-width:7rem;}
   td div + div {margin-top:.5rem;}
-  small {display:block; margin-top:.2rem; font-size:.75rem; color:var(--color-text-secondary); font-weight:400;}
+  small {display:block; margin-top:.2rem; font-size:var(--text-xs); color:var(--color-text-secondary); font-weight:400;}
   .missing {color:var(--color-text-secondary);}
   tbody tr:last-child :is(th,td) {border-bottom:0;}
 </style>

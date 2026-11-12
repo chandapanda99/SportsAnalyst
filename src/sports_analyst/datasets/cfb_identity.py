@@ -35,8 +35,6 @@ def game_directory(source, game, season, summary, plays, ttl):
             return []
         result = []
         for entry in entries:
-            if entry.get("valid") is False:
-                continue
             athlete = entry.get("athlete") or {}
             identity = source_id(athlete, "athletes")
             if not identity or (entry.get("playerId") and str(entry["playerId"]) != identity):
@@ -50,12 +48,21 @@ def game_directory(source, game, season, summary, plays, ttl):
                            "position": (entry.get("position") or athlete.get("position") or {}).get("abbreviation"),
                            "position_id": source_id(entry.get("position") or athlete.get("position"), "positions"),
                            "starter": entry.get("starter") is True, "did_not_play": entry.get("didNotPlay") is True,
-                           "jersey": str(entry.get("jersey") or ""), "identity_source": "ESPN game roster"})
+                           "jersey": str(entry.get("jersey") or ""), "identity_source": "ESPN game roster",
+                           # ESPN marks some whole game rosters invalid. Those entries only lend a position and
+                           # jersey to athletes the box score shows played; they never stand alone.
+                           "roster_valid": entry.get("valid") is not False})
         return result
 
+    played = {identity for identity, known in athletes.items() if known.get("played_in_game")}
+    unverified = []
     with ThreadPoolExecutor(max_workers=source.concurrency) as pool:
         for entries in pool.map(roster_for, teams):
-            roster.extend(entries)
+            roster.extend(entry for entry in entries if entry["roster_valid"])
+            unverified.extend(entry for entry in entries if not entry["roster_valid"] and entry["athlete_id"] in played)
+        for entry in unverified:
+            if entry.get("position_id"):
+                positions[entry["position_id"]] = None
         for entry in roster:
             known = athletes.setdefault(entry["athlete_id"], {})
             # Keep fuller box-score names; use the roster for players absent from it.
@@ -117,9 +124,30 @@ def game_directory(source, game, season, summary, plays, ttl):
     for known in athletes.values():
         if not known.get("position") and positions.get(known.get("position_id")):
             known.update(position=positions[known["position_id"]], position_source="ESPN athlete position")
+    combined = {(entry["team_id"], entry["athlete_id"]): entry for entry in roster}
+    listed = {(entry["team_id"], entry["athlete_id"]): entry for entry in unverified}
+    # Everyone with a box-score line played in this game. That is all it says: not which snaps they took.
+    for identity in played:
+        known = athletes[identity]
+        key = known.get("team_id"), identity
+        if key[0] not in teams:
+            continue
+        activity = known.get("box_score_activity", 0)
+        if key in combined:
+            combined[key].update(played_in_game=True, box_score_activity=activity)
+            continue
+        entry = listed.get(key, {})
+        position = known.get("position") or positions.get(entry.get("position_id")) or entry.get("position")
+        combined[key] = {"athlete_id": identity, "team_id": key[0], "name": known.get("name") or entry.get("name"),
+                         "position": position, "position_id": entry.get("position_id"),
+                         "starter": False, "did_not_play": False, "jersey": entry.get("jersey", ""),
+                         "identity_source": "ESPN game box score", "played_in_game": True,
+                         "box_score_activity": activity, "roster_listed": bool(entry),
+                         "position_source": "ESPN game roster (unverified entry)" if entry and not known.get("position") else
+                         known.get("position_source")}
     # Position IDs are per participant: an actual position reference wins over a
     # role-derived schematic guess (e.g. a TE receiving a pass remains a TE).
-    return (teams, athletes, positions), list({(entry["team_id"], entry["athlete_id"]): entry for entry in roster}.values())
+    return (teams, athletes, positions), list(combined.values())
 
 
 def with_identity_context(saved, fresh):
@@ -135,4 +163,5 @@ def with_identity_context(saved, fresh):
         key = actor["athlete_id"], actor["role"]
         actors[key] = {**actors.get(key, {}), **{name: value for name, value in actor.items()
                                                if value is not None or name in {"team_id", "team_source"}}}
-    return {**saved, "participants": list(actors.values()), "identity_context_version": fresh["identity_context_version"]}
+    return {**saved, "participants": list(actors.values()), "identity_context_version": fresh["identity_context_version"],
+            "attribution_conflicts_json": fresh.get("attribution_conflicts_json")}

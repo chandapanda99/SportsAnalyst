@@ -15,6 +15,13 @@ export type CFBParticipant = {
 export type CFBGameRosterPlayer = {
   athlete_id: string; team_id: string; name?: string | null; position?: string | null;
   starter: boolean; did_not_play?: boolean; jersey?: string; identity_source?: string;
+  /** Has a line in the ESPN game box score: played in the game, not necessarily on the field for a given snap. */
+  played_in_game?: boolean; box_score_activity?: number; roster_listed?: boolean; position_source?: string | null;
+};
+export type CFBAttributionConflict = {
+  role: string; source: string; basis: string;
+  recorded_athlete_id: string; recorded_name?: string | null; recorded_team_id?: string | null;
+  box_score_athlete_id?: string | null; box_score_name?: string | null; box_score_team_id?: string | null;
 };
 export type CFBTeamContext = {
   id: string; name: string; abbreviation?: string | null; side?: string; color: string; alternate_color?: string; logo?: string | null;
@@ -33,6 +40,7 @@ export type CFBRecordedPlay = {
   pass_depth_source?: string | null;
   render_context_version?: number; render_provider_version?: string;
   identity_context_version?: number;
+  attribution_conflicts_json?: string | null;
   pass?: boolean; rush?: boolean; no_play?: boolean; complete?: boolean;
   interception?: boolean; turnover?: boolean; touchdown?: boolean;
   formation?: string | null; formation_source?: string | null;
@@ -142,7 +150,7 @@ export type PlayVisualization = {
   qb_out_of_pocket?: boolean; interception_worthy?: boolean; throw_away?: boolean; read_thrown?: string;
   contested_ball?: boolean; created_reception?: boolean; qb_sneak?: boolean; qb_fault_sack?: boolean;
   offense_names?: string[]; offense_positions?: string[]; defense_names?: string[]; defense_positions?: string[];
-  offense_identity_status?: Array<'recorded' | 'projected'>; defense_identity_status?: Array<'recorded' | 'projected'>;
+  offense_identity_status?: Array<'recorded' | 'projected' | 'played'>; defense_identity_status?: Array<'recorded' | 'projected' | 'played'>;
   period?: number; event_type?: string; action_type?: string; player_id?: string; player_name?: string; team_id?: string;
   team_abbreviation?: string; home_team_abbreviation?: string; away_team_abbreviation?: string; home_score?: number; away_score?: number;
   scoring_play?: boolean; shooting_play?: boolean; shot_result?: string; shot_value?: number; shot_distance?: number;

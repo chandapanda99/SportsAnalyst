@@ -90,14 +90,14 @@
   {:else}<p>EPA comparison context appears when advanced play metrics have been prepared. Opening recorded play detail does not run the modeling pipeline.</p>{/if}
 </section>
 <style>
-  .table-scroll {overflow-x:auto; max-width:100%;} .table-hint {font-size:12px;} .table-scroll table {min-width:440px;}
+  .table-scroll {overflow-x:auto; max-width:100%;} .table-hint {font-size:var(--text-xs);} .table-scroll table {min-width:440px;}
   @media(max-width:650px) {header {flex-wrap:wrap;} .cfb-game {padding:12px; min-width:0;} .play-controls label {min-width:0; width:100%;} select,input {width:100%; min-width:0; box-sizing:border-box;}}
   .cfb-game {padding: 20px; border: 1px solid #315063; background: #071724; margin-top: 12px;}
   header {display: flex; justify-content: space-between; gap: 20px;} h3 {margin: 8px 0;} p, small, dt {color: #94afbf;}
   dl {display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;} dl div {padding: 10px; background: #102336;}
   dd {margin: 6px 0 0;} li {margin: 8px 0;}
   .play-controls {display: flex; flex-wrap: wrap; gap: 12px; align-items: end;}
-  label {display: flex; flex-direction: column; gap: 6px; font-size: 12px; min-width: 180px; max-width: 100%;}
+  label {display: flex; flex-direction: column; gap: 6px; font-size: var(--text-xs); min-width: 180px; max-width: 100%;}
   select, input {padding: 9px; background: #102336; color: #e6f3fa; border: 1px solid #315063; max-width: 100%;}
-  table {width: 100%; border-collapse: collapse; font-size: 13px;} th, td {padding: 9px; text-align: left; border-bottom: 1px solid #315063;}
+  table {width: 100%; border-collapse: collapse; font-size: var(--text-sm);} th, td {padding: 9px; text-align: left; border-bottom: 1px solid #315063;}
 </style>

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from urllib.parse import urlparse
 
-IDENTITY_VERSION = 2
+IDENTITY_VERSION = 3
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+RETURNER_ROLES = {"returner", "kick_returner", "punt_returner", "kickoff_returner"}
+TACKLE_ROLES = {"tackler", "assisted_by", "assistedby", "tackle_assist"}
+INTERCEPTION_ROLES = {"passdefender", "pass_defender", "interceptor", "interception"}
 
 
 def source_id(value, kind):
@@ -24,6 +29,16 @@ def finite(value):
         return result if result is not None and math.isfinite(result) else None
     except (ValueError, TypeError):
         return None
+
+
+def leading_count(value):
+    match = re.match(r"\s*(\d+)", str(value or ""))
+    return int(match.group(1)) if match else 0
+
+
+def surname(name):
+    parts = [part for part in re.sub(r"[.,]", " ", str(name or "")).lower().split() if part not in NAME_SUFFIXES]
+    return parts[-1] if parts else ""
 
 
 def teams_and_athletes(summary):
@@ -51,19 +66,48 @@ def teams_and_athletes(summary):
     for entry in (summary.get("boxscore") or {}).get("players") or []:
         team_id = source_id(entry.get("team"), "teams")
         for category in entry.get("statistics") or []:
+            labels = category.get("labels") or []
             for item in category.get("athletes") or []:
                 athlete = item.get("athlete") or {}
                 identity = source_id(athlete, "athletes")
-                if identity:
-                    athletes[identity] = {
-                        "name": athlete.get("displayName"),
-                        "position": (athlete.get("position") or {}).get("abbreviation"),
-                        "team_id": team_id if team_id in teams else None,
-                        "team_source": "ESPN game box score",
-                        "name_source": "ESPN box score",
-                        "position_source": "ESPN box score position" if (athlete.get("position") or {}).get("abbreviation") else None,
-                    }
+                if not identity:
+                    continue
+                position = (athlete.get("position") or {}).get("abbreviation")
+                known = athletes.setdefault(identity, {
+                    "name": athlete.get("displayName"),
+                    "position": position,
+                    "team_id": team_id if team_id in teams else None,
+                    "team_source": "ESPN game box score",
+                    "name_source": "ESPN box score",
+                    "position_source": "ESPN box score position" if position else None,
+                    # A box-score line proves the athlete played in this game, not that they were on the field for any snap.
+                    "played_in_game": True,
+                    "box_score_activity": 0,
+                })
+                stats = item.get("stats") or []
+                known["box_score_activity"] += leading_count(stats[0] if stats else None)
+                if category.get("name") == "interceptions":
+                    values = dict(zip(labels, stats, strict=False))
+                    known["interceptions"] = leading_count(values.get("INT"))
+                    known["interception_yards"] = int(finite(values.get("YDS")) or 0)
     return teams, athletes
+
+
+def box_score_interceptor(athletes, defense, recorded_name, return_yards):
+    """The defender the game box score credits with an interception the play record attributes to the offense."""
+    candidates = [(identity, known) for identity, known in athletes.items()
+                  if known.get("team_id") == defense and known.get("interceptions")]
+    if len(candidates) == 1:
+        return candidates[0], "the only interceptor credited to the defense in the ESPN game box score"
+    named = [item for item in candidates if surname(item[1].get("name")) == surname(recorded_name)]
+    if len(named) == 1:
+        return named[0], "the only box-score interceptor on the defense with the surname in the play record"
+    if return_yards is not None:
+        matched = [item for item in (named or candidates)
+                   if item[1].get("interceptions") == 1 and item[1].get("interception_yards") == return_yards]
+        if len(matched) == 1:
+            return matched[0], "the only box-score interceptor on the defense with a matching return distance"
+    return None, "the ESPN game box score does not identify a single interceptor on the defense"
 
 
 def recorded_play(play, summary, directory=None):
@@ -73,6 +117,22 @@ def recorded_play(play, summary, directory=None):
     start, end = play.get("start") or {}, play.get("end") or {}
     possession = source_id(start.get("team"), "teams")
     end_team = source_id(end.get("team"), "teams")
+    text = str(play.get("text") or "")
+    kind = str((play.get("type") or {}).get("text") or "").lower()
+    intercepted = "intercept" in kind or bool(re.search(r"\bintercepted\b", text, re.I))
+
+    def opponent(team):
+        return next((identity for identity in teams if identity != team), None) if team in teams and len(teams) == 2 else None
+
+    def role_key(value):
+        return str(value or "").lower().replace("-", "_").replace(" ", "_")
+
+    # On any return the listed tackler brought down the returner, so the tackler is on the other team.
+    # The returner's own athlete ID can be wrong (see interception conflicts), so the returning team is
+    # taken from the change of possession, not from that ID.
+    returner_team = None
+    if any(role_key(entry.get("type")) in RETURNER_ROLES for entry in play.get("participants") or []):
+        returner_team = opponent(possession) if intercepted else end_team if end_team in teams else opponent(possession)
     participants = []
     seen = set()
     for entry in play.get("participants") or []:
@@ -92,6 +152,8 @@ def recorded_play(play, summary, directory=None):
         attributed_team, team_source = known.get("team_id"), known.get("team_source")
         if possession in teams and normalized_role in offense_roles:
             attributed_team, team_source = possession, "Recorded play possession and offensive role"
+        elif returner_team and opponent(returner_team) and normalized_role in TACKLE_ROLES:
+            attributed_team, team_source = opponent(returner_team), "Recorded return: the tackler opposes the returner"
         elif possession in teams and len(teams) == 2 and normalized_role in defense_roles:
             attributed_team = next(identity for identity in teams if identity != possession)
             team_source = "Recorded play possession and defensive role"
@@ -111,8 +173,24 @@ def recorded_play(play, summary, directory=None):
                 "identity_source": "ESPN structured participant",
             }
         )
-    text = str(play.get("text") or "")
-    kind = str((play.get("type") or {}).get("text") or "").lower()
+    conflicts = []
+    defense = opponent(possession)
+    if intercepted and defense:
+        returned = re.search(r"\breturn(?:ed)? for (-?\d+) y", text, re.I)
+        return_yards = int(returned.group(1)) if returned else 0 if re.search(r"\breturn(?:ed)? for no gain", text, re.I) else None
+        for actor in participants:
+            game_team = athletes.get(actor["athlete_id"], {}).get("team_id")
+            if role_key(actor["role"]) not in INTERCEPTION_ROLES or possession not in {game_team, actor["team_id"]}:
+                continue
+            # ESPN credited an athlete on the offense. Flag it with the box-score credit; never rewrite the recorded ID.
+            match, basis = box_score_interceptor(athletes, defense, actor["name"], return_yards)
+            conflicts.append({
+                "role": "Interception", "source": "ESPN game box score", "basis": basis,
+                "recorded_athlete_id": actor["athlete_id"], "recorded_name": actor["name"], "recorded_team_id": possession,
+                "box_score_athlete_id": match[0] if match else None, "box_score_name": match[1].get("name") if match else None,
+                "box_score_team_id": defense,
+            })
+            break
     formation = re.search(r"\b(No Huddle[- ]Shotgun|Shotgun|Wildcat|Pistol|I-Formation)\b", text, re.I)
     no_play = kind == "penalty" or bool(re.search(r"\bno play\b|play nullified", text, re.I))
     roles = {entry["role"] for entry in participants}
@@ -136,6 +214,7 @@ def recorded_play(play, summary, directory=None):
         "yards_gained": finite(play.get("statYardage")),
         "play_type": (play.get("type") or {}).get("text"),
         "participants": participants,
+        "attribution_conflicts_json": json.dumps(conflicts, sort_keys=True) if conflicts else None,
         **({"identity_context_version": IDENTITY_VERSION} if len(directory) > 2 else {}),
         "scoring_play": play.get("scoringPlay"),
         "pass": is_pass, "rush": is_rush,

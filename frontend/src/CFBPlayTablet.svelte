@@ -4,7 +4,7 @@
   import PlayerPortrait from './PlayerPortrait.svelte';
   import {footballHash} from './surfaceGeometry';
   import FootballSchematic from './FootballSchematic.svelte';
-  import {adaptCollegePlay, collegePlaymakers, collegeProviderContext} from './cfbSchematic';
+  import {adaptCollegePlay, collegeAttributionConflicts, collegePlaymakers, collegeProviderContext} from './cfbSchematic';
   import {buildPlaySchematic} from './playSchematic';
   import FootballTablet from './FootballTablet.svelte';
 
@@ -12,15 +12,18 @@
   export let teams: CFBTeamContext[] = [];
   export let season: number | undefined = undefined;
   export let roster: CFBGameRosterPlayer[] = [];
-  let showProjected = false;
   $: home = teams.find(team => team.side === 'home');
   $: offense = (adapted?.visualization.special_teams?.kicking_team
     ? teams.find(team => [team.id, team.abbreviation, team.name].includes(adapted.visualization.special_teams!.kicking_team!)) : undefined)
     ?? teams.find(team => team.id === event.team_id);
   $: defense = offense ? teams.find(team => team.id !== offense.id) : undefined;
   $: actors = involved(event.participants ?? []);
-  $: adapted = adaptCollegePlay(event, teams, roster, showProjected);
-  $: projectionAvailable = adaptCollegePlay(event, teams, roster, true).projectedCount > 0;
+  // Unrecorded slots always carry the players ESPN lists for this game; hovering a dotted marker names them.
+  $: adapted = adaptCollegePlay(event, teams, roster, true);
+  $: shownCount = adapted.projectedCount + adapted.playedCount;
+  $: attributionConflicts = collegeAttributionConflicts(event);
+  $: conflictedIds = new Set(attributionConflicts.map(conflict => conflict.recorded_athlete_id));
+  function teamName(id?: string | null) { return teams.find(team => team.id === id)?.name ?? 'school not verified'; }
   $: providerFields = Object.entries(collegeProviderContext(event));
   $: playmakers = collegePlaymakers(event);
   $: sourceFields = fieldSources(event.source_provenance_json);
@@ -76,17 +79,17 @@
       {event.personnel_context.scope}</p>
   {/if}
   {#if adapted.reconstruct}
-    <div class="reconstruction-meta"><div><strong>{showProjected && adapted.projectedCount ? 'Recorded participants + projected starters' : 'Recorded identities · illustrative formation'}</strong>
+    <div class="reconstruction-meta"><div><strong>{shownCount ? 'Recorded participants + players from this game' : 'Recorded identities · illustrative formation'}</strong>
       <span>{schematic.context.formation} · {schematic.context.boxCount} in box (estimated) · {schematic.context.passRusherCount} rushers (estimated)</span>
     </div><div class="source-badges"><span>ESPN PBP</span><span>INFERRED ALIGNMENT</span></div></div>
-    {#if projectionAvailable}
-      <div class="lineup-controls">
-        <label><input type="checkbox" bind:checked={showProjected}/> Show Projected Starters</label>
-        <p>Optional game-starter projection. Substitutions and exact alignment are not confirmed for this snap; recorded participants always take priority.</p>
-      </div>
+    {#if shownCount}
+      <p class="scope lineup-note">Unrecorded slots show players ESPN lists for this game: {[adapted.projectedCount ? 'flagged starters' : '', adapted.playedCount ? 'players with a box-score line, most involved first' : ''].filter(Boolean).join(', then ')}.
+        They played in this game; none is confirmed on the field for this play, and alignment stays illustrative. Recorded participants always take priority.</p>
     {/if}
-    <p class="scope identity-key">{schematic.players.filter(player => player.recorded).length} recorded participants · {adapted.projectedCount} projected starters · {schematic.players.filter(player => !player.recorded && !player.projected).length} identities not recorded.
-      {#if adapted.projectedCount}Dotted outlines identify projected starters. {/if}Hover or focus a player for identity and inference details.</p>
+    <p class="scope identity-key">{schematic.players.filter(player => player.recorded).length} recorded participants
+      {#if adapted.projectedCount} · {adapted.projectedCount} projected starters{/if}{#if adapted.playedCount} · {adapted.playedCount} played in this game{/if}
+      · {schematic.players.filter(player => !player.recorded && !player.projected).length} identities not recorded.
+      {#if shownCount}Dotted outlines mark players named from the game, not confirmed on this play. {/if}Hover or focus a player for identity and inference details.</p>
   {/if}
   {#if adapted.inference.airYardsAvailable || adapted.inference.yardsAfterCatchAvailable || event.pass_direction || event.rush_direction || event.pass_depth}
     <div class="situation">
@@ -110,6 +113,12 @@
       <section class="defense-summary" aria-label={`${defense.name ?? 'Defense'} defense on this play`}>
         <h4>{defense.name ?? 'Defense'} defense</h4>
         <dl><div><dt>Made the play</dt><dd>{playmakers.length ? playmakers.join(' · ') : 'No defender credited in the play-by-play'}</dd></div></dl>
+        {#each attributionConflicts as conflict}
+          <p class="attribution-conflict" role="note"><strong>Source conflict.</strong>
+            ESPN's play record credits {conflict.recorded_name ?? `ESPN athlete ${conflict.recorded_athlete_id}`} ({teamName(conflict.recorded_team_id)}, on offense for this play) with the {conflict.role.toLowerCase()}.
+            {#if conflict.box_score_name}The {conflict.source} credits {conflict.box_score_name} ({teamName(conflict.box_score_team_id)}), {conflict.basis}; that credit is shown above.
+            {:else}{conflict.basis[0].toUpperCase() + conflict.basis.slice(1)}, so no defender is credited.{/if}</p>
+        {/each}
       </section>
     {/if}
   </div>
@@ -120,7 +129,8 @@
   <p class="scope">Schools reflect the selected game, not current player profiles. Photos are omitted because no game-time headshot is verified.</p>
   {#if actors.length}<ul>{#each actors as actor}<li><PlayerPortrait id={actor.athlete_id} sport="cfb" name={actor.name ?? 'Player'} historical/>{actor.name ?? `ESPN athlete ${actor.athlete_id}`} · {actor.roles.join(', ')}
     {#if actor.position}<span title={actor.position_source ?? 'Recorded roster position'}> · {actor.position}</span>{/if} · {teams.find(team => team.id === actor.team_id)?.name ?? 'School not verified'} · ESPN ID {actor.athlete_id}
-    {#if actor.name_source}<span class="identity-source"> · {actor.name_source}</span>{/if}</li>{/each}</ul>
+    {#if actor.name_source}<span class="identity-source"> · {actor.name_source}</span>{/if}
+    {#if conflictedIds.has(actor.athlete_id)}<span class="conflict-tag"> · Conflicts with the game box score</span>{/if}</li>{/each}</ul>
   {:else}<p>No participant IDs recorded for this play. This does not mean no players were on the field.</p>{/if}
   {#if providerFields.length}
     <details class="play-details provider-context">
@@ -165,15 +175,16 @@
   {/if}
 </FootballTablet>
 <style>
-  h4 {margin: 12px 20px;} p {color: var(--color-text-secondary);} .scope, .legend {font-size: 12px;} .legend {margin: 0; padding: 0 20px 12px;} ul {padding: 0 20px 0 40px;}
-  .values {flex-wrap: wrap; gap: 16px;} li {margin: 5px 0; font-size: 13px;}
-  .provider-context {margin: 12px 20px; border: 1px solid var(--line); border-radius: 6px; padding: 12px;}
+  h4 {margin: 12px 20px;} p {color: var(--color-text-secondary);} .scope, .legend {font-size: var(--text-xs);} .legend {margin: 0; padding: 0 20px 12px;} ul {padding: 0 20px 0 40px;}
+  .values {flex-wrap: wrap; gap: 16px;} li {margin: 5px 0; font-size: var(--text-sm);}
+  .provider-context {margin: 12px 20px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px;}
   .provider-context summary {cursor: pointer; font-weight: 600;}
   .provider-context dd, pre {overflow-wrap: anywhere; white-space: pre-wrap;}
-  .lineup-controls {margin: 12px 20px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 6px;}
-  .lineup-controls label {display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer;}
-  .lineup-controls input {width: 16px; height: 16px; accent-color: var(--mint);}
-  .lineup-controls p {margin: 8px 0 0; font-size: 12px; line-height: 1.5;}
+  .lineup-note {padding: 0 20px; line-height: 1.5;}
   .identity-key {padding: 0 20px; line-height: 1.5;}
-  .identity-source {font-size: 12px; color: var(--color-text-secondary);}
+  .identity-source {font-size: var(--text-xs); color: var(--color-text-secondary);}
+  .attribution-conflict {margin: 10px 0 0; padding: 10px 12px; border-left: 3px solid var(--color-status-warning);
+    background: color-mix(in srgb, var(--color-status-warning) 8%, transparent); font-size: var(--text-sm); line-height: 1.5;}
+  .attribution-conflict strong, .conflict-tag {color: var(--color-status-warning);}
+  .conflict-tag {font-size: var(--text-xs); font-weight: 600;}
 </style>

@@ -98,14 +98,14 @@
 </section>
 
 <style>
-  .analytics {margin:18px 0;padding:20px;border:1px solid #315063;border-radius:10px;background:#102333;min-width:0;}
+  .analytics {margin:18px 0;padding:20px;border:1px solid #315063;border-radius:var(--radius-md);background:#102333;min-width:0;}
   header {display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;}h4 {margin:0;}p,small,header span {color:#a7becd;line-height:1.5;}
-  nav {display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;}button,select {padding:8px;border:1px solid #426376;background:#0b1d2c;color:#e6f3fa;border-radius:5px;max-width:100%;}
+  nav {display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;}button,select {padding:8px;border:1px solid #426376;background:#0b1d2c;color:#e6f3fa;border-radius:var(--radius-sm);max-width:100%;}
   button[aria-pressed=true] {border-color:#80e7d1;color:#80e7d1;}label {display:block;margin:12px 0;}
   svg {display:block;max-width:750px;width:100%;margin:12px auto;background:#163d35;}svg rect,svg path,svg circle {fill:none;stroke:#a4c1b5;stroke-width:.4;}
   svg .shot {fill:#8adcca;stroke:#07232a;stroke-width:.6;cursor:pointer;}svg .goal {fill:#ffb76b;}svg .chosen {stroke:white;stroke-width:1.2;}
   g:focus .shot {stroke:white;stroke-width:1.2;}dl {display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
-  dl div {padding:10px;background:#0b1d2c;}dt {color:#a7becd;font-size:12px;}dd {margin:5px 0 0;overflow-wrap:anywhere;}
+  dl div {padding:10px;background:#0b1d2c;}dt {color:#a7becd;font-size:var(--text-xs);}dd {margin:5px 0 0;overflow-wrap:anywhere;}
   .table-wrap {overflow:auto;}table {width:100%;border-collapse:collapse;}td,th {padding:9px;text-align:left;border-bottom:1px solid #315063;}th {font-weight:500;}
   @media(max-width:600px) {.analytics {padding:12px;}nav button {flex:1 1 40%;}}
 </style>

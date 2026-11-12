@@ -12,6 +12,8 @@ export type SchematicPlayer = {
   y: number;
   recorded: boolean;
   projected?: boolean;
+  /** Named from the game box score: played in this game, not confirmed on the field for this play. */
+  playedInGame?: boolean;
   inferredPlacement: boolean;
   inBox: boolean;
   rushRole?: 'rusher' | 'blitzer';
@@ -23,6 +25,7 @@ type PlayerRecord = {
   position: string;
   recorded: boolean;
   projected?: boolean;
+  playedInGame?: boolean;
 };
 
 export type SchematicPath = {
@@ -111,9 +114,10 @@ function normalizedPosition(position: string) {
   return value || '—';
 }
 
-function playerRecords(names: string[] = [], positions: string[] = [], status: Array<'recorded' | 'projected'> = []) {
+function playerRecords(names: string[] = [], positions: string[] = [], status: Array<'recorded' | 'projected' | 'played'> = []) {
   return names.map((name, index) => ({name, position: normalizedPosition(positions[index] ?? '—'),
-    recorded: status[index] !== 'projected', projected: status[index] === 'projected'}));
+    recorded: !status[index] || status[index] === 'recorded',
+    projected: status[index] === 'projected' || status[index] === 'played', playedInGame: status[index] === 'played'}));
 }
 
 type PositionCounts = Record<string, number>;
@@ -451,7 +455,7 @@ function placeOffense(
     slots.push({record, x: startX - 5.5, y: distribute(index, records.length, 8, 45.3)}));
   return slots.map(({record, x, y, displayPosition, inferredPlacement}, index) => ({
     id: `offense-${index}`, name: record.name, label: shortName(record.name, displayPosition ?? record.position), position: displayPosition ?? record.position,
-    side: 'offense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected,
+    side: 'offense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected, playedInGame: record.playedInGame,
     inferredPlacement: true,
     inBox: false,
     placementBasis: inferredPlacement
@@ -688,7 +692,8 @@ function placeDefense(
     slots.push({record, x: startX + 7, y: distribute(index, records.length, 7, FOOTBALL_FIELD_WIDTH - 7), inBox: false, basis: 'Unknown role placed outside the box'}));
   return slots.map(({record, x, y, inBox, rushRole, basis}, index) => ({
     id: `defense-${index}`, name: record.name, label: shortName(record.name, record.position), position: record.position,
-    side: 'defense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected, inferredPlacement: true,
+    side: 'defense', x: clamp(x, 2, 117), y, recorded: record.recorded, projected: record.projected, playedInGame: record.playedInGame,
+    inferredPlacement: true,
     inBox, rushRole, placementBasis: basis,
   }));
 }

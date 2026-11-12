@@ -36,7 +36,7 @@
     min-height: 42px;
     padding: 9px 38px 9px 13px;
     border: 1px solid var(--color-border-control);
-    border-radius: 7px;
+    border-radius: var(--radius-md);
     background: var(--color-surface-input);
     color: var(--color-text-primary);
     cursor: pointer;
@@ -92,7 +92,7 @@
 
 .ask-copy p {
     max-width: 75ch;
-    font-size: 1rem;
+    font-size: var(--text-base);
 }
 
 .topbar h1 {
@@ -101,7 +101,7 @@
 
 .getting-started, .analysis-brief, .metric-info, .methodology, .key-metrics article {
     border: 1px solid var(--line);
-    border-radius: .8rem;
+    border-radius: var(--radius-lg);
     background: var(--color-surface);
     padding: 1.25rem;
 }
@@ -144,7 +144,7 @@
     min-height: 12.5rem;
     padding: 1rem;
     border: 1px solid var(--color-border-subtle);
-    border-radius: .65rem;
+    border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
 }
 
@@ -154,7 +154,7 @@
     height: 2.35rem;
     place-items: center;
     border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--color-border-subtle));
-    border-radius: .6rem;
+    border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--mint) 9%, var(--color-surface-panel));
     color: var(--mint);
 }
@@ -173,13 +173,13 @@
 
 .getting-started .guide-steps b {
     color: var(--color-text-primary);
-    font-size: 1rem;
+    font-size: var(--text-base);
 }
 
 .getting-started .guide-steps p {
     margin: .5rem 0 .85rem;
     line-height: 1.5;
-    font-size: .88rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
 }
 
@@ -190,7 +190,7 @@
     min-height: 0;
     padding: .45rem .6rem;
     color: var(--mint);
-    font-size: .8rem;
+    font-size: var(--text-sm);
 }
 
 .guide-outcome {
@@ -222,7 +222,7 @@
 .guide-outcome span {
     margin-top: .25rem;
     color: var(--color-text-secondary);
-    font-size: .88rem;
+    font-size: var(--text-md);
     line-height: 1.45;
 }
 
@@ -240,13 +240,13 @@
 
 .configuration .scope-card, .configuration .metric-card, .configuration .question-field {
     margin: 0 0 1.25rem;
-    border-radius: .8rem;
+    border-radius: var(--radius-lg);
     padding: clamp(1rem, 2vw, 1.5rem);
 }
 
 .intro-grid > .cfb-subject-card {
     margin: 0;
-    border-radius: .8rem;
+    border-radius: var(--radius-lg);
     padding: clamp(1rem, 2vw, 1.5rem);
 }
 
@@ -266,7 +266,7 @@
     gap: .75rem 1.25rem;
     padding: 1rem;
     border: 1px solid var(--line);
-    border-radius: .65rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface);
 }
 
@@ -285,7 +285,7 @@
     display: block;
     margin-top: .3rem;
     color: var(--color-text-secondary);
-    font-size: .85rem;
+    font-size: var(--text-md);
 }
 
 .cfb-data-scope button, .cfb-conference-download button {
@@ -320,7 +320,7 @@
 }
 
 .analysis-brief h3 {
-    font-size: 1.4rem;
+    font-size: var(--text-2xl);
     margin: .6rem 0 1.2rem;
 }
 
@@ -330,7 +330,7 @@
 
 .analysis-brief dt, .metric-info dt {
     color: var(--color-text-tertiary);
-    font-size: .8rem;
+    font-size: var(--text-sm);
     margin-top: 1rem;
 }
 
@@ -343,7 +343,7 @@
 .analysis-brief .primary {
     margin: 1rem 0 0;
     width: 100%;
-    font-size: 1rem;
+    font-size: var(--text-base);
 }
 
 .readiness {
@@ -377,7 +377,7 @@
     padding-top: 1rem;
     line-height: 1.5;
     color: var(--color-text-secondary);
-    font-size: .9rem;
+    font-size: var(--text-md);
 }
 
 .configuration .scope-controls {
@@ -423,7 +423,7 @@
     border: 0;
     background: transparent;
     color: var(--mint);
-    font-size: .8rem;
+    font-size: var(--text-sm);
 }
 
 .metric-group .metric-explain:hover {
@@ -443,7 +443,7 @@
     gap: .2rem;
     padding: .75rem .9rem;
     border: 1px solid var(--color-border-strong);
-    border-radius: .55rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface-control);
     color: var(--color-text-primary);
     text-align: left;
@@ -452,7 +452,7 @@
 
 .question-kind button span {
     color: var(--color-text-secondary);
-    font-size: .82rem;
+    font-size: var(--text-sm);
     line-height: 1.4;
 }
 
@@ -530,7 +530,7 @@ summary {
 .question-examples button {
     text-align: left;
     line-height: 1.45;
-    font-size: .85rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
     min-height: 2.25rem;
     padding: .45rem .7rem;
@@ -598,7 +598,7 @@ summary {
 
 .data-gaps {
     color: var(--color-text-secondary);
-    font-size: .9rem;
+    font-size: var(--text-md);
     line-height: 1.5;
 }
 
@@ -664,7 +664,7 @@ summary {
     gap: .2rem;
     min-width: 0;
     margin: 0;
-    font-size: .85rem;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
 }
 
@@ -735,7 +735,7 @@ summary {
     grid-column: 1 / -1;
     margin: 0;
     color: var(--color-text-secondary);
-    font-size: .85rem;
+    font-size: var(--text-md);
 }
 
 .play-tag-legend {
@@ -744,7 +744,7 @@ summary {
     gap: .35rem 1.25rem;
     margin: -.5rem 0 1rem;
     padding: 0 20px;
-    font-size: .8rem;
+    font-size: var(--text-sm);
 }
 
 .play-tag-legend div {
@@ -770,7 +770,7 @@ summary {
     width: 100%;
     padding: .7rem .9rem;
     border: 1px solid var(--line);
-    border-radius: .55rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface-control);
     color: var(--color-text-primary);
     text-align: left;
@@ -792,7 +792,7 @@ summary {
 
 .thread-origin em {
     color: var(--color-text-secondary);
-    font-size: .8rem;
+    font-size: var(--text-sm);
     font-style: normal;
 }
 
@@ -812,7 +812,7 @@ summary {
 }
 
 .key-metrics h3 {
-    font-size: 1rem;
+    font-size: var(--text-base);
     line-height: 1.4;
     margin: 0 0 1rem;
 }
@@ -829,7 +829,7 @@ summary {
 }
 
 .key-metrics article > div.many-periods b {
-    font-size: 1.2rem;
+    font-size: var(--text-xl);
 }
 
 .key-metrics p em {
@@ -838,9 +838,9 @@ summary {
     margin-left: .35rem;
     padding: .1rem .45rem;
     border: 1px solid var(--mint);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     color: var(--mint);
-    font-size: .78rem;
+    font-size: var(--text-xs);
     font-style: normal;
 }
 
@@ -851,20 +851,20 @@ summary {
 
 .key-metrics span {
     color: var(--color-text-secondary);
-    font-size: .8rem;
+    font-size: var(--text-sm);
 }
 
 .key-metrics b {
     display: block;
     color: var(--color-text-primary);
-    font-size: 1.5rem;
+    font-size: var(--text-2xl);
     margin-top: .4rem;
 }
 
 .key-metrics table.season-pairs {
     width: 100%;
     border-collapse: collapse;
-    font-size: .85rem;
+    font-size: var(--text-md);
     font-variant-numeric: tabular-nums;
 }
 
@@ -878,7 +878,7 @@ summary {
 
 .key-metrics .season-pairs thead th {
     color: var(--color-text-secondary);
-    font-size: .75rem;
+    font-size: var(--text-xs);
     font-weight: 600;
 }
 
@@ -889,14 +889,14 @@ summary {
 .key-metrics small {
     display: block;
     margin-top: .25rem;
-    font-size: .75rem;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
 }
 
 .film-room-empty {
     margin: .25rem .7rem;
     color: var(--color-text-secondary);
-    font-size: .85rem;
+    font-size: var(--text-md);
     line-height: 1.5;
 }
 
@@ -924,7 +924,7 @@ summary {
     margin-top: .25rem;
     border: 1px solid var(--color-border-strong);
     color: var(--color-text-primary);
-    font-size: .85rem;
+    font-size: var(--text-md);
 }
 
 .report-actions {
@@ -941,13 +941,13 @@ summary {
 }
 
 .report-summary > .report-question {
-    font-size: 1rem;
+    font-size: var(--text-base);
 }
 
 .report-question span {
     display: block;
     color: var(--color-text-secondary);
-    font-size: .8rem;
+    font-size: var(--text-sm);
     font-weight: 400;
 }
 
@@ -960,14 +960,14 @@ summary {
     margin-bottom: 1rem;
     padding: .6rem .8rem;
     border: 1px solid var(--mint);
-    border-radius: .5rem;
+    border-radius: var(--radius-md);
 }
 
 .followup-view button {
     min-height: 2.5rem;
     padding: .45rem .75rem;
     border: 1px solid var(--color-border-strong);
-    border-radius: .45rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface-control);
     color: var(--color-text-primary);
     cursor: pointer;
@@ -1007,7 +1007,7 @@ summary {
     min-height: 2.75rem;
     padding: .6rem 1rem;
     border: 1px solid var(--mint);
-    border-radius: .45rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface);
     color: var(--color-text-primary);
     cursor: pointer;
@@ -1022,7 +1022,7 @@ summary {
     min-height: 2.75rem;
     padding: .55rem .9rem;
     border: 1px solid var(--color-border-strong);
-    border-radius: .45rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface-control);
     color: var(--color-text-primary);
     cursor: pointer;
@@ -1080,7 +1080,7 @@ summary {
 
 .supporting-evidence h3 {
     margin: 0 0 .85rem;
-    font-size: 1.05rem;
+    font-size: var(--text-base);
     line-height: 1.35;
 }
 
@@ -1095,7 +1095,7 @@ summary {
 
 .supporting-evidence .evidence-record h4 {
     margin: 0;
-    font-size: .95rem;
+    font-size: var(--text-base);
     line-height: 1.35;
 }
 
@@ -1105,7 +1105,7 @@ summary {
     gap: .35rem .8rem;
     margin-top: .65rem;
     padding-top: .65rem;
-    font-size: .875rem;
+    font-size: var(--text-md);
     line-height: 1.35;
 }
 
@@ -1127,14 +1127,14 @@ summary {
 
 .supporting-evidence .evidence-record details {
     margin-top: .55rem;
-    font-size: .875rem;
+    font-size: var(--text-md);
 }
 
 .supporting-evidence .evidence-record code {
     display: block;
     margin-top: .45rem;
     color: var(--mint);
-    font-size: .75rem;
+    font-size: var(--text-xs);
     line-height: 1.4;
     overflow-wrap: anywhere;
 }
@@ -1150,7 +1150,7 @@ summary {
 
 .reading-guide {
     padding: 1rem 1.25rem;
-    font-size: .9rem;
+    font-size: var(--text-md);
     line-height: 1.5;
     color: var(--color-text-secondary);
 }
@@ -1165,7 +1165,7 @@ summary {
 
 .getting-started button, .setup-mode button, .reset-synced-data-button, .metric-actions > button, .metric-explain, .metric-info > button, .question-examples button, .sync-success button, .supporting-evidence button {
     border: 1px solid var(--color-border-strong);
-    border-radius: .45rem;
+    border-radius: var(--radius-md);
     background: var(--color-surface-control);
     color: var(--color-text-primary);
     padding: .55rem .8rem;
@@ -1307,7 +1307,7 @@ button:disabled {
     }
 
     .brand span {
-        font-size: 1.1rem;
+        font-size: var(--text-lg);
     }
 }
 
@@ -1324,7 +1324,7 @@ button:disabled {
         gap: 4px;
         min-width: 0;
         padding: 8px 2px;
-        font-size: 12px;
+        font-size: var(--text-xs);
         line-height: 1.2;
         text-align: center;
     }
@@ -1382,7 +1382,7 @@ button:disabled {
         min-height: 44px;
     }
     button {min-width: 44px;}
-    input, select, textarea {font-size: 16px;}
+    input, select, textarea {font-size: var(--text-base);}
     label:has(input[type="checkbox"]), label:has(input[type="radio"]) {
         min-height: 44px;
         align-content: center;
@@ -1401,4 +1401,100 @@ button:disabled {
     .football-tablet .field-legend {flex-wrap: wrap;}
     .football-tablet .reconstruction-meta, .football-tablet .tablet-actions {min-width: 0;}
     .chart-grid .chart {max-width: 100%;}
+}
+
+/* ---- Design review, November 2026 ---- */
+
+/* Report pages carry only their title; the report itself starts sooner. */
+.topbar.report-topbar {
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+}
+
+.topbar.report-topbar h1 {
+    font-size: clamp(1.25rem, 1.8vw, 1.75rem);
+}
+
+.rail .recent-saved {
+    color: var(--color-text-tertiary);
+}
+
+/* A disabled primary action is still the page's main control, so its label keeps readable contrast. */
+.primary:disabled, .analysis-brief .primary:disabled {
+    background: var(--color-surface-control);
+    box-shadow: inset 0 0 0 1px var(--color-border-control);
+    color: var(--color-text-secondary);
+    cursor: not-allowed;
+}
+
+/* Descriptions on a selected option sit on a tinted fill and need the lighter text token. */
+.question-kind button[aria-pressed="true"] span,
+.domain-selector button.active span {
+    color: var(--color-text-soft);
+}
+
+/* With the arrow hidden, the two season fields share the row equally. */
+@media (min-width: 651px) and (max-width: 900px) {
+    .configuration .window-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 650px) {
+    /* The data panel below repeats the sync status, so the header keeps only the title. */
+    .topbar {
+        padding-bottom: 14px;
+        margin-bottom: 20px;
+    }
+
+    .topbar .status-chip {
+        display: none;
+    }
+
+    .ask-panel {
+        margin-top: 1rem;
+    }
+
+    /* Logo beside the label halves the height of the sport row. */
+    .sport-tabs {
+        margin-bottom: 18px;
+    }
+
+    .sport-tabs button {
+        flex-direction: row;
+        gap: 6px;
+        padding: 6px 4px;
+        text-align: left;
+    }
+
+    .sport-tab-logo, .sport-tab-logo.ncaa-logo {
+        flex-basis: 24px;
+        width: 24px;
+        height: 24px;
+    }
+
+    .sport-tab-logo.nba-logo img {
+        height: 24px;
+    }
+
+    /* The index and inspect control move above the statement so it reads at full width. */
+    .finding {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "number inspect" "content content";
+        row-gap: 6px;
+        padding: 18px 16px;
+    }
+
+    .finding-number {
+        grid-area: number;
+        align-self: center;
+    }
+
+    .finding-inspect {
+        grid-area: inspect;
+    }
+
+    .finding-content {
+        grid-area: content;
+    }
 }

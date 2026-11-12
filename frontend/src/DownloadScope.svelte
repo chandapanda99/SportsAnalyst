@@ -74,13 +74,13 @@
 </section>
 
 <style>
-  .download-scope {display:grid; gap:.85rem; margin:1rem 0; padding:1rem; border:1px solid var(--line); border-radius:.6rem; background:var(--color-surface-low); min-width:0;}
-  .scope-intro strong {font-size:1rem;}
-  p {margin:.35rem 0 0; color:var(--color-text-secondary); font-size:.9rem; line-height:1.5;}
+  .download-scope {display:grid; gap:.85rem; margin:1rem 0; padding:1rem; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--color-surface-low); min-width:0;}
+  .scope-intro strong {font-size:var(--text-base);}
+  p {margin:.35rem 0 0; color:var(--color-text-secondary); font-size:var(--text-md); line-height:1.5;}
   .scope-fields {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap:1rem;}
-  label {display:grid; gap:.5rem; font-size:.85rem; font-weight:600;}
-  select {width:100%; min-width:0; min-height:44px; padding:.65rem; border:1px solid var(--line); border-radius:.4rem; color:var(--color-text-primary); background:var(--color-surface-control); font:inherit;}
-  small {color:var(--color-text-secondary); font-size:.8rem; line-height:1.5;}
-  .scope-error {display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; font-size:.85rem;}
-  .scope-error button {min-height:44px; padding:.5rem .8rem; color:var(--color-text-primary); background:var(--color-surface-control); border:1px solid var(--line); border-radius:.4rem;}
+  label {display:grid; gap:.5rem; font-size:var(--text-md); font-weight:600;}
+  select {width:100%; min-width:0; min-height:44px; padding:.65rem; border:1px solid var(--line); border-radius:var(--radius-sm); color:var(--color-text-primary); background:var(--color-surface-control); font:inherit;}
+  small {color:var(--color-text-secondary); font-size:var(--text-sm); line-height:1.5;}
+  .scope-error {display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; font-size:var(--text-md);}
+  .scope-error button {min-height:44px; padding:.5rem .8rem; color:var(--color-text-primary); background:var(--color-surface-control); border:1px solid var(--line); border-radius:var(--radius-sm);}
 </style>

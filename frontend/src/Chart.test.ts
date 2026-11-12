@@ -177,3 +177,35 @@ it('renders three-season trends with readable marks and matching, stable legends
   }));
   await result.unmount();
 });
+
+it('colours contribution bars by direction, wraps their labels, and captions the axis title', async () => {
+  const spec = {mark: 'bar', height: 180, width: 'container',
+    data: {values: [{phase: 'Takeaways', contribution: .026}, {phase: 'Passes allowed (non-turnover, non-sack)', contribution: -.062}]},
+    encoding: {y: {field: 'phase', type: 'nominal', sort: '-x', title: null},
+      x: {field: 'contribution', type: 'quantitative', title: 'Contribution to EPA/play allowed change'}}};
+  const themed = applyTeamChartPalette(spec, 'KC') as any;
+  // "Allowed" metrics describe the opponent, so the negative bar is the favourable one.
+  expect(themed.encoding.color).toEqual({condition: {test: 'datum["contribution"] < 0', value: '#7CE4C2'}, value: '#F19767'});
+  expect(themed.encoding.x.axis.title).toBeNull();
+  const view = new View(parse(compile(themed).spec), {renderer: 'none'});
+  try {
+    const svg = await view.toSVG();
+    // The qualifier wraps onto its own line; one long label would be truncated at phone width.
+    expect(svg).toContain('>Passes allowed<');
+    expect(svg).toMatch(/>\(non-turnover/);
+  } finally {view.finalize();}
+  const offense = applyTeamChartPalette({...spec, encoding: {...spec.encoding, x: {...spec.encoding.x, title: 'Contribution to EPA/play change'}}}, 'KC') as any;
+  expect(offense.encoding.color.condition.test).toBe('datum["contribution"] > 0');
+  render(Chart, {props: {team: 'KC', specification: spec}});
+  expect(screen.getByLabelText('Bar colour key').textContent).toContain('Better for the team');
+  expect(screen.getByText(/Contribution to EPA\/play allowed change\. Bars left of zero lowered it/)).toBeTruthy();
+});
+
+it('places trend endpoint labels on the side the line does not cross', () => {
+  const trend = (first: number, last: number) => applyTeamChartPalette({mark: 'line',
+    data: {values: [{season: 2024, value: first, team: 'KC'}, {season: 2025, value: last, team: 'KC'}]},
+    encoding: {x: {field: 'season', type: 'ordinal'}, y: {field: 'value', type: 'quantitative'}, color: {field: 'team', type: 'nominal'}}}, 'KC') as any;
+  const labels = (spec: any) => spec.layer.filter((layer: any) => layer.mark.type === 'text').map((layer: any) => layer.mark.baseline);
+  expect(labels(trend(.011, -.019))).toEqual(['bottom', 'top']);
+  expect(labels(trend(-.019, .011))).toEqual(['top', 'bottom']);
+});

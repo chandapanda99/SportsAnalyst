@@ -79,9 +79,13 @@
 
 <style>
   .cfb-discovery {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0;}
-  label {display: flex; flex-direction: column; gap: 6px; color: var(--text-muted, #94afbf); font-size: 12px;}
-  select {padding: 10px; background: var(--surface-raised, #102336); color: var(--text-primary, #e6f3fa); border: 1px solid #315063; border-radius: 6px;}
-  p {grid-column: 1 / -1; margin: 0; font-size: 12px; color: #94afbf;}
+  /* Same label and control treatment as the subject and time-frame fields in every other sport. */
+  label {display: flex; flex-direction: column; gap: 8px; color: var(--color-text-secondary); font: 12px var(--font-mono);
+    text-transform: uppercase; letter-spacing: .08em;}
+  select {min-height: 46px; padding: 13px 14px; background: var(--color-surface-input); color: var(--color-text-primary);
+    border: 1px solid var(--color-border-control); border-radius: var(--radius-md); font: 14px var(--font-sans);
+    letter-spacing: normal; text-transform: none;}
+  p {grid-column: 1 / -1; margin: 0; font-size: var(--text-xs); color: var(--color-text-secondary);}
   button {margin-left: 8px;}
   @media (max-width: 640px) {.cfb-discovery {grid-template-columns: 1fr;}}
 </style>

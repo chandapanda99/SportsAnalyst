@@ -1,4 +1,4 @@
-import type {CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, PlayVisualization} from './types';
+import type {CFBAttributionConflict, CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, PlayVisualization} from './types';
 import {buildPlaySchematic} from './playSchematic';
 import {resolveSpecialTeams} from './specialTeamsSchematic';
 
@@ -18,33 +18,55 @@ function positionGroup(position: string) {
   return value;
 }
 
-function projectStarters(visualization: PlayVisualization, event: CFBRecordedPlay, teams: CFBTeamContext[], roster: CFBGameRosterPlayer[]) {
+/**
+ * Fill unrecorded template slots for presentation only: flagged game starters first, then players with a
+ * game box-score line, most involved first. Neither is confirmed on the field for this snap.
+ */
+function projectLineup(visualization: PlayVisualization, event: CFBRecordedPlay, teams: CFBTeamContext[], roster: CFBGameRosterPlayer[]) {
   const template = buildPlaySchematic(visualization, 20);
   const recordedIds = new Set((event.participants ?? []).map(actor => actor.athlete_id));
   const used = new Set(recordedIds);
   let projectedCount = 0;
+  let playedCount = 0;
   for (const side of ['offense', 'defense'] as const) {
     const team = side === 'offense' ? event.team_id : teams.find(team => team.id !== event.team_id)?.id;
     if (!team) continue;
     const names = visualization[`${side}_names`]!;
     const positions = visualization[`${side}_positions`]!;
-    const status: Array<'recorded' | 'projected'> = names.map(() => 'recorded');
+    const status: Array<'recorded' | 'projected' | 'played'> = names.map(() => 'recorded');
     const slots = template.players.filter(player => player.side === side && !player.recorded);
-    const candidates = roster.filter(player => player.team_id === team && player.starter && !player.did_not_play
-      && player.name && player.position && !used.has(player.athlete_id));
+    const eligible = (player: CFBGameRosterPlayer) => player.team_id === team && !player.did_not_play
+      && Boolean(player.name && player.position) && !used.has(player.athlete_id);
+    const candidates = roster.filter(player => player.starter && eligible(player));
+    const played = roster.filter(player => player.played_in_game && !player.starter && eligible(player))
+      .sort((left, right) => (right.box_score_activity ?? 0) - (left.box_score_activity ?? 0));
     for (const slot of slots) {
       const group = positionGroup(slot.position);
       const matches = candidates.filter(player => !used.has(player.athlete_id) && positionGroup(player.position!) === group);
       const remainingSlots = slots.filter(player => positionGroup(player.position) === group).length;
       // Ambiguous starter lists must not crowd out a confirmed substitute.
-      if (!matches.length || candidates.filter(player => positionGroup(player.position!) === group).length > remainingSlots) continue;
-      const candidate = matches.find(player => player.position === slot.position) ?? matches[0];
-      names.push(candidate.name!); positions.push(candidate.position!); status.push('projected');
-      used.add(candidate.athlete_id); projectedCount += 1;
+      if (matches.length && candidates.filter(player => positionGroup(player.position!) === group).length <= remainingSlots) {
+        const candidate = matches.find(player => player.position === slot.position) ?? matches[0];
+        names.push(candidate.name!); positions.push(candidate.position!); status.push('projected');
+        used.add(candidate.athlete_id); projectedCount += 1;
+        continue;
+      }
+      const participant = played.find(player => !used.has(player.athlete_id) && positionGroup(player.position!) === group);
+      if (!participant) continue;
+      names.push(participant.name!); positions.push(participant.position!); status.push('played');
+      used.add(participant.athlete_id); playedCount += 1;
     }
     visualization[`${side}_identity_status`] = status;
   }
-  return projectedCount;
+  return {projectedCount, playedCount};
+}
+
+/** Credits ESPN's play record gives an athlete the game box score contradicts (e.g. an offensive player as interceptor). */
+export function collegeAttributionConflicts(event: CFBRecordedPlay): CFBAttributionConflict[] {
+  try {
+    const parsed = JSON.parse(event.attribution_conflicts_json || '[]');
+    return Array.isArray(parsed) ? parsed.filter(item => item && typeof item === 'object' && item.recorded_athlete_id) : [];
+  } catch { return []; }
 }
 
 const creditedRoles: Record<string, string> = {sackedBy: 'Sack', forcedBy: 'Forced fumble', recoverer: 'Fumble recovery',
@@ -72,6 +94,13 @@ export function collegePlaymakers(event: CFBRecordedPlay) {
     const entry = credits.get(actor.athlete_id) ?? {name: actor.name, roles: new Set<string>()};
     entry.roles.add(actor.role === 'passDefender' && intercepted ? 'Interception' : base);
     credits.set(actor.athlete_id, entry);
+  }
+  // When ESPN logged an offensive player as the interceptor, the game box score's credit is used instead.
+  for (const conflict of collegeAttributionConflicts(event)) {
+    if (conflict.role !== 'Interception' || !conflict.box_score_athlete_id || !conflict.box_score_name) continue;
+    const entry = credits.get(conflict.box_score_athlete_id) ?? {name: conflict.box_score_name, roles: new Set<string>()};
+    entry.roles.add('Interception');
+    credits.set(conflict.box_score_athlete_id, entry);
   }
   // Scoring-summary plays carry the interceptor only in the parsed text; used when no pass defender was logged at all.
   const textInterceptor = typeof context.interception_player_name === 'string' ? context.interception_player_name : '';
@@ -207,8 +236,9 @@ export function adaptCollegePlay(event: CFBRecordedPlay, teams: CFBTeamContext[]
   if (verifiedInterceptionPath) visualization.return_yards = returnYards;
   const movement = reconstruct && (gain != null || airYardsAvailable) && !visualization.fumble_lost
     && (verifiedInterceptionPath || (!visualization.interception && !event.turnover));
-  const projectedCount = reconstruct && showProjected ? projectStarters(visualization, event, teams, roster) : 0;
-  return {visualization, reconstruct, movement, projectedCount,
+  const {projectedCount, playedCount} = reconstruct && showProjected
+    ? projectLineup(visualization, event, teams, roster) : {projectedCount: 0, playedCount: 0};
+  return {visualization, reconstruct, movement, projectedCount, playedCount,
     inference: {lineup: reconstruct, alignment: reconstruct, box: reconstruct, rushAssignments: reconstruct,
       trajectory: movement, airYardsAvailable, yardsAfterCatchAvailable},
     note: noPlay ? 'Nullified or penalty-only play: no live-play trajectory or lineup is reconstructed.'

@@ -21,6 +21,6 @@
   {#if url && failed !== url}<img src={url} alt="" loading="lazy" decoding="async" on:error={() => failed = url ?? ''}/>{/if}
 </span>
 <style>
-  .player-portrait {display:inline-grid; place-items:center; position:relative; width:2.4rem; height:2.4rem; flex:0 0 2.4rem; border-radius:50%; overflow:hidden; background:var(--color-surface-control, #193345); color:var(--color-text-primary, #edf7ff); border:1px solid var(--line, #315063); vertical-align:middle; font-size:.7rem;}
+  .player-portrait {display:inline-grid; place-items:center; position:relative; width:2.4rem; height:2.4rem; flex:0 0 2.4rem; border-radius:50%; overflow:hidden; background:var(--color-surface-control, #193345); color:var(--color-text-primary, #edf7ff); border:1px solid var(--line, #315063); vertical-align:middle; font-size:var(--text-2xs);}
   img {position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:var(--color-surface-control, #193345);}
 </style>

@@ -456,7 +456,9 @@ class SportsDataverseCFBConnector:
             # or prevent a later attempt from obtaining provider-derived context.
             complete = all(actor.get("name") and actor.get("position") and actor.get("team_id")
                            for row in result["plays"] for actor in row.get("participants", []))
-            roster_teams = {entry["team_id"] for entry in result["game_roster"]}
+            # Box-score players alone do not show the roster request succeeded, so they do not count here.
+            roster_teams = {entry["team_id"] for entry in result["game_roster"]
+                            if entry.get("identity_source") != "ESPN game box score" or entry.get("roster_listed")}
             teams = {str(entry["id"]) for entry in result["teams"]}
             secondary_ready = all(all(status == "acquired" for status in
                 json.loads(row.get("source_provenance_json") or "{}").get("secondary_status", {}).values())

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import {applyTeamChartPalette, chartSeriesStyles, teamLogoUrl} from './teamPalettes';
+    import {applyTeamChartPalette, chartSeriesStyles, contributionBars, DEFAULT_CONTRIBUTION_TONES, teamLogoUrl} from './teamPalettes';
     import {branding} from './sportsBranding';
     import TeamBadge from './TeamBadge.svelte';
     import SchematicViewport from './SchematicViewport.svelte';
@@ -31,6 +31,7 @@
     let rows = $derived(comparisonRows(specification));
     let visibleRows = $derived(rows.filter(row => !metric || row.metric === metric));
     let series = $derived(chartSeriesStyles(specification, team, sport, season));
+    let bars = $derived(contributionBars(specification));
     let grouped = $derived(chartComparisonKind(specification) === 'grouped-observations');
     let anonymousCategories = $derived(grouped && !(specification.usermeta as {colorField?: string})?.colorField);
     let teamName = $derived(branding(team, sport, season).name ?? (/^\d+$/.test(team) ? 'Team Colors' : team));
@@ -71,7 +72,13 @@
         if (!host || visibleTarget !== host) return;
         // Expanded size is fixed: following a scrollbar here would redraw and clear the plot endlessly.
         const plotWidth = expanded ? window.innerWidth - 56 : chartWidth || 640;
-        const themedSpecification = applyTeamChartPalette(showEverySeason(filterMetric(specification, metric)), team, sport, season);
+        // Bars take the theme's verdict colours so they match the Better/Worse pills in every sport theme.
+        const tokens = getComputedStyle(host);
+        const tones = {
+            favourable: tokens.getPropertyValue('--color-accent-primary').trim() || DEFAULT_CONTRIBUTION_TONES.favourable,
+            unfavourable: tokens.getPropertyValue('--color-status-warning').trim() || DEFAULT_CONTRIBUTION_TONES.unfavourable
+        };
+        const themedSpecification = applyTeamChartPalette(showEverySeason(filterMetric(specification, metric)), team, sport, season, tones);
         // Vega's concatenated plots do not reliably resolve a hidden container's
         // width. Give each metric plot a measured width, including after expand.
         if (Array.isArray(themedSpecification.vconcat)) {
@@ -194,10 +201,17 @@
   {#if hasPlot}<button class="matrix-plot-toggle" type="button" aria-expanded={showChart} onclick={() => showChart = !showChart}>{showChart ? 'Hide plot' : 'Explore comparable measurements'}</button>
   {:else}<p class="coverage-note">A comparison plot requires at least two comparable periods. Available values are shown above.</p>{/if}
 {:else if rows.length}<button class="chart-toggle" type="button" aria-expanded={showChart} onclick={() => showChart = !showChart}>{showChart ? 'Hide comparison chart' : 'Show comparison chart'}</button>{/if}
+{#if bars}
+    <div class="series-key" aria-label="Bar colour key">
+        <span><svg viewBox="0 0 16 16" aria-hidden="true" class="tone-favourable"><path d={symbolPaths.square} fill="currentColor"/></svg>Better for the team</span>
+        <span><svg viewBox="0 0 16 16" aria-hidden="true" class="tone-unfavourable"><path d={symbolPaths.square} fill="currentColor"/></svg>Worse for the team</span>
+    </div>
+    {#if bars.title}<p class="chart-guidance">{bars.title}. Bars left of zero lowered it; bars right of zero raised it.</p>{/if}
+{/if}
 {#if !matrixMode || (showChart && hasPlot)}
 <div class="chart-visual" class:compact={rows.length > 0 && !showChart}>
 <SchematicViewport label="chart" focusable={false} quietExpand onexpand={value => expanded = value}>
-<div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} bind:this={target} role="img" aria-label={title ?? 'Chart'}>
+<div class="chart" class:has-error={renderError} class:metric-rows={metricRowCount > 0} class:category-bars={!!bars} bind:this={target} role="img" aria-label={title ?? 'Chart'}>
     {#if renderError}<p class="chart-error">{renderError}</p>{/if}
 </div>
 </SchematicViewport>
@@ -205,29 +219,35 @@
 {/if}
 
 <style>
-    .chart-team {display:flex; align-items:center; gap:.6rem; padding:.5rem 0; color:var(--color-text-secondary); font-size:.85rem;}
-    .chart-guidance {font-size:.85rem; line-height:1.6; color:var(--color-text-secondary); margin:.25rem 0 .75rem;}
-    .series-key {display:flex; flex-wrap:wrap; gap:.6rem 1.25rem; border:1px solid var(--line); border-radius:.4rem; padding:.65rem .8rem;}
-    .series-key span {display:flex; align-items:center; gap:.45rem; font-size:.85rem; font-weight:600;}
+    .chart-team {display:flex; align-items:center; gap:.6rem; padding:.5rem 0; color:var(--color-text-secondary); font-size:var(--text-md);}
+    .chart-guidance {font-size:var(--text-md); line-height:1.6; color:var(--color-text-secondary); margin:.25rem 0 .75rem;}
+    .series-key {display:flex; flex-wrap:wrap; gap:.6rem 1.25rem; border:1px solid var(--line); border-radius:var(--radius-sm); padding:.65rem .8rem;}
+    .series-key span {display:flex; align-items:center; gap:.45rem; font-size:var(--text-md); font-weight:600;}
     .series-key svg {width:1rem; height:1rem; flex:none;}
+    .tone-favourable {color:var(--color-accent-primary);}
+    .tone-unfavourable {color:var(--color-status-warning);}
+    /* Category bars set their own height; the default frame would letterbox them. */
+    .chart.category-bars {min-height:0; max-height:none; aspect-ratio:auto; align-items:flex-start;}
+    .chart.category-bars :global(.vega-embed), .chart.category-bars :global(.vega-embed > div) {height:auto; min-height:0;}
+    .chart.category-bars :global(svg) {height:auto;}
     .metric-filter {display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.5rem 0;}
-    select {max-width:100%; width:min(100%, 24rem); min-width:0; min-height:44px; background:var(--color-surface-control); color:var(--color-text-primary); padding:.5rem; border:1px solid var(--line); border-radius:.35rem;}
+    select {max-width:100%; width:min(100%, 24rem); min-width:0; min-height:44px; background:var(--color-surface-control); color:var(--color-text-primary); padding:.5rem; border:1px solid var(--line); border-radius:var(--radius-sm);}
     .metric-values {margin:.75rem 0;}
-    summary {width:fit-content; cursor:pointer; padding:.6rem 0; font-weight:600; font-size:.85rem;}
+    summary {width:fit-content; cursor:pointer; padding:.6rem 0; font-weight:600; font-size:var(--text-md);}
     .value-rows {display:grid; gap:.75rem; margin:.5rem 0;}
-    section {padding:.85rem; border:1px solid var(--line); border-radius:.4rem; min-width:0;}
+    section {padding:.85rem; border:1px solid var(--line); border-radius:var(--radius-sm); min-width:0;}
     h4 {margin:0 0 .5rem;}
     dl {margin:0; display:grid; gap:.5rem;}
     dl div {display:flex; justify-content:space-between; gap:1rem; padding:.35rem 0; border-bottom:1px solid var(--line);}
     dt {color:var(--color-text-secondary); overflow-wrap:anywhere;}
     dt small {display:block; margin-top:.25rem;}
     dd {margin:0; flex:none; font-variant-numeric:tabular-nums; font-weight:600;}
-    section p,small {font-size:.85rem; line-height:1.5; overflow-wrap:anywhere;}
+    section p,small {font-size:var(--text-md); line-height:1.5; overflow-wrap:anywhere;}
     .chart-toggle {display:none; min-height:44px; padding:.5rem; color:var(--color-text-primary); background:var(--color-surface-control); border:1px solid var(--line);}
     .chart-visual {min-width:0;}
-    .coverage-note {font-size:.85rem; color:var(--color-text-secondary); line-height:1.5;}
+    .coverage-note {font-size:var(--text-md); color:var(--color-text-secondary); line-height:1.5;}
     .matrix-plot-toggle {min-height:44px; padding:.55rem .8rem; background:var(--color-surface-control);
-      color:var(--color-text-primary); border:1px solid var(--line); border-radius:.35rem; margin-bottom:.75rem;}
+      color:var(--color-text-primary); border:1px solid var(--line); border-radius:var(--radius-sm); margin-bottom:.75rem;}
     @media (max-width:650px) {
         .chart-toggle {display:block;}
         .compact {display:none;}

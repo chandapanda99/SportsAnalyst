@@ -129,12 +129,12 @@
 <style>
   .schematic-viewer {min-width:0; max-width:100%;}
   .viewer-controls {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; padding:.5rem 0;}
-  .marker-picker {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.5rem 0; font-size:.9rem;}
-  select {min-width:0; max-width:100%; flex:1 1 14rem; min-height:44px; font:inherit; font-size:16px; color:var(--color-text-primary,#edf7ff); background:var(--color-surface-control,#102336);}
-  button {min-width:44px; min-height:44px; padding:.5rem .75rem; border:1px solid var(--line,#315063); border-radius:.4rem; background:var(--color-surface-control,#102336); color:var(--color-text-primary,#edf7ff); cursor:pointer; font:inherit;}
+  .marker-picker {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.5rem 0; font-size:var(--text-md);}
+  select {min-width:0; max-width:100%; flex:1 1 14rem; min-height:44px; font:inherit; font-size:var(--text-base); color:var(--color-text-primary,#edf7ff); background:var(--color-surface-control,#102336);}
+  button {min-width:44px; min-height:44px; padding:.5rem .75rem; border:1px solid var(--line,#315063); border-radius:var(--radius-sm); background:var(--color-surface-control,#102336); color:var(--color-text-primary,#edf7ff); cursor:pointer; font:inherit;}
   button:disabled {opacity:.45; cursor:default;}
   .quiet-controls {justify-content:flex-end; padding:0;}
-  button.quiet {min-height:36px; padding:.3rem .6rem; border-color:transparent; background:transparent; color:var(--color-text-secondary,#9fb3c2); font-size:.85rem;}
+  button.quiet {min-height:36px; padding:.3rem .6rem; border-color:transparent; background:transparent; color:var(--color-text-secondary,#9fb3c2); font-size:var(--text-md);}
   button.quiet:hover, button.quiet:focus-visible {border-color:var(--line,#315063); color:var(--color-text-primary,#edf7ff);}
   .schematic-scroll {overflow:auto; max-width:100%;}
   .schematic-canvas {min-width:100%;}
@@ -145,5 +145,5 @@
   .expanded .schematic-canvas :global(svg) {display:block; width:100%; height:auto; max-height:none;}
   .expanded .schematic-canvas :global(.chart.chart) {height:auto; min-height:0; max-height:none; aspect-ratio:auto; overflow:visible;}
   .expanded .schematic-canvas :global(.chart .vega-embed), .expanded .schematic-canvas :global(.chart .vega-embed > div) {height:auto;}
-  .viewer-help {font-size:.85rem; margin:.25rem 0 .75rem;}
+  .viewer-help {font-size:var(--text-md); margin:.25rem 0 .75rem;}
 </style>

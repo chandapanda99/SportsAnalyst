@@ -57,7 +57,7 @@
     padding: 1rem;
     border: 1px solid var(--color-border-strong);
     border-left: 3px solid var(--color-accent-primary);
-    border-radius: .75rem;
+    border-radius: var(--radius-lg);
     background: var(--color-surface-panel);
     color: var(--color-text-primary);
     box-shadow: 0 12px 36px rgb(0 0 0 / 32%);
@@ -76,8 +76,8 @@
   }
   .completion-icon svg { width: 1.4rem; height: 1.4rem; }
   .completion-copy { min-width: 0; flex: 1; }
-  strong { display: block; font-size: .95rem; line-height: 1.4; }
-  p { margin: .25rem 0 0; color: var(--color-text-secondary); font-size: .82rem; line-height: 1.5; overflow-wrap: anywhere; }
+  strong { display: block; font-size: var(--text-base); line-height: 1.4; }
+  p { margin: .25rem 0 0; color: var(--color-text-secondary); font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
   .completion-dismiss {
     display: grid;
     place-items: center;
@@ -86,10 +86,10 @@
     padding: 0;
     flex: none;
     border: 0;
-    border-radius: .35rem;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--color-text-secondary);
-    font-size: 1.35rem;
+    font-size: var(--text-xl);
     cursor: pointer;
   }
   .completion-dismiss:hover { color: var(--color-text-primary); background: var(--color-surface-control); }

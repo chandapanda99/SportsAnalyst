@@ -219,7 +219,28 @@ function polishAxis(channel: string, definition: Record<string, unknown>): Recor
     };
 }
 
-export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl', season?: number): Record<string, unknown> {
+export interface ContributionTones {favourable: string; unfavourable: string}
+
+/** Mint and amber match the Better/Worse verdict pills (--color-accent-primary, --color-status-warning). */
+export const DEFAULT_CONTRIBUTION_TONES: ContributionTones = {favourable: '#7CE4C2', unfavourable: '#F19767'};
+const ENDPOINT_LABEL_ROOM = 22;
+
+/** Horizontal bars of signed contributions, one bar per recorded category. */
+export function contributionBars(spec: Record<string, unknown>): {field: string; title: string; lowerIsBetter: boolean; categories: number} | null {
+    const mark = spec.mark as Record<string, unknown> | string | undefined;
+    if ((typeof mark === 'string' ? mark : mark?.type) !== 'bar') return null;
+    const encoding = spec.encoding as Record<string, unknown> | undefined;
+    const x = encoding?.x as Record<string, unknown> | undefined;
+    const y = encoding?.y as Record<string, unknown> | undefined;
+    if (!x || !y || encoding?.color || x.type !== 'quantitative' || y.type !== 'nominal' || typeof x.field !== 'string') return null;
+    const title = typeof x.title === 'string' ? x.title : '';
+    const values = (spec.data as {values?: unknown[]} | undefined)?.values ?? [];
+    // "Allowed" metrics describe the opponent, so a negative contribution helped the subject.
+    return {field: x.field, title, lowerIsBetter: /\ballowed\b/i.test(title), categories: values.length};
+}
+
+export function applyTeamChartPalette(specification: Record<string, unknown>, team: string, sport = 'nfl', season?: number,
+                                      tones: ContributionTones = DEFAULT_CONTRIBUTION_TONES): Record<string, unknown> {
     const themed = structuredClone(specification);
     const usermeta = themed.usermeta as Record<string, unknown> | undefined;
     const categoryRows = usermeta?.categoryLayout === 'rows';
@@ -410,20 +431,54 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     };
 
     if (markType === 'bar') {
+        const barMark = {
+            ...(typeof mark === 'object' ? mark : {}),
+            type: 'bar',
+            stroke: CHART_OUTLINE_COLOR,
+            strokeOpacity: 0.3,
+            strokeWidth: 0.65
+        };
+        const bars = contributionBars(specification);
+        if (!bars || !encoding) return {...common, mark: barMark};
+        const horizontal = encoding.x as Record<string, unknown>;
+        const vertical = encoding.y as Record<string, unknown>;
+        const breakAt = "indexof(datum.label, ' (')";
         return {
             ...common,
-            mark: {
-                ...(typeof mark === 'object' ? mark : {}),
-                type: 'bar',
-                stroke: CHART_OUTLINE_COLOR,
-                strokeOpacity: 0.3,
-                strokeWidth: 0.65
+            // Room for two-line category labels; the chart frame sizes itself to this height.
+            height: Math.max(typeof common.height === 'number' ? common.height : 0, bars.categories * 38 + 36),
+            mark: barMark,
+            encoding: {
+                ...encoding,
+                // The axis title is longer than a phone-width plot, so the chart shows it as a caption instead.
+                x: {...horizontal, title: null, axis: {...((horizontal.axis as Record<string, unknown> | undefined) ?? {}), title: null}},
+                y: {...vertical, axis: {
+                    ...((vertical.axis as Record<string, unknown> | undefined) ?? {}),
+                    labelLimit: 165,
+                    labelLineHeight: 14,
+                    // Wrap a trailing qualifier such as "(non-turnover)" instead of truncating it.
+                    labelExpr: `${breakAt} > 0 ? [slice(datum.label, 0, ${breakAt}), slice(datum.label, ${breakAt} + 1)] : datum.label`
+                }},
+                // Direction is also carried by position and the caption, never by colour alone.
+                color: {
+                    condition: {test: `datum[${JSON.stringify(bars.field)}] ${bars.lowerIsBetter ? '<' : '>'} 0`, value: tones.favourable},
+                    value: tones.unfavourable
+                }
             }
         };
     }
 
     if (markType !== 'line' || !encoding || !color || typeof color.field !== 'string') return common;
 
+    const xField = (encoding.x as Record<string, unknown> | undefined)?.field;
+    const yField = (encoding.y as Record<string, unknown> | undefined)?.field;
+    const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values;
+    const labelEndpoints = xField === 'season' && typeof yField === 'string' && !!values && values.length > 1;
+    if (labelEndpoints) {
+        // Endpoint labels sit above or below their point; keep both clear of the plot edges.
+        const vertical = encoding.y as Record<string, unknown>;
+        encoding.y = {...vertical, scale: {...((vertical.scale as Record<string, unknown> | undefined) ?? {}), padding: ENDPOINT_LABEL_ROOM}};
+    }
     const seriesEncoding = {
         ...encoding,
         strokeDash: {
@@ -444,17 +499,19 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     const layerContainer: Record<string, unknown> = {...common};
     delete layerContainer.mark;
     delete layerContainer.encoding;
-    const xField = (encoding.x as Record<string, unknown> | undefined)?.field;
-    const yField = (encoding.y as Record<string, unknown> | undefined)?.field;
-    const values = (themed.data as {values?: Array<Record<string, unknown>>} | undefined)?.values;
     const endpointLayers: Array<Record<string, unknown>> = [];
-    if (xField === 'season' && typeof yField === 'string' && values && values.length > 1) {
+    if (labelEndpoints && typeof yField === 'string' && values) {
         const ordered = [...values].sort((left, right) => Number(left.season) - Number(right.season));
         const endpoints = [ordered[0], ordered.at(-1)!];
         const colorScale = (encoding.color as {scale: {domain: unknown[]; range: string[]}}).scale;
         endpoints.forEach((endpoint, index) => {
             const endpointColor = colorScale.range[Math.max(0, colorScale.domain.indexOf(endpoint[color.field as string]))];
             const value = Number(endpoint[yField]);
+            // The line leaves the first point and enters the last one from its neighbour's side.
+            // Put the label on the opposite side so the line never runs through it.
+            const sameSeries = ordered.filter(row => row[color.field as string] === endpoint[color.field as string]);
+            const neighbour = index === 0 ? sameSeries[1] : sameSeries.at(-2);
+            const below = neighbour !== undefined && neighbour !== endpoint && Number(neighbour[yField]) > value;
             const endpointData = {
                 ...endpoint,
                 endpointLabel: `${endpoint.season} · ${value.toFixed(3)}`
@@ -476,8 +533,8 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
                 {
                     data: {values: [endpointData]},
                     mark: {
-                        type: 'text', align: index === 0 ? 'left' : 'right', baseline: 'bottom',
-                        dx: index === 0 ? 9 : -9, dy: -8, fontSize: 12, fontWeight: 600, color: '#EDF5FA'
+                        type: 'text', align: index === 0 ? 'left' : 'right', baseline: below ? 'top' : 'bottom',
+                        dx: index === 0 ? 9 : -9, dy: below ? 9 : -8, fontSize: 12, fontWeight: 600, color: '#EDF5FA'
                     },
                     encoding: {...endpointEncoding, text: {field: 'endpointLabel', type: 'nominal'}}
                 }

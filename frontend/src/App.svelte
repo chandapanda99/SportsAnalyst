@@ -230,6 +230,8 @@
   let playTrigger: HTMLElement | null = null;
   let metricDirections: Record<string, boolean | null> = {};
   let showFullFilmRoom = false;
+  // The desktop rail scrolls its list, so it lists every report; the stacked phone layout keeps the toggle.
+  let railScrolls = false;
   let compareSubjectId = '';
   // Head-to-head runs from this season through `comparison`; 0 until the mode is chosen.
   let headToHeadFirst = 0;
@@ -588,6 +590,10 @@
       showGuidance = localStorage.getItem('sports-analyst:onboarding:v1') !== 'done';
     } catch { /* Storage is optional. */
     }
+    const wideLayout = window.matchMedia?.('(min-width: 901px)');
+    const followLayout = () => railScrolls = wideLayout?.matches ?? false;
+    followLayout();
+    wideLayout?.addEventListener?.('change', followLayout);
     const followRoute = () => void openRoute();
     window.addEventListener('popstate', followRoute);
     void refresh().then(async () => {
@@ -612,7 +618,10 @@
         syncing = false;
       }
     });
-    return () => window.removeEventListener('popstate', followRoute);
+    return () => {
+      window.removeEventListener('popstate', followRoute);
+      wideLayout?.removeEventListener?.('change', followLayout);
+    };
   });
 
   async function refresh(attempt = 0) {
@@ -1767,6 +1776,14 @@
     return teamLogoUrl(team, item.run.sport ?? 'nfl', item.run.scope.comparison.season);
   }
 
+  /** Tells apart saved reports that share a subject, question and window. */
+  function savedOn(item: Investigation | InvestigationSummary) {
+    const saved = new Date(item.run.created_at);
+    if (Number.isNaN(saved.getTime())) return '';
+    const sameYear = saved.getFullYear() === new Date().getFullYear();
+    return saved.toLocaleDateString(undefined, {month: 'short', day: 'numeric', ...(sameYear ? {} : {year: 'numeric'})});
+  }
+
   function investigationWindow(item: Investigation | InvestigationSummary) {
     if (item.run.scope.comparison_design === 'head_to_head') {
       return `${seasonSpan(item.run.scope.baseline.season, item.run.scope.comparison.season)} · Head-to-head`;
@@ -2402,7 +2419,7 @@
         <p class="film-room-empty">No saved {activeSport === 'soccer' ? 'reports for this competition' : 'reports for this sport'} yet. Finished reports appear here.</p>
       {/if}
       <div class="film-room-list">
-      {#each showFullFilmRoom ? rootHistory : rootHistory.slice(0, filmRoomPreviewCount) as item}
+      {#each showFullFilmRoom || railScrolls ? rootHistory : rootHistory.slice(0, filmRoomPreviewCount) as item}
         <div class="recent-report">
           <button class="recent-report-link" class:active={active ? rootIdFor(active) === item.run.investigation_id : false}
                   on:click={() => openInvestigation(item)}>
@@ -2410,7 +2427,7 @@
                        initials={investigationSubjectInitials(item, playerNamesById)}/>
             <div><strong class="recent-subject-name">{investigationSubject(item, playerNamesById)}</strong>
               <span class="recent-question">{item.run.question}</span>
-              <small>{investigationWindow(item)}</small>
+              <small>{#if savedOn(item)}<span class="recent-saved">{savedOn(item)} · </span>{/if}{investigationWindow(item)}</small>
               {#if threadFor(item).length > 1}<small class="thread-count">{threadFor(item).length - 1}
                 follow-up{threadFor(item).length === 2 ? '' : 's'}</small>{/if}
             </div>
@@ -2425,7 +2442,7 @@
         </div>
       {/each}
       </div>
-      {#if rootHistory.length > filmRoomPreviewCount}
+      {#if !railScrolls && rootHistory.length > filmRoomPreviewCount}
         <button class="film-room-more" type="button" aria-expanded={showFullFilmRoom} on:click={() => showFullFilmRoom = !showFullFilmRoom}>
           {showFullFilmRoom ? 'Show fewer' : `Show all ${rootHistory.length}`}
         </button>
@@ -2469,11 +2486,12 @@
         </button>
       {/each}
     </nav>
-    <header class="topbar">
-      <div><span class="eyebrow">{activeSport.toUpperCase()} · Analysis</span>
+    <!-- The sport tab above already names the sport; a report page needs only its title. -->
+    <header class="topbar" class:report-topbar={!!active}>
+      <div>
         <h1>{active ? `${investigationSubject(active, playerNamesById)} report` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
       </div>
-      {#if analysisOptions}
+      {#if analysisOptions && !active}
         <div class="status-chip">
           <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} synced · {datasets.length} local files
         </div>
@@ -2655,15 +2673,19 @@
       {/snippet}
       <section class="ask-panel">
         <div class="intro-grid">
-          <div class="ask-copy"><span class="eyebrow">Your Next Question, Answered</span>
-            <h2>See what changed. Understand why.</h2>
-            <p>Ask about the growth or decline of a team or player across time, then explore the numbers and plays behind the answer.</p>
-          </div>
+          <!-- The pitch is for first use. Once the guide is dismissed the form starts straight away. -->
+          {#if showGuidance}
+            <div class="ask-copy">
+              <h2>See what changed. Understand why.</h2>
+              <p>Ask about the growth or decline of a team or player across time, then explore the numbers and plays behind the answer.</p>
+            </div>
+          {:else}
+            <h2 class="sr-only">Build your analysis</h2>
+          {/if}
           {#if showGuidance}
             <section class="getting-started" id="getting-started" tabindex="-1" aria-label="How it works">
               <div class="section-heading">
                 <div>
-                  <span class="eyebrow">Quick Start</span>
                   <h3>Build an evidence-backed report</h3>
                   <p>Start with a focused comparison. You can refine it or ask follow-up questions after the first answer.</p>
                 </div>
@@ -2726,7 +2748,7 @@
           <details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
                    bind:open={dataManagerOpen}>
             <summary>
-              <span><span class="eyebrow">Data</span>
+              <span>
                 <strong>{scopeDataSynced ? 'Data Ready · Manage Data' : 'Sync Data'}</strong><small>{dataStatusDetail}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' && resolvedTeam ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
               <i>
                 <Icon name="chevron-down" size={16}/>
@@ -2962,7 +2984,7 @@
                 {:else if activeSport === 'nba'}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
+                      <legend class:sr-only={comparisonMode === 'full_seasons'}>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline} on:change={() => {
                                         if (comparisonMode === 'before_after_milestone') comparison = baseline;
                                         if (!availableSegments(baseline).some(segment => segment.value === baselineSegment)) baselineSegment = availableSegments(baseline)[0]?.value ?? 'regular_season';
@@ -2983,7 +3005,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
+                      <legend class:sr-only={comparisonMode === 'full_seasons'}>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison} disabled={comparisonMode === 'before_after_milestone'} on:change={() => {
                     if (!availableSegments(comparison).some(segment => segment.value === comparisonSegment)) comparisonSegment = availableSegments(comparison)[0]?.value ?? 'regular_season';
                   }}>
@@ -3023,7 +3045,7 @@
                 {:else}
                   <div class="window-grid">
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
+                      <legend class:sr-only={comparisonMode === 'full_seasons'}>{comparisonMode === 'full_seasons' ? 'Range start' : 'Starting point'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'From season' : 'Season'}<select bind:value={baseline}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -3043,7 +3065,7 @@
                     </fieldset>
                     <span class="arrow"><Icon name="arrow-right" size={19}/></span>
                     <fieldset>
-                      <legend>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
+                      <legend class:sr-only={comparisonMode === 'full_seasons'}>{comparisonMode === 'full_seasons' ? 'Range end' : 'Compared to'}</legend>
                       <label>{comparisonMode === 'full_seasons' ? 'Through season' : 'Season'}<select bind:value={comparison}>
                         {#each scopeSeasons as season}
                           <option value={season}>{seasonLabel(season)}</option>
@@ -3213,7 +3235,6 @@
           </div>
           <aside class="analysis-brief" aria-label="Analysis brief">
             <div class="brief-details">
-              <span class="eyebrow">Your Analysis</span>
               <h3>Analysis brief</h3>
               <dl>
                 <dt>Subject</dt>
@@ -3508,7 +3529,7 @@
       </details>
       <section class="conversation" aria-label="Follow-up questions">
         <div class="conversation-header">
-          <div><span class="eyebrow">Follow-ups</span>
+          <div>
             <h2>Ask about this report</h2>
             <p>Your questions and answers are saved with this report. Select an answer to inspect its evidence.</p>
           </div>

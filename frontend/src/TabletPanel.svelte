@@ -57,6 +57,6 @@
 
 <style>
   .tablet-panel {position:relative;min-width:0;}.close-loading {display:block;margin:8px 0 0 auto;}
-  .tablet-error {padding:24px;border:1px solid #b27171;border-radius:10px;background:#291b27;margin-top:12px;color:#f8e4e4;}
-  button {padding:8px 12px;border:1px solid #315063;border-radius:6px;background:#102638;color:#e6f3fa;cursor:pointer;}.tablet-error button+button {margin-left:8px;}
+  .tablet-error {padding:24px;border:1px solid #b27171;border-radius:var(--radius-md);background:#291b27;margin-top:12px;color:#f8e4e4;}
+  button {padding:8px 12px;border:1px solid #315063;border-radius:var(--radius-sm);background:#102638;color:#e6f3fa;cursor:pointer;}.tablet-error button+button {margin-left:8px;}
 </style>

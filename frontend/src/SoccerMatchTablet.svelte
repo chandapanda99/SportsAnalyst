@@ -193,7 +193,7 @@
   .soccer-match-tablet {
     --accent: var(--color-accent-primary);
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     background: var(--color-surface);
     padding: clamp(.9rem, 2vw, 1.4rem);
     margin-top: 1rem;
@@ -214,7 +214,7 @@
 
   header h3 {
     margin: .35rem 0;
-    font-size: 1.2rem
+    font-size: var(--text-xl)
   }
 
   header p {
@@ -224,10 +224,10 @@
 
   header button {
     border: 1px solid var(--line);
-    border-radius: 7px;
+    border-radius: var(--radius-md);
     background: transparent;
     color: inherit;
-    font-size: 1.5rem;
+    font-size: var(--text-2xl);
     cursor: pointer;
     line-height: 1;
     padding: .15rem .5rem
@@ -266,7 +266,7 @@
     display: flex;
     gap: .35rem .8rem;
     flex-wrap: wrap;
-    font-size: .82rem;
+    font-size: var(--text-sm);
     opacity: .8
   }
 
@@ -280,18 +280,18 @@
 
   .timeline-heading h4 {
     margin: 0;
-    font-size: 1rem
+    font-size: var(--text-base)
   }
 
   .timeline-heading p {
     margin: .2rem 0 0;
-    font-size: .8rem;
+    font-size: var(--text-sm);
     opacity: .75
   }
 
   .timeline-heading > span {
     white-space: nowrap;
-    font-size: .75rem;
+    font-size: var(--text-xs);
     opacity: .7
   }
 
@@ -303,7 +303,7 @@
   }
 
   .timeline-labels {
-    font-size: .72rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .07em;
@@ -350,9 +350,9 @@
     padding: .25rem .3rem;
     text-align: center;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: var(--color-surface);
-    font-size: .78rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     font-variant-numeric: tabular-nums
   }
@@ -364,7 +364,7 @@
     justify-content: center;
     padding: .55rem 0;
     color: var(--accent);
-    font-size: .7rem;
+    font-size: var(--text-2xs);
     font-weight: 700;
     letter-spacing: .07em;
     text-transform: uppercase
@@ -405,11 +405,11 @@
     max-width: 100%;
     padding: .4rem .6rem;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--accent) 8%, var(--color-surface));
     color: inherit;
     font: inherit;
-    font-size: .8rem;
+    font-size: var(--text-sm);
     cursor: pointer;
     text-align: left;
     transition: border-color .15s, background .15s, transform .15s
@@ -462,7 +462,7 @@
     display: grid;
     gap: .2rem;
     margin-top: .3rem;
-    font-size: .75rem;
+    font-size: var(--text-xs);
   }
 
   .substitution-detail {
@@ -481,7 +481,7 @@
   }
 
   .card .event-symbol {
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     color: #2b1b08;
     background: #e9cb58
   }
@@ -506,7 +506,7 @@
     margin-top: .8rem;
     border: 1px solid var(--line);
     border-left: 3px solid var(--accent);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--accent) 7%, var(--color-surface));
     padding: .85rem 1rem
   }
@@ -516,7 +516,7 @@
     justify-content: space-between;
     gap: .4rem 1rem;
     flex-wrap: wrap;
-    font-size: .85rem
+    font-size: var(--text-md)
   }
 
   .event-detail-heading span {
@@ -532,7 +532,7 @@
   .soccer-match-empty {
     padding: 1rem;
     border: 1px dashed var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     opacity: .8
   }
 
@@ -559,12 +559,12 @@
     }
 
     .event-type {
-      font-size: .72rem
+      font-size: var(--text-xs)
     }
 
     .timeline time {
       min-width: 2.9rem;
-      font-size: .7rem
+      font-size: var(--text-2xs)
     }
 
     .timeline-heading {

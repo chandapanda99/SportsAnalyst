@@ -942,7 +942,10 @@ def test_game_identity_resolution_preserves_roles_roster_positions_and_saved_evi
     assert len(fallback["plays"][0]["participants"]) == 5
     assert fallback["plays"][0]["participants"][0]["name"] == "Transfer QB"
     assert fallback["plays"][0]["participants"][2]["name"] is None
-    assert fallback["game_roster"] == []
+    # Without a roster, only athletes with a box-score line remain: they played, but none is a starter or listed.
+    assert fallback["game_roster"] and all(entry["identity_source"] == "ESPN game box score" and entry["played_in_game"]
+                                           and not entry["starter"] and not entry["roster_listed"]
+                                           for entry in fallback["game_roster"])
 
 
 def test_game_scoped_render_context_is_cached_and_refreshes_legacy_saved_geometry(tmp_path, source, monkeypatch):
@@ -1349,3 +1352,87 @@ def test_prepared_seasons_without_defensive_columns_are_rebuilt(tmp_path, source
         key: value for key, value in manifest.coverage.items() if key != "statistics_version"}}))
     application._prepare_cfb(request, "defense-prepare-stale")
     assert 2024 in prepared
+
+
+def _intercepted_game(interceptors):
+    """Iowa State (66) throws; ESPN's play record credits its own receiver with the interception."""
+    teams = [{"homeAway": side, "team": {"id": identity, "displayName": name}}
+             for identity, name, side in (("66", "Iowa State", "away"), ("2294", "Iowa", "home"))]
+    def athletes(rows):
+        return [{"athlete": {"id": identity, "displayName": name}, "stats": stats} for identity, name, stats in rows]
+
+    summary = {"header": {"competitions": [{"competitors": teams}]}, "boxscore": {"players": [
+        {"team": {"id": "66"}, "statistics": [
+            {"name": "receiving", "labels": ["REC", "YDS"], "athletes": athletes([("4877706", "Jayden Higgins", ["8", "68"])])},
+            {"name": "defensive", "labels": ["TOT"], "athletes": athletes([("4923035", "Brendan Black", ["1"])])}]},
+        {"team": {"id": "2294"}, "statistics": [
+            {"name": "interceptions", "labels": ["INT", "YDS", "TD"], "athletes": athletes(interceptors)}]}]}}
+    play = {"id": "1", "type": {"text": "Pass Interception Return"},
+            "text": "Rocco Becht pass intercepted Jayden Higgins return for 5 yds to the ISU 12",
+            "start": {"team": {"id": "66"}, "yardsToEndzone": 38}, "end": {"team": {"id": "2294"}},
+            "participants": [{"athlete": {"id": identity}, "type": role} for identity, role in (
+                ("4801299", "passer"), ("4877706", "passDefender"), ("4877706", "returner"), ("4923035", "tackler"))]}
+    return play, summary
+
+
+def test_interception_credited_to_the_offense_is_flagged_with_the_box_score_interceptor():
+    from sports_analyst.datasets.cfb_plays import recorded_play
+    from sports_analyst.plugins.cfb_evidence import defender_credits, defensive_playmakers
+
+    play, summary = _intercepted_game([("4565350", "Jay Higgins IV", ["1", "5", "0"])])
+    row = recorded_play(play, summary)
+    teams = {actor["role"]: actor["team_id"] for actor in row["participants"]}
+    # The tackler brought down the returner, so he is on the team that threw the pass, not on the defense.
+    assert teams["tackler"] == "66"
+    # The recorded athlete keeps his own school; nothing rewrites the recorded ID.
+    assert teams["passDefender"] == "66" and teams["returner"] == "66"
+    [conflict] = json.loads(row["attribution_conflicts_json"])
+    assert conflict["recorded_athlete_id"] == "4877706" and conflict["box_score_athlete_id"] == "4565350"
+    assert conflict["box_score_name"] == "Jay Higgins IV" and conflict["box_score_team_id"] == "2294"
+    assert defensive_playmakers(row) == [{"role": "Interception", "players": ["Jay Higgins IV"]}]
+    assert "Interception" in defender_credits(row)["4565350"]["roles"] and "4877706" not in defender_credits(row)
+    # With several interceptors, the surname in the play record (suffixes ignored) picks the box-score credit.
+    play, summary = _intercepted_game([("1", "Other Back", ["1", "30", "0"]), ("4565350", "Jay Higgins IV", ["1", "5", "0"])])
+    assert json.loads(recorded_play(play, summary)["attribution_conflicts_json"])[0]["box_score_name"] == "Jay Higgins IV"
+    # Ambiguous box scores are flagged without naming anyone.
+    play, summary = _intercepted_game([("1", "Back One", ["1", "5", "0"]), ("2", "Back Two", ["1", "5", "0"])])
+    [conflict] = json.loads(recorded_play(play, summary)["attribution_conflicts_json"])
+    assert conflict["box_score_athlete_id"] is None and defensive_playmakers(recorded_play(play, summary)) == []
+    # A correctly credited defender raises no conflict.
+    play, summary = _intercepted_game([("4565350", "Jay Higgins IV", ["1", "5", "0"])])
+    play["participants"][1:3] = [{"athlete": {"id": "4565350"}, "type": "passDefender"},
+                                 {"athlete": {"id": "4565350"}, "type": "returner"}]
+    assert recorded_play(play, summary)["attribution_conflicts_json"] is None
+
+
+def test_box_score_players_are_named_as_played_in_the_game_with_unverified_roster_positions(tmp_path):
+    from sports_analyst.datasets.cfb_identity import game_directory
+
+    _, summary = _intercepted_game([("4565350", "Jay Higgins IV", ["1", "5", "0"])])
+
+    class Source:
+        concurrency = 2
+
+        def get(self, url, ttl=None):
+            if url.endswith("/competitors/2294/roster"):
+                return {"team": {"$ref": f"{CORE}/seasons/2024/teams/2294"}, "entries": [
+                    {"valid": False, "athlete": {"$ref": f"{CORE}/seasons/2024/athletes/4565350"}, "jersey": "15",
+                     "position": {"$ref": f"{CORE}/positions/31"}},
+                    # Listed on an unverified roster without a box-score line: never named.
+                    {"valid": False, "athlete": {"$ref": f"{CORE}/seasons/2024/athletes/7"}, "displayName": "Bench Player",
+                     "position": {"$ref": f"{CORE}/positions/31"}}]}
+            if url.endswith("/competitors/66/roster"):
+                return {"team": {"$ref": f"{CORE}/seasons/2024/teams/66"}, "entries": []}
+            if "/positions/31" in url:
+                return {"id": "31", "abbreviation": "LB"}
+            return {}
+
+    _, roster = game_directory(Source(), "401628464", 2024, summary, [], 3600)
+    by_id = {entry["athlete_id"]: entry for entry in roster}
+    assert "7" not in by_id
+    higgins = by_id["4565350"]
+    assert higgins["played_in_game"] and not higgins["starter"] and higgins["roster_listed"]
+    assert higgins["position"] == "LB" and higgins["jersey"] == "15" and higgins["identity_source"] == "ESPN game box score"
+    # Box-score athletes keep their own game team, and more box-score involvement ranks higher.
+    assert by_id["4877706"]["team_id"] == "66" and by_id["4877706"]["box_score_activity"] == 8
+    assert not by_id["4877706"]["roster_listed"] and by_id["4877706"]["position"] is None

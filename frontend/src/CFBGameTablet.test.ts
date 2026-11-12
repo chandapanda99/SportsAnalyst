@@ -148,15 +148,13 @@ it('labels additional recorded roles and keeps optional starter projections sepa
     {athlete_id: '55', team_id: '1', name: 'Did Not Play', position: 'T', starter: true, did_not_play: true},
     {athlete_id: '56', team_id: '3', name: 'Other School', position: 'T', starter: true}];
   const view = render(CFBPlayTablet, {event: base, teams: detail().teams, roster});
-  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
-  expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
-  expect(document.querySelectorAll('.field-player.projected')).toHaveLength(0);
+  // Game players fill unrecorded slots by default; there is no toggle to find.
+  expect(screen.queryByRole('checkbox')).toBeNull();
   expect(screen.getByRole('button', {name: /Recorded Tight End · TE/})).toBeTruthy();
   expect(screen.getByRole('button', {name: /Recorded Edge · EDGE/})).toBeTruthy();
   expect(screen.getByRole('button', {name: /Recorded Pass Defender · DB/})).toBeTruthy();
   expect(screen.getByRole('button', {name: /Recorded Forced Fumble · S/})).toBeTruthy();
   expect(screen.getAllByRole('button', {name: / · N\/A/}).length).toBeGreaterThan(0);
-  await fireEvent.click(screen.getByRole('checkbox', {name: 'Show Projected Starters'}));
   expect(document.querySelectorAll('.field-player')).toHaveLength(22);
   expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
   expect(document.querySelectorAll('.field-player.projected')).toHaveLength(2);
@@ -169,9 +167,41 @@ it('labels additional recorded roles and keeps optional starter projections sepa
   expect(base.participants).toHaveLength(6);
   expect(base.participants?.some(actor => actor.athlete_id === '66')).toBe(false);
   await view.rerender({event: {...base, id: 'no-roster'}, teams: detail().teams, roster: []});
-  expect(screen.queryByRole('checkbox', {name: 'Show Projected Starters'})).toBeNull();
   expect(document.querySelectorAll('.field-player.projected')).toHaveLength(0);
+  expect(document.querySelector('.lineup-note')).toBeNull();
   expect(document.querySelectorAll('.field-player.recorded')).toHaveLength(5);
+});
+
+it('names box-score players as played in this game and flags an interception the box score credits elsewhere', async () => {
+  const base: CFBRecordedPlay = {...detail().plays[0], interception: true, play_type: 'Pass Interception Return',
+    text: 'Passer pass intercepted Logged Receiver return for 5 yds',
+    attribution_conflicts_json: JSON.stringify([{role: 'Interception', source: 'ESPN game box score',
+      basis: 'the only interceptor credited to the defense in the ESPN game box score',
+      recorded_athlete_id: '11', recorded_name: 'Logged Receiver', recorded_team_id: '1',
+      box_score_athlete_id: '40', box_score_name: 'Box Score Linebacker', box_score_team_id: '2'}]),
+    participants: [
+      {athlete_id: '10', name: 'Verified QB', role: 'passer', team_id: '1', position: 'QB'},
+      {athlete_id: '11', name: 'Logged Receiver', role: 'passDefender', team_id: '1', position: 'WR'},
+      {athlete_id: '12', name: 'Offensive Lineman', role: 'tackler', team_id: '1', position: 'OL'}]};
+  const roster = [
+    {athlete_id: '40', team_id: '2', name: 'Box Score Linebacker', position: 'LB', starter: false, played_in_game: true, box_score_activity: 12},
+    {athlete_id: '41', team_id: '2', name: 'Quiet Linebacker', position: 'LB', starter: false, played_in_game: true, box_score_activity: 1},
+    {athlete_id: '42', team_id: '2', name: 'Unplayed Linebacker', position: 'LB', starter: false},
+    {athlete_id: '43', team_id: '2', name: 'No Position', starter: false, played_in_game: true, box_score_activity: 20}];
+  render(CFBPlayTablet, {event: base, teams: detail().teams, roster});
+  const summary = screen.getByRole('region', {name: /defense on this play/});
+  expect(summary.textContent).toContain('Interception: Box Score Linebacker');
+  expect(summary.textContent).not.toContain('Offensive Lineman');
+  expect(screen.getByRole('note').textContent).toMatch(/credits Logged Receiver .*on offense for this play.* credits Box Score Linebacker/);
+  expect(screen.getByText(/Conflicts with the game box score/)).toBeTruthy();
+  expect(document.querySelectorAll('.field-player')).toHaveLength(22);
+  const named = screen.getByRole('button', {name: /Box Score Linebacker · LB · Played in this game, not confirmed on the field for this play/});
+  await fireEvent.focus(named);
+  expect(document.querySelector('.tooltip')?.textContent).toContain('Played in this game, not confirmed on the field for this play');
+  // Only players with a box-score line and a position are named; the most involved fill slots first.
+  expect(screen.queryByRole('button', {name: /Unplayed Linebacker|No Position/})).toBeNull();
+  expect(screen.getByText(/played in this game/, {selector: '.identity-key'})).toBeTruthy();
+  expect(base.participants).toHaveLength(3);
 });
 
 it('opens the cited play directly and shows its selection reason and recorded formation context', async () => {

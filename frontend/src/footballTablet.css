@@ -24,7 +24,7 @@
 
     .football-tablet header h3 {
         margin: 5px 0 0;
-        font-size: 18px
+        font-size: var(--text-lg)
     }
 
     .football-tablet .tablet-actions {
@@ -35,7 +35,7 @@
 
     .football-tablet button {
         border: 1px solid var(--color-border-strong);
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
         background: var(--color-surface-control);
         color: var(--ink);
         cursor: pointer
@@ -44,14 +44,14 @@
     .football-tablet .tablet-actions button {
         width: 32px;
         height: 32px;
-        font-size: 22px;
+        font-size: var(--text-2xl);
         line-height: 1
     }
 
     .football-tablet .situation {
         padding: 11px 20px;
         background: var(--color-surface-raised);
-        font-size: 13px
+        font-size: var(--text-sm)
     }
 
     .football-tablet .situation span {
@@ -76,12 +76,12 @@
     }
 
     .football-tablet .reconstruction-meta strong {
-        font-size: 12px
+        font-size: var(--text-xs)
     }
 
     .football-tablet .reconstruction-meta > div:first-child span {
         color: var(--color-text-tertiary);
-        font-size: 11px
+        font-size: var(--text-2xs)
     }
 
     .football-tablet .source-badges {
@@ -93,14 +93,14 @@
 
     .football-tablet .source-list {
         color: var(--color-text-tertiary);
-        font-size: 11px;
+        font-size: var(--text-2xs);
         text-align: right
     }
 
     .football-tablet .source-badges span {
         padding: 3px 6px;
         border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--line));
-        border-radius: 3px;
+        border-radius: var(--radius-xs);
         color: var(--mint);
         font: 8px var(--font-mono);
         letter-spacing: .06em
@@ -354,7 +354,7 @@
     .football-tablet .event-marker.placement circle { fill: #91dbe4 }
     .football-tablet .special-teams-summary {padding: 12px 16px; background: #102638; border-top: 1px solid #315063;}
     .football-tablet .special-teams-summary > div {display: flex; gap: 8px 24px; flex-wrap: wrap; margin-top: 8px;}
-    .football-tablet .special-teams-summary p {font-size: 12px; color: var(--text-muted); margin: 8px 0 0;}
+    .football-tablet .special-teams-summary p {font-size: var(--text-xs); color: var(--text-muted); margin: 8px 0 0;}
 
     .football-tablet .event-tooltip {
         opacity: 0;
@@ -468,7 +468,7 @@
         justify-content: space-between;
         gap: 8px;
         color: var(--muted);
-        font-size: 11px;
+        font-size: var(--text-2xs);
         text-transform: uppercase
     }
 
@@ -482,7 +482,7 @@
     .football-tablet dd {
         margin: 4px 0 0;
         color: var(--color-text-secondary);
-        font-size: 13px;
+        font-size: var(--text-sm);
         line-height: 1.45
     }
 
@@ -498,7 +498,7 @@
         margin: 0;
         padding: 9px 12px 0;
         color: var(--color-text-secondary);
-        font-size: 12px;
+        font-size: var(--text-xs);
         letter-spacing: .04em;
         text-transform: uppercase
     }
@@ -538,7 +538,7 @@
     }
 
     .football-tablet .on-field-heading strong {
-        font-size: 13px
+        font-size: var(--text-sm)
     }
 
     .football-tablet .on-field-heading span {
@@ -582,10 +582,10 @@
         align-items: center;
         padding: 5px 7px;
         border: 1px solid var(--color-border-strong);
-        border-radius: 4px;
+        border-radius: var(--radius-xs);
         color: var(--color-text-secondary);
         background: var(--color-surface-panel);
-        font-size: 11px
+        font-size: var(--text-2xs)
     }
 
     .football-tablet .lineup-columns span b {
