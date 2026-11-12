@@ -7,11 +7,19 @@ import math
 import re
 from urllib.parse import urlparse
 
-IDENTITY_VERSION = 3
+IDENTITY_VERSION = 4
 NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
 RETURNER_ROLES = {"returner", "kick_returner", "punt_returner", "kickoff_returner"}
-TACKLE_ROLES = {"tackler", "assisted_by", "assistedby", "tackle_assist"}
-INTERCEPTION_ROLES = {"passdefender", "pass_defender", "interceptor", "interception"}
+TACKLE_ROLES = {"tackler", "assisted_by", "tackle_assist"}
+INTERCEPTION_ROLES = {"pass_defender", "interceptor", "interception"}
+OFFENSE_ROLES = {"passer", "receiver", "rusher"}
+DEFENSE_ROLES = {"tackler", "assisted_by", "tackle_assist", "sacker", "sacked_by",
+                 "sack_assist", "interceptor", "interception", "pass_defender", "forced_by"}
+
+
+def role_key(value):
+    """ESPN sends camelCase roles (passDefender, sackedBy, assistedBy, forcedBy); compare them as snake_case."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value or "")).lower().replace("-", "_").replace(" ", "_")
 
 
 def source_id(value, kind):
@@ -124,9 +132,6 @@ def recorded_play(play, summary, directory=None):
     def opponent(team):
         return next((identity for identity in teams if identity != team), None) if team in teams and len(teams) == 2 else None
 
-    def role_key(value):
-        return str(value or "").lower().replace("-", "_").replace(" ", "_")
-
     # On any return the listed tackler brought down the returner, so the tackler is on the other team.
     # The returner's own athlete ID can be wrong (see interception conflicts), so the returning team is
     # taken from the change of possession, not from that ID.
@@ -145,18 +150,17 @@ def recorded_play(play, summary, directory=None):
         # ESPN can rewrite a historical participant's statistics $ref to their
         # CURRENT school. Even a season-scoped athlete URL is not proof of a stint.
         # Snap possession/role and the game's box score take precedence instead.
-        normalized_role = role.lower().replace("-", "_").replace(" ", "_")
-        offense_roles = {"passer", "receiver", "rusher"}
-        defense_roles = {"tackler", "assisted_by", "tackle_assist", "sacker", "sacked_by",
-                         "sack_assist", "interceptor", "interception", "pass_defender", "forced_by"}
+        normalized_role = role_key(role)
         attributed_team, team_source = known.get("team_id"), known.get("team_source")
-        if possession in teams and normalized_role in offense_roles:
+        # The game's box score or roster is game-scoped. For defensive credits it beats the "not in possession"
+        # guess, which is wrong on every punt, kickoff and turnover return. The guess only fills gaps.
+        game_team = attributed_team if attributed_team in teams else None
+        if possession in teams and normalized_role in OFFENSE_ROLES:
             attributed_team, team_source = possession, "Recorded play possession and offensive role"
-        elif returner_team and opponent(returner_team) and normalized_role in TACKLE_ROLES:
+        elif not game_team and returner_team and opponent(returner_team) and normalized_role in TACKLE_ROLES:
             attributed_team, team_source = opponent(returner_team), "Recorded return: the tackler opposes the returner"
-        elif possession in teams and len(teams) == 2 and normalized_role in defense_roles:
-            attributed_team = next(identity for identity in teams if identity != possession)
-            team_source = "Recorded play possession and defensive role"
+        elif not game_team and opponent(possession) and normalized_role in DEFENSE_ROLES:
+            attributed_team, team_source = opponent(possession), "Recorded play possession and defensive role"
         position_id = source_id(entry.get("position"), "positions")
         position = positions.get(position_id) or (entry.get("position") or {}).get("abbreviation")
         participants.append(

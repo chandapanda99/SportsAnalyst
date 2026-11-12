@@ -2,7 +2,8 @@ import type {CFBAttributionConflict, CFBGameRosterPlayer, CFBRecordedPlay, CFBTe
 import {buildPlaySchematic} from './playSchematic';
 import {resolveSpecialTeams} from './specialTeamsSchematic';
 
-const normalizeRole = (role: string) => role.trim().toLowerCase().replace(/[ -]+/g, '_');
+/** ESPN sends camelCase roles (passDefender, sackedBy, assistedBy, forcedBy); compare them as snake_case. */
+const normalizeRole = (role: string) => role.trim().replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/[ -]+/g, '_');
 const rolePositions: Record<string, string> = {passer: 'QB', receiver: 'WR', rusher: 'RB',
   tackler: 'LB', assisted_by: 'LB', tackle_assist: 'LB', sacker: 'DE', sacked_by: 'DE', sack_assist: 'DE',
   interceptor: 'DB', interception: 'DB', pass_defender: 'DB', forced_by: 'DB'};
@@ -69,8 +70,8 @@ export function collegeAttributionConflicts(event: CFBRecordedPlay): CFBAttribut
   } catch { return []; }
 }
 
-const creditedRoles: Record<string, string> = {sackedBy: 'Sack', forcedBy: 'Forced fumble', recoverer: 'Fumble recovery',
-  passDefender: 'Pass breakup', tackler: 'Tackle', assistedBy: 'Tackle'};
+const creditedRoles: Record<string, string> = {sacked_by: 'Sack', forced_by: 'Forced fumble', recoverer: 'Fumble recovery',
+  pass_defender: 'Pass breakup', tackler: 'Tackle', assisted_by: 'Tackle'};
 const playmakerOrder = ['Interception', 'Sack', 'Forced fumble', 'Fumble recovery', 'Pass breakup', 'Tackle'];
 
 /**
@@ -81,18 +82,19 @@ const playmakerOrder = ['Interception', 'Sack', 'Forced fumble', 'Fumble recover
 export function collegePlaymakers(event: CFBRecordedPlay) {
   const participants = event.participants ?? [];
   const context = collegeProviderContext(event);
-  const offensive = new Set(participants.filter(actor => ['passer', 'rusher', 'receiver', 'fumbler'].includes(actor.role))
+  const offensive = new Set(participants.filter(actor => ['passer', 'rusher', 'receiver', 'fumbler'].includes(normalizeRole(actor.role)))
     .map(actor => actor.athlete_id));
   const intercepted = Boolean(event.interception || context.int);
-  const fumble = Boolean(context.fumble_vec) || participants.some(actor => actor.role === 'fumbler');
+  const fumble = Boolean(context.fumble_vec) || participants.some(actor => normalizeRole(actor.role) === 'fumbler');
   const credits = new Map<string, {name: string; roles: Set<string>}>();
   for (const actor of participants) {
-    const base = creditedRoles[actor.role];
+    const role = normalizeRole(actor.role);
+    const base = creditedRoles[role];
     if (!base || !actor.athlete_id || !actor.name) continue;
     if (actor.team_id ? actor.team_id === event.team_id : offensive.has(actor.athlete_id)) continue;
-    if (actor.role === 'recoverer' && !fumble) continue;
+    if (role === 'recoverer' && !fumble) continue;
     const entry = credits.get(actor.athlete_id) ?? {name: actor.name, roles: new Set<string>()};
-    entry.roles.add(actor.role === 'passDefender' && intercepted ? 'Interception' : base);
+    entry.roles.add(role === 'pass_defender' && intercepted ? 'Interception' : base);
     credits.set(actor.athlete_id, entry);
   }
   // When ESPN logged an offensive player as the interceptor, the game box score's credit is used instead.
@@ -106,7 +108,7 @@ export function collegePlaymakers(event: CFBRecordedPlay) {
   const textInterceptor = typeof context.interception_player_name === 'string' ? context.interception_player_name : '';
   const offenseNames = new Set(participants.filter(actor => offensive.has(actor.athlete_id)).map(actor => actor.name));
   if (intercepted && textInterceptor && !offenseNames.has(textInterceptor)
-      && !participants.some(actor => actor.role === 'passDefender')) {
+      && !participants.some(actor => normalizeRole(actor.role) === 'pass_defender')) {
     credits.set(`text:${textInterceptor}`, {name: textInterceptor, roles: new Set(['Interception'])});
   }
   const named = new Set<string>();

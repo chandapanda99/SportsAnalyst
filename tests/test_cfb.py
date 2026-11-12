@@ -1436,3 +1436,29 @@ def test_box_score_players_are_named_as_played_in_the_game_with_unverified_roste
     # Box-score athletes keep their own game team, and more box-score involvement ranks higher.
     assert by_id["4877706"]["team_id"] == "66" and by_id["4877706"]["box_score_activity"] == 8
     assert not by_id["4877706"]["roster_listed"] and by_id["4877706"]["position"] is None
+
+
+def test_camel_case_defensive_roles_trust_the_box_score_and_only_fall_back_to_possession():
+    from sports_analyst.datasets.cfb_plays import recorded_play
+
+    teams = [{"homeAway": side, "team": {"id": identity, "displayName": identity}} for identity, side in (("1", "away"), ("2", "home"))]
+    summary = {"header": {"competitions": [{"competitors": teams}]}, "boxscore": {"players": [
+        {"team": {"id": "1"}, "statistics": [{"name": "defensive", "labels": ["TOT"], "athletes": [
+            {"athlete": {"id": "31", "displayName": "Punt Coverage"}, "stats": ["1"]}]}]}]}}
+
+    def play(kind, roles, end="1"):
+        return recorded_play({"id": "9", "type": {"text": kind}, "text": kind,
+                              "start": {"team": {"id": "1"}}, "end": {"team": {"id": end}},
+                              "participants": [{"athlete": {"id": athlete}, "type": role} for athlete, role in roles]}, summary)
+
+    def teams_by_role(row):
+        return {actor["role"]: (actor["team_id"], actor["team_source"]) for actor in row["participants"]}
+
+    # Not in the box score: ESPN's camelCase roles still read as defensive credits.
+    sack = teams_by_role(play("Sack", [("10", "passer"), ("40", "sackedBy"), ("41", "assistedBy"), ("42", "forcedBy")]))
+    assert {role: team for role, (team, _) in sack.items()} == {"passer": "1", "sackedBy": "2", "assistedBy": "2", "forcedBy": "2"}
+    assert sack["sackedBy"][1] == "Recorded play possession and defensive role"
+    # On a punt return the coverage player in the box score keeps his own team; an unlisted tackler opposes the returner.
+    punt = teams_by_role(play("Punt Return", [("50", "punter"), ("60", "returner"), ("31", "tackler"), ("61", "assistedBy")], end="2"))
+    assert punt["tackler"] == ("1", "ESPN game box score")
+    assert punt["assistedBy"] == ("1", "Recorded return: the tackler opposes the returner")

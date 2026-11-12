@@ -224,3 +224,18 @@ it('opens the cited play directly and shows its selection reason and recorded fo
   await fireEvent.click(screen.getByRole('button', {name: 'Previous play'}));
   await screen.findByRole('region', {name: /schematic for play p1/});
 });
+
+it('reads ESPN camelCase and snake_case defensive roles alike', async () => {
+  const {adaptCollegePlay, collegePlaymakers} = await import('./cfbSchematic');
+  const teams = [{id: '1', name: 'Offense', color: '#123456'}, {id: '2', name: 'Defense', color: '#654321'}];
+  const play = (roles: string[]): CFBRecordedPlay => ({id: 'sack', team_id: '1', yards_to_goal: 60, pass: true, play_type: 'Sack',
+    participants: [{athlete_id: '10', name: 'Passer', role: 'passer', team_id: '1'},
+      ...roles.map((role, index) => ({athlete_id: `4${index}`, name: `Defender ${index}`, role}))]});
+  for (const roles of [['sackedBy', 'forcedBy', 'passDefender'], ['sacked_by', 'forced_by', 'pass_defender']]) {
+    expect(collegePlaymakers(play(roles))).toEqual(['Sack: Defender 0', 'Forced fumble: Defender 1', 'Pass breakup: Defender 2']);
+    // Without a recorded team or position, the role still places the defender on defense in a schematic slot.
+    const adapted = adaptCollegePlay(play(roles), teams);
+    expect(adapted.visualization.defense_names).toEqual(['Defender 0', 'Defender 1', 'Defender 2']);
+    expect(adapted.visualization.defense_positions).toEqual(['DE', 'DB', 'DB']);
+  }
+});
