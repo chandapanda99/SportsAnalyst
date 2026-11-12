@@ -742,9 +742,16 @@ summary {
     display: flex;
     flex-wrap: wrap;
     gap: .35rem 1.25rem;
-    margin: -.5rem 0 1rem;
-    padding: 0 20px;
+    margin: 0;
+    padding: 0 20px 16px;
+    border-bottom: 1px solid var(--line);
     font-size: var(--text-sm);
+}
+
+/* The legend continues the help text, so the divider sits under the legend instead of between them. */
+.plays > .section-help:has(+ .play-tag-legend) {
+    padding-bottom: 8px;
+    border-bottom: 0;
 }
 
 .play-tag-legend div {
