@@ -209,3 +209,24 @@ it('places trend endpoint labels on the side the line does not cross', () => {
   expect(labels(trend(.011, -.019))).toEqual(['bottom', 'top']);
   expect(labels(trend(-.019, .011))).toEqual(['top', 'bottom']);
 });
+
+it('keeps a rolling-average series separate from single games when theming a line chart', () => {
+  const rows = [1, 2, 3].flatMap(game => [
+    {window: 'Baseline', game, kind: 'Game', value: 100 + game},
+    {window: 'Baseline', game, kind: '5-game average', value: 101},
+    {window: 'Comparison', game, kind: 'Game', value: 104 - game},
+  ]);
+  const specification = {
+    data: {values: rows}, mark: {type: 'line', point: true},
+    encoding: {
+      x: {field: 'game', type: 'quantitative'}, y: {field: 'value', type: 'quantitative'},
+      color: {field: 'window', type: 'nominal'},
+      strokeDash: {field: 'kind', type: 'nominal', scale: {domain: ['Game', '5-game average'], range: [[2, 3], [1, 0]]}},
+    },
+  };
+  const themed = applyTeamChartPalette(specification, 'GSW', 'nba') as any;
+  const series = themed.layer.filter((layer: any) => layer.encoding?.strokeDash);
+  expect(series.length).toBeGreaterThan(0);
+  expect(series.every((layer: any) => layer.encoding.strokeDash.field === 'kind')).toBe(true);
+  expect(() => compile(themed)).not.toThrow();
+});

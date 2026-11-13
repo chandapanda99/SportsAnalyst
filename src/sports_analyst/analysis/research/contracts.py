@@ -169,6 +169,9 @@ def contract(manifest):
         grain, keys = "player_game", tuple(key for key in (game, team, player) if key)
     elif dataset in {"shots", "stats_shots", "understat_shots"}:
         grain, keys = "shot", tuple(key for key in (game, first(("play_id", "id", "action_number"))) if key)
+        if sport == "nba" and dataset == "shots":
+            restrictions.append("ESPN shots repeat play-by-play shooting rows and include free throws (type_text 'Free Throw'); "
+                                "exclude them before field-goal, shot-zone or distance measures")
     elif dataset in {"key_events", "scoring_events"}:
         grain, keys = "recorded_event", tuple(key for key in (game, first(("id",))) if key)
     elif dataset == "open_events" and sport == "soccer":

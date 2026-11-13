@@ -163,7 +163,9 @@ class JoinExecutor:
                 from sports_analyst.plugins.nba_segments import segment_game_ids
 
                 frame = normalize_season_phase(frame)
-                segment = period.segment or {"REG": "regular_season", "POST": "playoffs", "ALL": "full_season"}[request.scope.season_type]
+                # As in the NBA plugin, a full season under REG/POST means that phase only.
+                segment = (period.segment if period.segment not in (None, "full_season") else
+                           {"REG": "regular_season", "POST": "playoffs", "ALL": "full_season"}[request.scope.season_type])
                 completion = next((k for k in ("completed", "status_type_completed", "status_completed") if k in frame.columns), None)
                 if completion:
                     frame = frame.filter(pl.col(completion) == True)  # noqa: E712
@@ -354,7 +356,22 @@ class JoinExecutor:
             ids = [c.team] if c.team else []
         if not ids:
             raise ValueError("No verified base subject attribution; acquire an attributed table")
-        allowed = pl.any_horizontal([pl.col(key).cast(pl.String) == identifier for key in ids])
+        accepted = {identifier}
+        if request.sport == "nba" and not (subject and subject.type == "player"):
+            from sports_analyst.plugins.nba_context import team_spellings
+
+            # ESPN records GS/NY/SA/NO/UTAH; NBA Stats records tricodes. Match every spelling of the franchise.
+            for key in ids:
+                accepted.update(team_spellings(self.scan(manifest, [key]).unique().collect()[key].to_list(), identifier))
+        allowed = pl.any_horizontal([pl.col(key).cast(pl.String).is_in(sorted(accepted)) for key in ids])
+        if request.sport == "nba" and c.grain == "player_game":
+            from sports_analyst.plugins.nba_context import appearance_predicate
+
+            appeared = appearance_predicate(cols)
+            if appeared is not None:
+                # Did-not-play listings are not appearances; per-game measures must not count them.
+                allowed &= appeared
+                fields.update({"did_not_play", "minutes"} & cols)
         fields.update(ids)
         if "season" in cols:
             fields.add("season")

@@ -176,18 +176,42 @@ class ScopedData:
         identity = self.identity_fields(manifest)
         if not identity:
             raise ValueError("Table has no supported subject-attribution field; use a compatible attributed table")
-        predicate = reduce(or_, (pl.col(field).cast(pl.String) == identifier for field in identity))
+        nba = self.request.sport == "nba"
+        accepted = {identifier}
+        if nba and not (subject and subject.type == "player"):
+            from sports_analyst.plugins.nba_context import team_spellings
+
+            # ESPN records GS/NY/SA/NO/UTAH; NBA Stats records tricodes. Match every spelling of the franchise.
+            for field in identity:
+                accepted.update(team_spellings(self._unique(manifest, field), identifier))
+        predicate = reduce(or_, (pl.col(field).cast(pl.String).is_in(sorted(accepted)) for field in identity))
         required = set(identity)
-        if "season_type" in columns and self.request.sport == "nfl" and self.request.scope.season_type != "ALL":
+        attributed = None
+        if nba:
+            from sports_analyst.analysis.research.contracts import contract
+            from sports_analyst.plugins.nba_context import appearance_predicate
+
+            c = contract(manifest)
+            if c.grain == "player_game" and (appeared := appearance_predicate(columns)) is not None:
+                # Did-not-play listings are not appearances; per-game measures must not count them.
+                predicate &= appeared
+                required |= {"did_not_play", "minutes"} & columns
+            if c.game:
+                # NBA schedules resolve season type, named segments and dates to game IDs, as the join executor does.
+                attributed = self.executor.scoped_games(manifest, period)
+            if attributed is not None:
+                predicate &= pl.col(c.game).cast(pl.String).is_in(attributed)
+                required.add(c.game)
+        if attributed is None and "season_type" in columns and self.request.sport == "nfl" and self.request.scope.season_type != "ALL":
             predicate &= pl.col("season_type") == self.request.scope.season_type
             required.add("season_type")
-        elif self.request.scope.season_type != "ALL":
+        elif attributed is None and self.request.scope.season_type != "ALL":
             raise ValueError("This table cannot verify the requested season type; "
                              "use existing sport-specific evidence or an ALL scope")
         if "completed" in columns:
             predicate &= pl.col("completed") == True  # noqa: E712
             required.add("completed")
-        if period.start_date or period.end_date:
+        if attributed is None and (period.start_date or period.end_date):
             date = next((name for name in ("game_date", "date", "game_date_time") if name in columns), None)
             if date is None:
                 raise ValueError("Date window requires an attributed date column")
@@ -196,7 +220,7 @@ class ScopedData:
                 predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) >= str(period.start_date)
             if period.end_date:
                 predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) <= str(period.end_date)
-        elif not self.request.scope.season_range:
+        elif attributed is None and not self.request.scope.season_range:
             if "week" not in columns:
                 raise ValueError("This table cannot establish the requested week/season-segment window")
             if period.segment:
@@ -204,6 +228,11 @@ class ScopedData:
             predicate &= pl.col("week").is_between(*period.weeks)
             required.add("week")
         return predicate, required, identifier
+
+    def _unique(self, manifest, field):
+        """Distinct recorded values of one column from the trusted catalog snapshot."""
+        path = self.app.store.materialize_manifest(manifest).local_path
+        return pl.scan_parquet(path).select(pl.col(field).cast(pl.String)).unique().collect()[field].to_list()
 
     def _collect(self, dataset_id, columns, predicate, row_limit):
         manifest = self.manifests[dataset_id]

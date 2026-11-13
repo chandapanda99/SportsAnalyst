@@ -70,5 +70,35 @@ def evaluation_cases() -> list[EvaluationCase]:
             expected_tools=["benchmark_against_league", "adjust_for_opponents"],
             expected_dimensions=["league_rank", "opponent_context", "offensive_rating"],
         ),
+        EvaluationCase(
+            sport="nba",
+            question="Was Golden State worse on back-to-backs and in clutch time this season?",
+            expected_tools=["compare_time_windows", "analyze_situational_split"],
+            expected_dimensions=["rest", "clutch", "minimum_sample", "field_goal_attempts"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="Did the Knicks' points per shot change because of where they shot or how well they shot?",
+            expected_tools=["compare_shot_profiles", "decompose_metric_change"],
+            expected_dimensions=["shot_mix_effect", "shot_conversion_effect", "zone_fg_pct", "free_throws_excluded"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="How did Oklahoma City's defense change in opponent shooting, forced turnovers and defensive rebounding?",
+            expected_tools=["compare_time_windows", "benchmark_against_league", "find_representative_possessions"],
+            expected_dimensions=["opponent_effective_fg_pct", "forced_turnover_rate", "defensive_rebound_pct", "opponent_possessions"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="Did this player's usage rise after the All-Star break, and did efficiency hold?",
+            expected_tools=["compare_time_windows", "compare_player_usage", "analyze_game_trends"],
+            expected_dimensions=["usage_rate", "true_shooting_pct", "appearances", "trend_pattern"],
+        ),
+        EvaluationCase(
+            sport="nba",
+            question="Which Warriors lineups performed best after the trade deadline?",
+            expected_tools=["analyze_lineup_performance"],
+            expected_dimensions=["rebuilt_lineups", "resolved_periods", "possessions", "net_rating"],
+        ),
     ]
     return nfl_cases + nba_cases

@@ -1,6 +1,6 @@
 [project]
 name = "open-sports-analyst"
-version = "3.2"
+version = "3.3"
 description = "An AI-driven, evidence-bound sports analysis agent"
 readme = "README.md"
 license = "MIT"

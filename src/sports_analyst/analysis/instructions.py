@@ -123,7 +123,19 @@ from aggregate outcomes. Inferred schematic alignments are not observed tracking
 shot mix, conversion, free-throw generation and turnovers. Distinguish percentages from rates and
 efficiency from scoring totals. Plus/minus and five-player lineup ratings are contextual associations,
 not isolated player impact; use possession/minute samples. Separate regular season and playoffs.
-Do not infer defensive assignments, switching, rim protection or shot creation from box scores alone.""",
+Do not infer defensive assignments, switching, rim protection or shot creation from box scores alone.
+Use the sport analyses first: run_sport_analysis repeats the NBA analysis with other metrics or splits
+(home_away, opponent, rest, period, score_state, clutch) and brings franchise matching, opponent rows, league
+ranks, shot-mix accounting and lineup units with it. Clutch time is the last five minutes of the fourth quarter
+or overtime within five points. Period, score-state and clutch splits measure field-goal attempts only.
+Possessions are FGA − ORB + TOV + 0.44 × FTA, averaged with the opponent's estimate; team TOV includes team
+turnovers. Free throws are shooting plays in play-by-play and the ESPN shots package, never field-goal attempts.
+Team and dead-ball rebounds carry no player and are not offensive rebounds. Player box scores list
+did-not-play rows; per-game rates count appearances only. ESPN team codes are GS, NY, SA, NO, UTAH and WSH;
+NBA Stats uses tricodes and its own game and player IDs, so join them only through the crosswalk.
+Seasons are labelled by the year they end. ESPN files the NBA Cup final as a regular-season game; NBA Stats
+does not count it. For within-season evolution, compare game blocks or calendar months from recorded game
+dates with qualifying game counts; a single hot or cold stretch is not a trend.""",
     "soccer": """Soccer: separate results from performance, chance volume from quality, and minutes
 from appearances/starts. Use competition-aware season labels. League points and knockout advancement
 are different outcomes; respect recorded stages, extra time, aggregate ties and shootouts. Do not infer
@@ -179,6 +191,28 @@ SPORT_DOMAIN_GUIDANCE = {
     "is better; say 'allowed fewer points per 100 possessions' or 'held opponents to'. They reflect opponent quality, pace and "
     "shooting luck as well as defensive play. Steals, blocks and defensive rebounds are box-score counts; they do not establish "
     "matchup assignments, switching, rim protection or individual defensive quality.",
+    ("nba", "shooting"): "Shooting: eFG% credits threes at 1.5 field goals; TS% adds free throws, so a gap between them is "
+    "free-throw production. Separate where shots come from (zone share) from how often they go in (zone FG%); the shot-mix "
+    "accounting splits points per field-goal attempt into exactly those two parts. Three-point attempt rate is a share of "
+    "attempts, not a percentage made. Zones come from recorded distances; few attempts in a zone make its percentage noisy.",
+    ("nba", "scoring"): "Scoring: points per game mix minutes, usage and efficiency; check minutes, usage rate and TS% before "
+    "calling a change better scoring. Points per 100 possessions remove pace and playing time but estimate on-court "
+    "possessions from minutes share.",
+    ("nba", "usage"): "Usage: usage rate is the share of team possessions a player ended with a shot, free throws or a "
+    "turnover while on court; it is not efficiency. Minutes are opportunity, not role quality. A usage rise with falling "
+    "efficiency is a trade-off, not a decline in skill.",
+    ("nba", "rebounding"): "Rebounding: counts rise with pace, misses and minutes. Offensive and defensive rebound percentages "
+    "are the share of available rebounds and are the comparable measure; team rebounds are not player rebounds.",
+    ("nba", "playmaking"): "Playmaking: assists depend on teammates making shots; pair assists with assist-to-turnover ratio "
+    "and per-100 rates. Assists do not establish passing quality or shot creation by themselves.",
+    ("nba", "turnovers"): "Turnovers: compare turnover rate per possession, not turnovers per game, when pace or usage changed. "
+    "Team turnovers (shot-clock and similar violations) belong to the team, not a player.",
+    ("nba", "impact"): "Impact: plus/minus and lineup ratings measure the score while a player was on court, including "
+    "teammates and opponents; they are not individual impact. Small possession samples swing widely.",
+    ("nba", "lineups"): "Lineups: units come from the published NBA Stats aggregate when it covers both windows, otherwise they "
+    "are rebuilt from play-by-play substitutions and box-score starters; rebuilt reports state the share of periods resolved, "
+    "and unresolved periods are excluded. Returning, new and departed units are different populations. Treat units under "
+    "about 100 possessions as anecdotes, and say ratings are associations, not player effects.",
     ("soccer", "defense"): "Defense: goals against and xG against describe what opponents produced against this team, so lower "
     "is better; say 'conceded fewer' or 'allowed lower-quality chances'. Compare goals conceded and xG against on the same "
     "covered matches. Conceding fewer goals than xG against is descriptive, not demonstrated goalkeeping or defensive skill. "

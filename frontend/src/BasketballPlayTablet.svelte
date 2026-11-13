@@ -26,18 +26,21 @@
     $: home = visualization?.home_team_abbreviation ?? 'Home';
     $: away = visualization?.away_team_abbreviation ?? 'Away';
     $: eventTeam = visualization?.team_abbreviation ?? play.team ?? '';
+    // A defensive rebound or defensive foul is credited to the defense; the possession belongs to the other team.
+    $: offenseTeam = visualization?.possession_team ?? eventTeam;
     $: teamPalette = teamChartDisplayPalette(eventTeam, 'nba');
+    $: offensePalette = teamChartDisplayPalette(offenseTeam, 'nba');
     $: homePalette = teamChartDisplayPalette(home, 'nba');
     $: awayPalette = teamChartDisplayPalette(away, 'nba');
     $: homeVenuePalette = teamChartPalette(home, 'nba', play.season);
     $: homeLogo = teamLogoUrl(home, 'nba', play.season);
-    $: defenseTeam = eventTeam === home ? away : home;
+    $: defenseTeam = visualization?.defensive_team ?? (offenseTeam === home ? away : home);
     $: defensePalette = teamChartDisplayPalette(defenseTeam, 'nba');
     $: courtPlayers = lineupMarkers(
         visualization?.offense_player_ids, visualization?.defense_player_ids,
         visualization?.offense_names, visualization?.defense_names,
         visualization?.offense_positions, visualization?.defense_positions,
-        eventTeam, defenseTeam, teamPalette, defensePalette,
+        offenseTeam, defenseTeam, offensePalette, defensePalette,
     );
     $: markerOptions = courtPlayers.map(player => ({id: `${player.side}-${player.id}`, label: playerLabel(player)}));
     $: gameDate = formatGameDate(visualization?.game_date);
@@ -201,13 +204,16 @@
                 {#each credits as credit}
                     <div><dt>{credit.label}</dt><dd>{credit.name}</dd></div>
                 {/each}
+                {#if visualization?.possession_team && visualization.possession_team !== eventTeam}
+                    <div><dt>On offense</dt><dd>{visualization.possession_team}</dd></div>
+                {/if}
                 {#if visualization?.possession_number != null}
                     <div><dt>Possession</dt><dd>#{visualization.possession_number}</dd></div>
                 {/if}
             </dl>
             {#if visualization?.offense_player_ids?.length || visualization?.defense_player_ids?.length}
                 <div class="lineups">
-                    <div><strong>Offense · {eventTeam}</strong><span>{offenseLineup}</span></div>
+                    <div><strong>Offense · {offenseTeam}</strong><span>{offenseLineup}</span></div>
                     <div><strong>Defense · {defenseTeam}</strong><span>{defenseLineup}</span></div>
                 </div>
             {/if}

@@ -481,7 +481,9 @@ export function applyTeamChartPalette(specification: Record<string, unknown>, te
     }
     const seriesEncoding = {
         ...encoding,
-        strokeDash: {
+        // A spec that already dashes a second series (single games vs a rolling average) keeps it;
+        // replacing it with the colour field would join both series into one zigzag line.
+        strokeDash: (encoding.strokeDash as Record<string, unknown> | undefined) ?? {
             field: color.field,
             type: 'nominal',
             scale: {range: [[1, 0], [7, 4]]},

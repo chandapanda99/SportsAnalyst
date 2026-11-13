@@ -108,6 +108,20 @@ NBA_ALL_DATASETS = {**NBA_DATASETS, **NBA_LOCAL_ONLY_DATASETS}
 
 NBA_DEFAULT_DATASETS = ["play_by_play", "schedules", "team_boxscores", "player_boxscores"]
 
+# SportsDataverse's NBA Stats loaders take a season's START year (2024 for 2024-25); ESPN loaders and
+# this app label seasons by their END year. Manifests written with the translation carry this marker,
+# so packages fetched before it (one season ahead of their label) are refetched and never analyzed.
+NBA_STATS_START_YEAR_DATASETS = frozenset(name for name, item in NBA_ALL_DATASETS.items() if item.loader.startswith("load_nba_stats_"))
+SEASON_LABEL_MARKER = "end_year_season_label"
+
+
+def loader_season(dataset: str, season: int) -> int:
+    return season - 1 if dataset in NBA_STATS_START_YEAR_DATASETS else season
+
+
+def season_label_verified(manifest: DatasetManifest) -> bool:
+    return manifest.dataset not in NBA_STATS_START_YEAR_DATASETS or bool(manifest.coverage.get(SEASON_LABEL_MARKER))
+
 
 @lru_cache(maxsize=1)
 def nba_live_transport_available() -> bool:
@@ -181,7 +195,7 @@ class SportsDataverseNBAConnector:
                     lambda path, frame: self.manifest_for(path, season, frame, dataset),
                     message="This package does not advertise a published snapshot for the selected season.")
             try:
-                raw = loaders[dataset]([season], return_as_pandas=False)
+                raw = loaders[dataset]([loader_season(dataset, season)], return_as_pandas=False)
             except Exception as error:
                 if not missing_source(error, provider_errors=(SeasonNotFoundError,)):
                     raise
@@ -200,6 +214,16 @@ class SportsDataverseNBAConnector:
             if progress_callback:
                 progress_callback("processing", dataset, season, index, len(work))
             frame = raw if isinstance(raw, pl.DataFrame) else pl.from_pandas(raw)
+            if dataset in NBA_STATS_START_YEAR_DATASETS and "season" in frame.columns:
+                # The published asset stamps its END year; keep it (normalize overwrites season) so research
+                # can verify the season and reuse this package instead of downloading it again.
+                frame = frame.filter(pl.col("season").cast(pl.Int64, strict=False) == season).with_columns(
+                    pl.col("season").cast(pl.Int64, strict=False).alias("source_season"))
+                if frame.is_empty():
+                    path = self.data_dir / f"{dataset}_{season}.parquet"
+                    return index, unavailable_snapshot(path, season,
+                        lambda path, frame: self.manifest_for(path, season, frame, dataset),
+                        message="The published season stamp does not match the requested season.")
             if frame.is_empty():
                 path = self.data_dir / f"{dataset}_{season}.parquet"
                 return index, unavailable_snapshot(path, season,
@@ -338,6 +362,7 @@ class SportsDataverseNBAConnector:
             local_path=str(path.resolve()),
             file_size=stat.st_size,
             modified_ns=stat.st_mtime_ns,
+            coverage={SEASON_LABEL_MARKER: 1} if dataset in NBA_STATS_START_YEAR_DATASETS else {},
         )
 
     def load(self, manifest: DatasetManifest, columns=None, predicate: pl.Expr | None = None) -> pl.DataFrame:

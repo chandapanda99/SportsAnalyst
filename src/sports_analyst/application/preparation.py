@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 
 from sports_analyst.datasets.cfb_source import CFBSource
-from sports_analyst.datasets.nba import NBA_DATASETS
+from sports_analyst.datasets.nba import NBA_DATASETS, season_label_verified
 from sports_analyst.datasets.nfl_catalog import DATASET_MIN_SEASONS, LATEST_SYNCABLE_SEASON
 from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 
@@ -31,6 +31,8 @@ def current_season(sport, competition=None):
 def reusable(manifest, current):
     if manifest.availability != "available":
         return False
+    if manifest.sport == "nba" and not season_label_verified(manifest):
+        return False  # an NBA Stats package fetched one season ahead of its label
     coverage = manifest.coverage
     expected = coverage.get("expected_intervals", coverage.get("expected_matches", 0))
     completed = coverage.get("fetched_intervals", coverage.get("completed_matches", expected))
@@ -56,12 +58,17 @@ def requirements(request, first_install):
             optional.add("injuries")
         return required, optional
     if request.sport == "nba":
-        required = {"play_by_play", "schedules", "player_boxscores" if player else "team_boxscores"}
+        # Player usage and per-100 rates read the team's same-game row, so team box scores are always needed.
+        required = {"play_by_play", "schedules", "team_boxscores", *({"player_boxscores"} if player else set())}
+        optional: set[str] = set()
         if request.analysis_domain == "shooting":
-            required.add("shots")
+            # Official NBA Stats distances refine shot zones when they cover every game; play-by-play is the fallback.
+            optional.update({"stats_shots", "stats_schedules"})
         if request.analysis_domain in {"lineups", "impact"}:
-            required.add("lineups")
-        return required, set()
+            # Starters let lineups be rebuilt from play-by-play; the published aggregate is used when it covers the scope.
+            required.add("player_boxscores")
+            optional.add("lineups")
+        return required, optional - required
     from sports_analyst.plugins.soccer import DEFAULTS as SOCCER_DEFAULTS
     from sports_analyst.plugins.soccer import METRICS as SOCCER_METRICS
     required = {"play_by_play"}

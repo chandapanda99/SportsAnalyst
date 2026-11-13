@@ -437,6 +437,21 @@ def _fallback_synthesis(
         claims.append(Claim(claim_id=stable_id("claim", {"accounting": largest.evidence_id}), claim_type=ClaimType.MEASURED,
             statement=f"{largest.label} contributed {float(largest.value):+.4f} EPA/play to the change; categories reconcile to the overall change.",
             evidence_ids=[item.evidence_id for item in accounting], confidence=_sample_confidence(largest.sample_size)))
+    shot_mix = next((item for item in aggregate if item.metric == "shot_mix_effect"), None)
+    shot_making = next((item for item in aggregate if item.metric == "shot_conversion_effect"), None)
+    if shot_mix and shot_making:
+        larger = "shot-making" if abs(float(shot_making.value)) >= abs(float(shot_mix.value)) else "shot mix"
+        summary += (f" Of the change in points per field-goal attempt, shot mix accounted for {float(shot_mix.value):+.3f} and "
+                    f"shot-making for {float(shot_making.value):+.3f}; {larger} was the larger part. "
+                    "This is descriptive accounting, not a causal estimate.")
+        claims.append(Claim(claim_id=stable_id("claim", {"shot_accounting": shot_making.evidence_id}), claim_type=ClaimType.MEASURED,
+            statement=(f"Shot mix contributed {float(shot_mix.value):+.3f} and shot-making {float(shot_making.value):+.3f} points per "
+                       "field-goal attempt; the two parts reconcile to the overall change."),
+            evidence_ids=[shot_mix.evidence_id, shot_making.evidence_id], confidence=_sample_confidence(shot_making.sample_size)))
+    pattern = next((item for item in aggregate if item.metric == f"{primary.metric}_trend_pattern"), None)
+    if pattern and pattern.context.get("classification"):
+        summary += (f" Across aligned blocks of games the change was {pattern.context['classification']} "
+                    f"({float(pattern.value):.0%} of blocks moved with it).")
     seasonal = [item for item in aggregate if item.metric == f"seasonal_{primary.metric}" and item.value is not None]
     if analysis_seasons and seasonal:
         def season_year(item):

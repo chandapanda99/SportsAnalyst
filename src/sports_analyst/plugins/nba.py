@@ -17,7 +17,7 @@ import polars as pl
 
 from sports_analyst.analysis.evidence import EvidenceCandidate, select_diverse_evidence
 from sports_analyst.analysis.ordering import unique_records
-from sports_analyst.datasets.nba import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available
+from sports_analyst.datasets.nba import NBA_ALL_DATASETS, NBA_DATASETS, nba_live_transport_available, season_label_verified
 from sports_analyst.models import (
     AggregateEvidence,
     AnalysisOptions,
@@ -38,6 +38,27 @@ from sports_analyst.models import (
     ToolExecutionRecord,
     stable_id,
 )
+from sports_analyst.plugins.nba_context import (
+    ADMIN_EVENTS,
+    GAME_SPLITS,
+    PLAY_SPLITS,
+    ROLLING_GAMES,
+    attach_game_splits,
+    canonical_column,
+    change_point,
+    filter_team,
+    franchise_rows,
+    identifier,
+    rolling_mean,
+    shot_attempts,
+    shot_mix_accounting,
+    situational_splits,
+    stats_shot_attempts,
+    trend_pattern,
+    with_opponents,
+    zone_profile,
+)
+from sports_analyst.plugins.nba_lineups import reconstruct_lineups
 from sports_analyst.plugins.nba_segments import NBA_SEGMENTS, available_segments, segment_game_ids
 from sports_analyst.presentation.charts import metric_row_comparison_spec
 
@@ -160,7 +181,9 @@ def _player_directory(
     packages: list[str] = []
     crosswalk = supplemental.get("player_crosswalk", {}).get(season, pl.DataFrame())
     if not crosswalk.is_empty():
-        for row in crosswalk.iter_rows(named=True):
+        wanted = [name for name in ("player_name", "espn_full_name", "nba_player_name", "nba_position", "espn_position",
+                                    "nba_player_id", "espn_athlete_id") if name in crosswalk.columns]
+        for row in crosswalk.select(wanted).unique(maintain_order=True).iter_rows(named=True):
             name = str(row.get("player_name") or row.get("espn_full_name") or row.get("nba_player_name") or "").strip()
             position = str(row.get("nba_position") or row.get("espn_position") or "").strip()
             if not name:
@@ -174,7 +197,8 @@ def _player_directory(
     stats_rosters = supplemental.get("stats_game_rosters", {}).get(season, pl.DataFrame())
     if not stats_rosters.is_empty():
         before = len(directory)
-        for row in stats_rosters.iter_rows(named=True):
+        wanted = [name for name in ("player_id", "first_name", "last_name") if name in stats_rosters.columns]
+        for row in stats_rosters.select(wanted).unique(maintain_order=True).iter_rows(named=True):
             identifier = str(row.get("player_id") or "").strip()
             name = " ".join(
                 part for part in (str(row.get("first_name") or "").strip(), str(row.get("last_name") or "").strip()) if part
@@ -186,7 +210,9 @@ def _player_directory(
     rosters = supplemental.get("game_rosters", {}).get(season, pl.DataFrame())
     if not rosters.is_empty():
         before = len(directory)
-        for row in rosters.iter_rows(named=True):
+        wanted = [name for name in ("athlete_id", "player_id", "athlete_display_name", "player_name", "athlete_position")
+                  if name in rosters.columns]
+        for row in rosters.select(wanted).unique(maintain_order=True).iter_rows(named=True):
             identifier = str(row.get("athlete_id") or row.get("player_id") or "").strip()
             name = str(row.get("athlete_display_name") or row.get("player_name") or "").strip()
             position = str(row.get("athlete_position") or "").strip()
@@ -299,6 +325,15 @@ METRICS: dict[str, tuple[str, str, str, list[str], str, bool | None]] = {
     "points_per_game": ("Points per game", "Scoring", "offense", ["team", "player"], "Average points scored per game.", True),
     "offensive_rating": ("Offensive rating", "Efficiency", "offense", ["team"], "Points scored per 100 estimated possessions.", True),
     "defensive_rating": ("Defensive rating", "Efficiency", "defense", ["team"], "Points allowed per 100 estimated possessions.", False),
+    "net_rating": ("Net rating", "Efficiency", "defense", ["team"], "Offensive rating minus defensive rating.", True),
+    "opponent_points_per_game": ("Opponent points per game", "Scoring allowed", "defense", ["team"],
+                                 "Average points allowed per game.", False),
+    "opponent_effective_fg_pct": ("Opponent effective field-goal percentage", "Shooting allowed", "defense", ["team"],
+                                  "Opponents' field-goal percentage adjusted for the value of threes.", False),
+    "forced_turnover_rate": ("Forced turnover rate", "Defensive possessions", "defense", ["team"],
+                             "Opponent turnovers, including team turnovers, per estimated possession.", True),
+    "opponent_free_throw_rate": ("Opponent free-throw rate", "Fouling", "defense", ["team"],
+                                 "Opponent free-throw attempts per opponent field-goal attempt.", False),
     "pace": ("Estimated pace", "Tempo", "offense", ["team"], "Estimated possessions per game.", None),
     "win_pct": ("Win percentage", "Results", "offense", ["team"], "Share of games won.", True),
     "field_goal_pct": ("Field-goal percentage", "Shooting", "shooting", ["team", "player"], "Made field goals divided by attempts.", True),
@@ -327,6 +362,8 @@ METRICS: dict[str, tuple[str, str, str, list[str], str, bool | None]] = {
         "Share of field-goal attempts taken from three.",
         None,
     ),
+    "free_throw_rate": ("Free-throw rate", "Shot profile", "shooting", ["team", "player"],
+                        "Free-throw attempts per field-goal attempt.", True),
     "assists_per_game": ("Assists per game", "Playmaking", "playmaking", ["team", "player"], "Average assists per game.", True),
     "assist_turnover_ratio": (
         "Assist-to-turnover ratio",
@@ -345,10 +382,22 @@ METRICS: dict[str, tuple[str, str, str, list[str], str, bool | None]] = {
         "Average offensive rebounds per game.",
         True,
     ),
+    "offensive_rebound_pct": ("Offensive rebound percentage", "Rebounding", "rebounding", ["team"],
+                              "Share of available offensive rebounds collected: ORB / (ORB + opponent DRB).", True),
+    "defensive_rebound_pct": ("Defensive rebound percentage", "Rebounding", "rebounding", ["team"],
+                              "Share of available defensive rebounds collected: DRB / (DRB + opponent ORB).", True),
     "turnovers_per_game": ("Turnovers per game", "Ball security", "turnovers", ["team", "player"], "Average turnovers per game.", False),
     "turnover_rate": ("Turnover rate", "Ball security", "turnovers", ["team"], "Turnovers per estimated possession.", False),
     "minutes_per_game": ("Minutes per game", "Usage", "usage", ["player"], "Average minutes played.", None),
     "usage_proxy": ("Usage proxy", "Usage", "usage", ["player"], "Shooting attempts, free throws, and turnovers per minute.", None),
+    "usage_rate": ("Usage rate", "Usage", "usage", ["player"],
+                   "Share of team possessions the player used (FGA + 0.44 × FTA + TOV) while on court.", None),
+    "points_per_100": ("Points per 100 possessions", "Scoring", "scoring", ["player"],
+                       "Points per 100 team possessions while the player was on court (minutes-share estimate).", True),
+    "assists_per_100": ("Assists per 100 possessions", "Playmaking", "playmaking", ["player"],
+                        "Assists per 100 team possessions while the player was on court (minutes-share estimate).", True),
+    "rebounds_per_100": ("Rebounds per 100 possessions", "Rebounding", "rebounding", ["player"],
+                         "Rebounds per 100 team possessions while the player was on court (minutes-share estimate).", True),
     "plus_minus_per_game": ("Plus/minus per game", "Impact", "impact", ["player"], "Average recorded box-score plus/minus.", True),
     "lineup_net_rating": (
         "Lineup net rating",
@@ -378,14 +427,14 @@ METRICS: dict[str, tuple[str, str, str, list[str], str, bool | None]] = {
 
 DEFAULTS = {
     "offense": ["points_per_game", "offensive_rating", "effective_fg_pct", "turnover_rate"],
-    "defense": ["defensive_rating", "win_pct"],
+    "defense": ["defensive_rating", "opponent_effective_fg_pct", "forced_turnover_rate", "win_pct"],
     "shooting": ["effective_fg_pct", "true_shooting_pct", "three_point_rate"],
     "playmaking": ["assists_per_game", "assist_turnover_ratio"],
     "rebounding": ["rebounds_per_game", "offensive_rebounds_per_game"],
     "turnovers": ["turnovers_per_game", "turnover_rate"],
     "lineups": ["lineup_net_rating", "lineup_off_rating", "lineup_def_rating"],
     "scoring": ["points_per_game", "true_shooting_pct"],
-    "usage": ["minutes_per_game", "usage_proxy"],
+    "usage": ["minutes_per_game", "usage_rate"],
     "impact": ["plus_minus_per_game", "lineup_net_rating"],
 }
 
@@ -401,6 +450,21 @@ DOMAINS = [
     {"value": "impact", "label": "Impact", "description": "Box plus/minus and lineup context.", "subject_type": "player"},
     {"value": "lineups", "label": "Lineups", "description": "Five-player-unit performance.", "subject_type": "both"},
 ]
+SPLIT_DIMENSIONS = {
+    "home_away": ("Home / away", "Compare venue context."),
+    "opponent": ("Opponent", "Compare performance by opponent (three or more games against them in each window)."),
+    "rest": ("Rest", "Compare back-to-backs, one day of rest, and two or more days of rest."),
+    "period": ("Period", "Compare field-goal efficiency by quarter or overtime."),
+    "score_state": ("Score state", "Compare field-goal efficiency while leading, tied, or trailing before the shot."),
+    "clutch": ("Clutch time", "Last five minutes of the fourth quarter or overtime with the score within five points."),
+}
+# Shot-based splits need play-by-play only; game splits need box scores. Both stay cheap.
+DEFAULT_SPLITS = ["home_away", "rest"]
+DEFAULT_SPLITS_BY_DOMAIN = {"shooting": ["home_away", "rest", "score_state"], "scoring": ["home_away", "rest", "score_state"],
+                            "defense": ["home_away", "rest", "score_state"]}
+PER_100 = {"points_per_100": "points", "assists_per_100": "assists", "rebounds_per_100": "rebounds"}
+OPPONENT_METRICS = {"opponent_effective_fg_pct", "forced_turnover_rate", "opponent_free_throw_rate",
+                    "offensive_rebound_pct", "defensive_rebound_pct"}
 
 
 @dataclass
@@ -441,26 +505,118 @@ def _sum(frame: pl.DataFrame, column: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def _possessions(frame: pl.DataFrame) -> float | None:
-    required = {"field_goals_attempted", "offensive_rebounds", "turnovers", "free_throws_attempted"}
-    if not required <= set(frame.columns):
+def _with_team_context(rows: pl.DataFrame, supplemental: dict[str, dict[int, pl.DataFrame]], season: int) -> pl.DataFrame:
+    """Attach the player's team same-game totals (``tm_*``): minutes from every teammate's row, and box-score
+    attempts, turnovers and possessions from the team row with its opponent. Missing context stays null."""
+    if rows.is_empty() or "game_id" not in rows.columns or "team_abbreviation" not in rows.columns:
+        return rows
+    rows = canonical_column(rows.with_columns(pl.col("game_id").cast(pl.String)), "team_abbreviation", "_team")
+    players = supplemental.get("player_boxscores", {}).get(season, pl.DataFrame())
+    if {"game_id", "team_abbreviation", "minutes"} <= set(players.columns):
+        minutes = (canonical_column(players.with_columns(pl.col("game_id").cast(pl.String)), "team_abbreviation", "_team")
+                   .group_by(["game_id", "_team"]).agg(_numeric(players, "minutes").sum().alias("tm_minutes")))
+        rows = rows.join(minutes, on=["game_id", "_team"], how="left")
+    teams = with_opponents(franchise_rows(supplemental.get("team_boxscores", {}).get(season, pl.DataFrame())))
+    turnovers = _turnover_column(teams)
+    possessions = _possession_expr(teams)
+    if turnovers and possessions is not None and {"game_id", "team_abbreviation"} <= set(teams.columns):
+        opponent = _possession_expr(teams, "opp_")
+        estimate = possessions if opponent is None else pl.when(opponent.is_not_null()).then(0.5 * (possessions + opponent)).otherwise(
+            possessions)
+        context = canonical_column(teams.with_columns(pl.col("game_id").cast(pl.String)), "team_abbreviation", "_team").select(
+            "game_id", "_team", _numeric(teams, "field_goals_attempted").alias("tm_field_goals_attempted"),
+            _numeric(teams, "free_throws_attempted").alias("tm_free_throws_attempted"), _numeric(teams, turnovers).alias("tm_turnovers"),
+            estimate.alias("tm_possessions")).unique(["game_id", "_team"], keep="first")
+        rows = rows.join(context, on=["game_id", "_team"], how="left")
+    return rows.drop("_team")
+
+
+def _turnover_column(frame: pl.DataFrame, prefix: str = "") -> str | None:
+    """Team rows record player turnovers and team turnovers separately; possessions need both."""
+    return next((f"{prefix}{name}" for name in ("total_turnovers", "turnovers", "team_turnovers") if f"{prefix}{name}" in frame.columns),
+                None)
+
+
+def _possession_expr(frame: pl.DataFrame, prefix: str = "") -> pl.Expr | None:
+    turnovers = _turnover_column(frame, prefix)
+    names = [f"{prefix}field_goals_attempted", f"{prefix}offensive_rebounds", f"{prefix}free_throws_attempted"]
+    if turnovers is None or not set(names) <= set(frame.columns):
         return None
-    value = frame.select(
-        (
-                _numeric(frame, "field_goals_attempted")
-                - _numeric(frame, "offensive_rebounds")
-                + _numeric(frame, "turnovers")
-                + 0.44 * _numeric(frame, "free_throws_attempted")
-        ).sum()
-    ).item()
+    return (_numeric(frame, names[0]) - _numeric(frame, names[1]) + _numeric(frame, turnovers) + 0.44 * _numeric(frame, names[2]))
+
+
+def _possessions(frame: pl.DataFrame) -> float | None:
+    """Box-score possession estimate, averaged with the opponent's estimate wherever its row is recorded."""
+    own = _possession_expr(frame)
+    if own is None:
+        return None
+    opponent = _possession_expr(frame, "opp_")
+    estimate = own if opponent is None else pl.when(opponent.is_not_null()).then(0.5 * (own + opponent)).otherwise(own)
+    value = frame.select(estimate.sum()).item()
     return float(value) if value is not None else None
+
+
+def _complete(frame: pl.DataFrame, columns: Iterable[str]) -> pl.DataFrame | None:
+    """Rows where every named field is recorded; missing opponent data is not zero."""
+    columns = list(columns)
+    if not set(columns) <= set(frame.columns):
+        return None
+    return frame.filter(pl.all_horizontal(_numeric(frame, column).is_not_null() for column in columns))
 
 
 def _metric(frame: pl.DataFrame, name: str, subject_type: str) -> float | None:
     games = frame.get_column("game_id").n_unique() if "game_id" in frame.columns else frame.height
     points_col = "team_score" if subject_type == "team" else "points"
     rebound_col = "total_rebounds" if subject_type == "team" else "rebounds"
-    turnover_col = "turnovers" if "turnovers" in frame.columns else "team_turnovers"
+    turnover_col = (_turnover_column(frame) if subject_type == "team" else "turnovers") or "turnovers"
+    if name == "net_rating":
+        offense, defense = _metric(frame, "offensive_rating", subject_type), _metric(frame, "defensive_rating", subject_type)
+        return offense - defense if offense is not None and defense is not None else None
+    if name == "opponent_points_per_game":
+        allowed = _sum(frame, "opponent_team_score")
+        return allowed / games if games and allowed is not None else None
+    if name in OPPONENT_METRICS:
+        opponent_turnovers = _turnover_column(frame, "opp_") or "opp_turnovers"
+        fields = {
+            "opponent_effective_fg_pct": ["opp_field_goals_made", "opp_three_point_field_goals_made", "opp_field_goals_attempted"],
+            "forced_turnover_rate": [opponent_turnovers, "opp_field_goals_attempted", "opp_offensive_rebounds",
+                                     "opp_free_throws_attempted"],
+            "opponent_free_throw_rate": ["opp_free_throws_attempted", "opp_field_goals_attempted"],
+            "offensive_rebound_pct": ["offensive_rebounds", "opp_defensive_rebounds"],
+            "defensive_rebound_pct": ["defensive_rebounds", "opp_offensive_rebounds"],
+        }[name]
+        rows = _complete(frame, fields)
+        if rows is None or rows.is_empty():
+            return None
+        if name == "opponent_effective_fg_pct":
+            attempts = _sum(rows, fields[2]) or 0
+            return ((_sum(rows, fields[0]) or 0) + 0.5 * (_sum(rows, fields[1]) or 0)) / attempts if attempts else None
+        if name == "forced_turnover_rate":
+            possessions = _possessions(rows)
+            return (_sum(rows, fields[0]) or 0) / possessions if possessions else None
+        if name == "opponent_free_throw_rate":
+            return _ratio(rows, *fields)
+        own, other = _sum(rows, fields[0]) or 0, _sum(rows, fields[1]) or 0
+        return own / (own + other) if own + other else None
+    if name == "usage_rate":
+        fields = ["field_goals_attempted", "free_throws_attempted", "turnovers", "minutes", "tm_minutes",
+                  "tm_field_goals_attempted", "tm_free_throws_attempted", "tm_turnovers"]
+        rows = _complete(frame, fields)
+        if rows is None or rows.is_empty():
+            return None
+        total = {field: _sum(rows, field) or 0 for field in fields}
+        player = total["field_goals_attempted"] + 0.44 * total["free_throws_attempted"] + total["turnovers"]
+        team = total["tm_field_goals_attempted"] + 0.44 * total["tm_free_throws_attempted"] + total["tm_turnovers"]
+        return 100 * player * (total["tm_minutes"] / 5) / (total["minutes"] * team) if total["minutes"] and team else None
+    if name in PER_100:
+        rows = _complete(frame, [PER_100[name], "minutes", "tm_minutes", "tm_possessions"])
+        if rows is None or rows.is_empty():
+            return None
+        share = _numeric(rows, "minutes") / (_numeric(rows, "tm_minutes") / 5)
+        on_court = rows.select((_numeric(rows, "tm_possessions") * share).sum()).item()
+        return 100 * (_sum(rows, PER_100[name]) or 0) / on_court if on_court else None
+    if name == "free_throw_rate":
+        return _ratio(frame, "free_throws_attempted", "field_goals_attempted")
     if name == "points_per_game":
         points = _sum(frame, points_col)
         return points / games if games and points is not None else None
@@ -547,7 +703,9 @@ def _effective_segment(segment: str, season_type: str) -> str:
 
 
 def _metric_unit(metric: str) -> str:
-    if metric.startswith("lineup_") or metric in {"offensive_rating", "defensive_rating"}:
+    if metric == "usage_rate":
+        return "percent of team possessions"
+    if metric.startswith("lineup_") or metric in PER_100 or metric in {"offensive_rating", "defensive_rating", "net_rating"}:
         return "per 100 possessions"
     if metric.endswith("pct") or "rate" in metric or metric in {"win_pct", "usage_proxy"}:
         return "rate"
@@ -660,12 +818,15 @@ class NBAPlugin:
             "game_rosters",
             "stats_game_rosters",
             "player_crosswalk",
-            "team_boxscores" if request.subject is None or request.subject.type == "team" else "player_boxscores",
+            "team_boxscores",  # player usage and per-100 rates need the team's same-game row
+            *(() if request.subject is None or request.subject.type == "team" else ("player_boxscores",)),
         }
         if request.analysis_domain == "shooting":
-            selected.add("shots")
+            # ESPN's shots package repeats play-by-play rows; NBA Stats shots add recorded distances.
+            selected.update({"stats_shots", "stats_schedules"})
         if request.analysis_domain in {"lineups", "impact"}:
-            selected.update({"lineups", "lineups_v3", "possessions_v3"})
+            # Box-score starters let lineups be rebuilt from play-by-play for any segment.
+            selected.update({"lineups", "lineups_v3", "possessions_v3", "player_boxscores"})
         if request.subject and request.subject.type == "player":
             selected.update({"player_crosswalk", "player_core"})
         return selected
@@ -674,19 +835,27 @@ class NBAPlugin:
         definitions = [
             ("get_analysis_options", "Return valid NBA subjects, datasets, metrics, segments, and splits."),
             ("validate_analysis_scope", "Validate NBA subjects, segments, fields, and sample requirements."),
-            ("compare_time_windows", "Compare team or player metrics across NBA season segments."),
+            ("compare_time_windows", "Compare team or player metrics across NBA season segments, with game-level intervals; "
+                                     "team possessions average both teams' estimates and player rates count appearances only."),
             ("analyze_season_trends", "Measure every NBA season in an inclusive range."),
-            ("analyze_game_trends", "Measure game-by-game trends inside each selected segment."),
+            ("analyze_game_trends", "Game-by-game series with a 5-game rolling average, whether the change holds across "
+                                    "blocks of games (sustained, mixed or outlier-concentrated), and a descriptive change point."),
             ("rank_game_outliers", "Rank games that most exceeded or trailed the segment expectation."),
-            ("benchmark_against_league", "Calculate league ranks and percentiles for NBA metrics."),
-            ("analyze_situational_split", "Compare home/away, opponent, period, score-state, and rest splits."),
-            ("decompose_metric_change", "Separate changes in shot mix from within-category performance."),
-            ("adjust_for_opponents", "Add SportsDataverse opponent-adjusted team context."),
-            ("compare_shot_profiles", "Compare shot volume, location, value, and result."),
+            ("benchmark_against_league", "League rank, percentile and league average for up to four metrics in both windows "
+                                         "(30 franchises; exhibition teams excluded)."),
+            ("analyze_situational_split", "Compare venue, opponent and rest (back-to-backs) from box scores, and quarter, "
+                                          "score state and clutch time from field-goal attempts, with minimum samples."),
+            ("decompose_metric_change", "Split the change in points per field-goal attempt into shot mix and shot-making by "
+                                        "zone; the parts reconcile exactly."),
+            ("adjust_for_opponents", "Describe the strength of the opponents faced in each window versus the league average."),
+            ("compare_shot_profiles", "Zone shares and zone FG% on field-goal attempts (free throws excluded), using NBA Stats "
+                                      "recorded distances when they cover every game."),
             ("compare_possession_outcomes", "Compare scoring, turnover, transition, and second-chance possessions."),
-            ("compare_player_usage", "Compare player minutes, attempts, assists, and turnover involvement."),
-            ("analyze_lineup_performance", "Rank five-player units by minutes and efficiency."),
-            ("find_representative_possessions", "Return supporting and counterexample NBA plays or possessions."),
+            ("compare_player_usage", "Compare player minutes, usage rate, offensive involvement, assists and turnovers."),
+            ("analyze_lineup_performance", "Rank five-player units by possessions and net rating, from the NBA Stats aggregate or "
+                                           "rebuilt from play-by-play substitutions for any segment."),
+            ("find_representative_possessions", "Supporting and counterexample plays; team defense uses the opponent's possessions "
+                                                "scored from the defense's side, and player evidence credits assists, steals and blocks."),
             ("explain_metric", "Return an NBA metric definition, formula, and limitations."),
             ("query_play_by_play", "Run constrained read-only SQL against registered NBA play-by-play views."),
         ]
@@ -711,7 +880,7 @@ class NBAPlugin:
                 category=metadata[1],
                 description=metadata[4],
                 analysis_domain=metadata[2],
-                available_seasons=dataset_seasons["lineups"] if value.startswith("lineup_") else available,
+                available_seasons=available,  # lineups can be rebuilt from play-by-play when the aggregate is absent
                 subject_types=metadata[3],
             )
             for value, metadata in METRICS.items()
@@ -735,22 +904,8 @@ class NBAPlugin:
             analysis_domains=DOMAINS,
             default_metrics_by_domain=DEFAULTS,
             split_dimensions=[
-                SplitDimensionOption(
-                    value="home_away", label="Home / away", description="Compare venue context.", available_seasons=available
-                ),
-                SplitDimensionOption(
-                    value="opponent", label="Opponent", description="Compare performance by opponent.", available_seasons=available
-                ),
-                SplitDimensionOption(
-                    value="period", label="Period", description="Compare play outcomes by quarter or overtime.", available_seasons=available
-                ),
-                SplitDimensionOption(
-                    value="score_state",
-                    label="Score state",
-                    description="Compare while leading, tied, or trailing.",
-                    available_seasons=available,
-                ),
-                SplitDimensionOption(value="rest", label="Rest", description="Compare games by days of rest.", available_seasons=available),
+                SplitDimensionOption(value=value, label=label, description=description, available_seasons=available)
+                for value, (label, description) in SPLIT_DIMENSIONS.items()
             ],
             comparison_windows=[
                 ComparisonWindowOption(
@@ -791,7 +946,27 @@ class NBAPlugin:
             "effective_fg_pct": "(FGM + 0.5 × 3PM) / FGA",
             "true_shooting_pct": "points / (2 × (FGA + 0.44 × FTA))",
             "usage_proxy": "(FGA + 0.44 × FTA + TOV) / minutes",
+            "usage_rate": "100 × (FGA + 0.44 × FTA + TOV) × (team minutes / 5) / (minutes × (team FGA + 0.44 × team FTA + team TOV))",
+            "points_per_100": "100 × points / Σ(team possessions × minutes / (team minutes / 5))",
+            "assists_per_100": "100 × assists / Σ(team possessions × minutes / (team minutes / 5))",
+            "rebounds_per_100": "100 × rebounds / Σ(team possessions × minutes / (team minutes / 5))",
+            "net_rating": "offensive rating − defensive rating",
+            "opponent_points_per_game": "opponent points / games",
+            "opponent_effective_fg_pct": "(opponent FGM + 0.5 × opponent 3PM) / opponent FGA",
+            "forced_turnover_rate": "opponent TOV (including team turnovers) / estimated possessions",
+            "opponent_free_throw_rate": "opponent FTA / opponent FGA",
+            "free_throw_rate": "FTA / FGA",
+            "offensive_rebound_pct": "ORB / (ORB + opponent DRB)",
+            "defensive_rebound_pct": "DRB / (DRB + opponent ORB)",
+            "pace": "estimated possessions / games",
+            "turnover_rate": "TOV (including team turnovers for teams) / estimated possessions",
         }
+        limitations = ["Estimated possessions = FGA − ORB + TOV + 0.44 × FTA, averaged with the opponent's estimate when "
+                       "the opponent's box-score row is recorded."]
+        if normalized in OPPONENT_METRICS:
+            limitations.append("Games without a recorded opponent box-score row are excluded from this metric, not counted as zero.")
+        if "player" in _subjects:
+            limitations.append("Player per-game rates count only games the player appeared in; did-not-play rows are excluded.")
         return MetricDefinition(
             value=normalized,
             label=label,
@@ -801,7 +976,7 @@ class NBAPlugin:
             qualifying_plays="Completed games in the selected NBA season segment and subject scope.",
             interpretation="Compare the baseline and comparison values together with sample size and game context.",
             higher_is_better=higher,
-            limitations=["Possession-based rates use the standard box-score possession estimate unless possession data is synced."],
+            limitations=limitations,
         )
 
     def resolve_team(self, team: str) -> str:
@@ -887,7 +1062,7 @@ class NBAPlugin:
                 tool="find_representative_possessions", arguments={}, purpose="Attach representative and counterexample evidence."
             ),
         ]
-        planned_metrics = request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["offense"])
+        planned_metrics = self._selected_metrics(request)
         lineup_analysis = request.analysis_domain in {"lineups", "impact"} and any(metric.startswith("lineup_") for metric in planned_metrics)
         if not lineup_analysis:
             calls.extend(
@@ -898,6 +1073,11 @@ class NBAPlugin:
             )
         if request.analysis_domain == "shooting":
             calls.append(PlannedToolCall(tool="compare_shot_profiles", arguments={}, purpose="Explain changes in shot mix and conversion."))
+            calls.append(PlannedToolCall(tool="decompose_metric_change", arguments={},
+                                         purpose="Split the points-per-shot change into shot mix and shot-making."))
+        if not lineup_analysis:
+            calls.append(PlannedToolCall(tool="analyze_situational_split", arguments={"splits": self._splits(request)},
+                                         purpose="Compare venue, rest, opponent, and game-state situations in both windows."))
         if request.subject and request.subject.type == "player" and not lineup_analysis:
             calls.append(PlannedToolCall(tool="compare_player_usage", arguments={}, purpose="Separate changes in role from efficiency."))
         if lineup_analysis:
@@ -918,6 +1098,22 @@ class NBAPlugin:
         return AnalysisPlan(plan_id=stable_id("plan", payload), question=request.question, scope=request.scope, calls=calls)
 
     @staticmethod
+    def _selected_metrics(request: AnalysisRequest) -> list[str]:
+        """Requested metrics, or the domain defaults this subject type can measure (turnover rate is team-only)."""
+        if request.metrics:
+            return list(request.metrics)
+        subject_type = request.subject.type if request.subject else "team"
+        defaults = DEFAULTS.get(request.analysis_domain, DEFAULTS["offense"])
+        return [name for name in defaults if subject_type in METRICS[name][3]] or defaults
+
+    @staticmethod
+    def _splits(request: AnalysisRequest) -> list[str]:
+        unknown = sorted(set(request.splits) - set(SPLIT_DIMENSIONS))
+        if unknown:
+            raise ValueError(f"unsupported NBA split dimensions: {unknown}")
+        return list(request.splits) or DEFAULT_SPLITS_BY_DOMAIN.get(request.analysis_domain, DEFAULT_SPLITS)
+
+    @staticmethod
     def _window_frame(
             request: AnalysisRequest,
             season: int,
@@ -930,30 +1126,23 @@ class NBAPlugin:
         if frame.is_empty():
             return frame
         if subject is None or subject.type == "team":
-            team = str(subject.id if subject else request.scope.team)
-            team = TEAM_ALIASES.get(team.upper(), team.upper())
-            conditions = []
-            if "team_abbreviation" in frame.columns:
-                conditions.append(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == team)
-            if "team_id" in frame.columns:
-                conditions.append(pl.col("team_id").cast(pl.String) == str(subject.id if subject else team))
-            if conditions:
-                predicate = conditions[0]
-                for condition in conditions[1:]:
-                    predicate |= condition
-                frame = frame.filter(predicate)
+            # ESPN rows record GS/NY/SA/NO/UTAH; match every spelling of the canonical franchise,
+            # after attaching the opponent's same-game row for possession and four-factor metrics.
+            frame = filter_team(with_opponents(frame), subject.id if subject else request.scope.team)
         else:
-            identifier = str(subject.id)
+            player = str(subject.id)
             if "player_id" in frame.columns:
-                frame = frame.filter(pl.col("player_id").cast(pl.String) == identifier)
+                frame = frame.filter(pl.col("player_id").cast(pl.String) == player)
             elif "athlete_id" in frame.columns:
-                frame = frame.filter(pl.col("athlete_id").cast(pl.String) == identifier)
+                frame = frame.filter(pl.col("athlete_id").cast(pl.String) == player)
             if subject.team_id:
-                team_id = str(subject.team_id).upper()
-                if "team_abbreviation" in frame.columns:
-                    frame = frame.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == team_id)
-                elif "team_id" in frame.columns:
-                    frame = frame.filter(pl.col("team_id").cast(pl.String) == str(subject.team_id))
+                frame = filter_team(frame, subject.team_id)
+            # Did-not-play rows are box-score placeholders; counting them deflates every per-game rate.
+            if "did_not_play" in frame.columns:
+                frame = frame.filter(~pl.col("did_not_play").cast(pl.Boolean, strict=False).fill_null(False))
+            if "minutes" in frame.columns and frame.get_column("minutes").drop_nulls().len():
+                frame = frame.filter(_numeric(frame, "minutes").fill_null(0) > 0)
+            frame = _with_team_context(frame, supplemental, season)
         segment = _effective_segment(segment, request.scope.season_type)
         schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())
         game_ids = segment_game_ids(schedule, season, segment)
@@ -973,8 +1162,14 @@ class NBAPlugin:
             supplemental: dict[str, dict[int, pl.DataFrame]] | None = None,
             supplemental_manifests: dict[str, dict[int, DatasetManifest]] | None = None,
     ) -> NBAAnalysisResult:
-        supplemental = supplemental or {}
-        supplemental_manifests = supplemental_manifests or {}
+        supplemental = dict(supplemental or {})
+        supplemental_manifests = dict(supplemental_manifests or {})
+        mislabeled = sorted({manifest.dataset for per_season in supplemental_manifests.values() for manifest in per_season.values()
+                             if not season_label_verified(manifest)})
+        for dataset in mislabeled:
+            # Data from the following season under this season's label must never be measured.
+            supplemental.pop(dataset, None)
+            supplemental_manifests.pop(dataset, None)
         subject = request.subject
         if subject is None:
             raise ValueError("NBA investigations require a team or player subject")
@@ -985,24 +1180,19 @@ class NBAPlugin:
         if baseline.is_empty() or comparison.is_empty():
             raise ValueError("each NBA comparison window requires synced box scores and at least one qualifying game")
         subject_type = subject.type
-        selected_metrics = request.metrics or DEFAULTS.get(request.analysis_domain, DEFAULTS["offense"])
+        selected_metrics = self._selected_metrics(request)
         unknown = sorted(set(selected_metrics) - set(METRICS))
         if unknown:
             raise ValueError(f"unsupported NBA metrics: {unknown}")
         incompatible = [name for name in selected_metrics if subject_type not in METRICS[name][3]]
         if incompatible:
             raise ValueError(f"metrics are incompatible with an NBA {subject_type} subject: {incompatible}")
+        selected_splits = self._splits(request)
+        lineup_source: dict[str, Any] | None = None
         if request.analysis_domain in {"lineups", "impact"} and any(name.startswith("lineup_") for name in selected_metrics):
-            lineup_frames = supplemental.get("lineups", {})
-            required = {request.scope.baseline.season, request.scope.comparison.season}
-            if not required <= set(lineup_frames):
-                raise ValueError("lineup metrics require a synced NBA Stats lineup package for both comparison seasons")
-            baseline = self._scope_lineups(lineup_frames[request.scope.baseline.season], subject, request.scope.season_type, baseline_segment)
-            comparison = self._scope_lineups(
-                lineup_frames[request.scope.comparison.season], subject, request.scope.season_type, comparison_segment
-            )
-            if baseline.is_empty() or comparison.is_empty():
-                raise ValueError("each NBA comparison window requires at least one canonical five-player lineup")
+            (baseline, comparison), lineup_source = self._lineup_windows(
+                request, datasets, supplemental,
+                [(request.scope.baseline.season, baseline_segment), (request.scope.comparison.season, comparison_segment)])
         all_manifests = list(manifests.values()) + [
             manifest for per_season in supplemental_manifests.values() for manifest in per_season.values()
         ]
@@ -1124,12 +1314,11 @@ class NBAPlugin:
             trend_values: list[dict[str, Any]] = []
             for season in request.scope.included_seasons:
                 if primary.metric.startswith("lineup_"):
-                    season_frame = self._scope_lineups(
-                        supplemental.get("lineups", {}).get(season, pl.DataFrame()),
-                        subject,
-                        request.scope.season_type,
-                        "full_season",
-                    )
+                    try:
+                        season_frame = self._lineup_windows(request, datasets, supplemental, [(season, "full_season")],
+                                                            lineup_source["source"] if lineup_source else None)[0][0]
+                    except ValueError:
+                        continue
                 else:
                     season_frame = self._window_frame(request, season, "full_season", supplemental)
                 value = _metric(season_frame, primary.metric, subject_type)
@@ -1160,7 +1349,8 @@ class NBAPlugin:
                 )
         executions = [execution, play_execution]
         if any(item.metric.startswith("lineup_") for item in aggregate):
-            lineup_evidence, lineup_execution, lineup_chart = self._lineup_analysis(request, baseline, comparison, all_manifests)
+            lineup_evidence, lineup_execution, lineup_chart = self._lineup_analysis(request, baseline, comparison, all_manifests,
+                                                                                    lineup_source)
             if not lineup_evidence:
                 raise ValueError("lineup analysis did not produce unit-level evidence from the synced lineup package")
             aggregate.extend(lineup_evidence)
@@ -1168,28 +1358,36 @@ class NBAPlugin:
             charts.append(lineup_chart)
         else:
             diagnostic_evidence, diagnostic_executions, diagnostic_charts = self._game_and_league_analysis(
-                request, baseline, comparison, supplemental, all_manifests, selected_metrics[0]
+                request, baseline, comparison, supplemental, all_manifests, selected_metrics[0], selected_metrics
             )
             aggregate.extend(diagnostic_evidence)
             executions.extend(diagnostic_executions)
             charts.extend(diagnostic_charts)
+            split_evidence, split_execution = self._situational_split_analysis(
+                request, baseline, comparison, datasets, supplemental, all_manifests, selected_metrics[0], selected_splits
+            )
+            aggregate.extend(split_evidence)
+            executions.append(split_execution)
             if subject.type == "player":
                 usage_evidence, usage_execution = self._player_usage_analysis(request, baseline, comparison, all_manifests)
                 aggregate.extend(usage_evidence)
                 executions.append(usage_execution)
             if request.analysis_domain == "shooting":
-                shot_evidence, shot_execution, shot_chart = self._shot_profile_analysis(request, datasets, supplemental, all_manifests)
+                shot_evidence, shot_executions, shot_charts = self._shot_profile_analysis(request, datasets, supplemental, all_manifests)
                 aggregate.extend(shot_evidence)
-                if shot_execution:
-                    executions.append(shot_execution)
-                if shot_chart:
-                    charts.append(shot_chart)
+                executions.extend(shot_executions)
+                charts.extend(shot_charts)
         caveats = [
             "SportsDataverse bulk releases are authoritative for this investigation; live NBA Stats data is optional.",
             "Detailed segments are shown only when schedule labels or reviewed milestone dates resolve them.",
         ]
-        if request.analysis_domain in {"lineups", "impact"} and "lineups" not in supplemental:
-            caveats.append("Lineup analysis was unavailable because the NBA Stats lineup package was not synced.")
+        if mislabeled:
+            caveats.append(f"NBA Stats packages {mislabeled} were downloaded before season labels were corrected and hold the "
+                           "following season's data; they were excluded. Download them again to use them.")
+        if lineup_source and lineup_source["source"] != "nba_stats_lineups":
+            caveats.append(
+                f"Lineups were rebuilt from play-by-play substitutions; {lineup_source['resolved_share']:.0%} of periods resolved "
+                "a full five for both teams, and unresolved periods are excluded.")
         if any(item.partition_key for item in all_manifests):
             caveats.append("League ranks require a full-league download and are omitted for team-scoped data.")
         return NBAAnalysisResult(aggregate, plays, charts, executions, caveats)
@@ -1213,6 +1411,7 @@ class NBAPlugin:
         definitions = (
             ("minutes_per_game", "Minutes per game"),
             ("usage_proxy", "Offensive involvement per minute"),
+            ("usage_rate", "Usage rate"),
             ("assists_per_game", "Assists per game"),
             ("turnovers_per_game", "Turnovers per game"),
         )
@@ -1253,9 +1452,11 @@ class NBAPlugin:
             baseline: pl.DataFrame,
             comparison: pl.DataFrame,
             manifests: list[DatasetManifest],
+            source: dict[str, Any] | None = None,
     ) -> tuple[list[AggregateEvidence], ToolExecutionRecord, ChartArtifact]:
         started_at, started = datetime.now(UTC), perf_counter()
         manifest_ids = [item.manifest_id for item in manifests]
+        rebuilt = bool(source) and source["source"] != "nba_stats_lineups"
 
         def units(frame: pl.DataFrame) -> dict[str, dict[str, Any]]:
             result: dict[str, dict[str, Any]] = {}
@@ -1325,7 +1526,8 @@ class NBAPlugin:
             "subject": request.subject.model_dump() if request.subject else None,
             "baseline": request.scope.baseline.model_dump(),
             "comparison": request.scope.comparison.model_dump(),
-            "canonicalization": "advanced/preferred-per-mode/unique-group-v1",
+            "canonicalization": source["source"] if rebuilt else "advanced/preferred-per-mode/unique-group-v1",
+            **({"coverage": source["coverage"]} if rebuilt else {}),
             "material_sample_threshold": round(material_threshold, 2),
         }
         execution_id = stable_id("execution", {"tool": "analyze_lineup_performance", **parameters})
@@ -1346,7 +1548,8 @@ class NBAPlugin:
                     dataset_manifest_ids=manifest_ids,
                     tool_execution_id=execution_id,
                     context=row,
-                    caveats=["Published aggregate lineups describe association, not an isolated player effect."],
+                    caveats=["Lineup results describe association, not an isolated player effect."
+                             + (" Units were rebuilt from play-by-play substitutions; unresolved periods are excluded." if rebuilt else "")],
                 )
             )
         execution = ToolExecutionRecord(
@@ -1387,13 +1590,58 @@ class NBAPlugin:
         return evidence, execution, chart
 
     @staticmethod
+    def _game_trend_evidence(metric: str, before: list[float], after: list[float], after_rows: list[dict[str, Any]],
+                             params: dict[str, Any], manifest_ids: list[str], execution_id: str) -> list[AggregateEvidence]:
+        """Rolling form, whether the change holds across blocks of games, and a descriptive change point."""
+        label, unit = METRICS[metric][0], _metric_unit(metric)
+        evidence = []
+        recent = rolling_mean(after)[-1] if after else None
+        if recent is not None:
+            payload = {**params, "kind": "rolling", "games": ROLLING_GAMES}
+            evidence.append(AggregateEvidence(
+                evidence_id=stable_id("evidence", payload), metric=f"{metric}_rolling_average",
+                label=f"Last {ROLLING_GAMES} games vs comparison window: {label}", value=round(recent - statistics.mean(after), 4),
+                baseline_value=round(statistics.mean(after), 4), comparison_value=round(recent, 4), unit=unit,
+                sample_size=ROLLING_GAMES, row_set_sha256=_sha(payload), dataset_manifest_ids=manifest_ids,
+                tool_execution_id=execution_id, context={"games": ROLLING_GAMES, "window_games": len(after)},
+                caveats=["Trailing average of the final games in chronological order; a short sample."]))
+        pattern = trend_pattern(before, after)
+        if pattern:
+            payload = {**params, "kind": "pattern", **pattern}
+            evidence.append(AggregateEvidence(
+                evidence_id=stable_id("evidence", payload), metric=f"{metric}_trend_pattern",
+                label=f"Game-block change pattern: {pattern['classification']}", value=round(pattern["agreement_rate"], 4),
+                baseline_value=round(statistics.mean(before), 4), comparison_value=round(statistics.mean(after), 4),
+                unit="share of aligned game blocks matching the overall direction", sample_size=pattern["blocks"],
+                row_set_sha256=_sha(payload), dataset_manifest_ids=manifest_ids, tool_execution_id=execution_id, context=pattern,
+                caveats=[f"Windows are split into consecutive {pattern['block_games']}-game blocks aligned by position; "
+                         "this is descriptive, not a significance test."]))
+        point = change_point(after)
+        if point:
+            boundary = after_rows[point["index"]]
+            payload = {**params, "kind": "change_point", "index": point["index"]}
+            date_text = f" ({boundary.get('game_date')})" if boundary.get("game_date") else ""
+            evidence.append(AggregateEvidence(
+                evidence_id=stable_id("evidence", payload), metric=f"{metric}_change_point",
+                label=f"Largest shift in the comparison window, from game {point['index'] + 1}{date_text}",
+                value=round(point["after"] - point["before"], 4), baseline_value=round(point["before"], 4),
+                comparison_value=round(point["after"], 4), unit=unit, sample_size=len(after), row_set_sha256=_sha(payload),
+                dataset_manifest_ids=manifest_ids, tool_execution_id=execution_id,
+                context={"game_number": point["index"] + 1, "game_id": boundary.get("game_id"), "game_date": boundary.get("game_date"),
+                         "games_before": point["index"], "games_after": len(after) - point["index"]},
+                caveats=["The boundary is chosen as the split with the largest difference in means, so it overstates "
+                         "how sharp the change was; it is descriptive, not causal."]))
+        return evidence
+
     def _game_and_league_analysis(
+            self,
             request: AnalysisRequest,
             baseline: pl.DataFrame,
             comparison: pl.DataFrame,
             supplemental: dict[str, dict[int, pl.DataFrame]],
             manifests: list[DatasetManifest],
             metric: str,
+            metrics: list[str] | None = None,
     ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord], list[ChartArtifact]]:
         manifest_ids = [item.manifest_id for item in manifests]
         subject_type = request.subject.type if request.subject else "team"
@@ -1409,10 +1657,19 @@ class NBAPlugin:
         execution_id = stable_id("execution", {"tool": "analyze_game_trends", **params})
         if before and after:
             rows = [
-                {**row, "window": window, "game": index + 1}
+                {**row, "window": window, "game": index + 1, "kind": "Game"}
                 for window, values in (("Baseline", before_rows), ("Comparison", after_rows))
                 for index, row in enumerate(values)
             ]
+            average_label = f"{ROLLING_GAMES}-game average"
+            rows.extend(
+                {"window": window, "game": index + 1, "kind": average_label, "value": average,
+                 "game_date": values[index].get("game_date"), "game_id": values[index].get("game_id"), "opponent": None}
+                for window, values in (("Baseline", before_rows), ("Comparison", after_rows))
+                for index, average in enumerate(rolling_mean([row["value"] for row in values]))
+                if average is not None
+            )
+            evidence.extend(self._game_trend_evidence(metric, before, after, after_rows, params, manifest_ids, execution_id))
             payload = {**params, "baseline_stdev": statistics.pstdev(before), "comparison_stdev": statistics.pstdev(after)}
             evidence.append(
                 AggregateEvidence(
@@ -1437,13 +1694,19 @@ class NBAPlugin:
                     specification={
                         "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
                         "data": {"values": rows},
-                        "mark": {"type": "line", "point": True},
+                        "mark": {"type": "line", "point": {"filled": True, "size": 18}},
                         "encoding": {
                             "x": {"field": "game", "type": "quantitative", "title": "Game in window"},
                             "y": {"field": "value", "type": "quantitative", "title": METRICS[metric][0]},
                             "color": {"field": "window", "type": "nominal"},
+                            # Single games are thin and dashed; the trailing average is the solid trend line.
+                            "strokeDash": {"field": "kind", "type": "nominal", "title": None,
+                                           "scale": {"domain": ["Game", average_label], "range": [[2, 3], [1, 0]]}},
+                            "strokeWidth": {"field": "kind", "type": "nominal", "legend": None,
+                                            "scale": {"domain": ["Game", average_label], "range": [1, 2.6]}},
                             "tooltip": [
                                 {"field": "window", "type": "nominal"},
+                                {"field": "kind", "type": "nominal", "title": "Series"},
                                 {"field": "game_id", "type": "nominal", "title": "Game"},
                                 {"field": "opponent", "type": "nominal", "title": "Opponent"},
                                 {"field": "game", "type": "quantitative"},
@@ -1451,7 +1714,7 @@ class NBAPlugin:
                             ],
                         },
                     },
-                    evidence_ids=[evidence[-1].evidence_id],
+                    evidence_ids=[item.evidence_id for item in evidence],
                 )
             )
         executions.append(
@@ -1501,170 +1764,269 @@ class NBAPlugin:
                 )
             )
         if subject_type == "team" and not any(item.partition_key for item in manifests):
-            season = request.scope.comparison.season
-            league = supplemental.get("team_boxscores", {}).get(season, pl.DataFrame())
-            schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())
-            segment = _effective_segment(request.scope.comparison.segment or "full_season", request.scope.season_type)
-            game_ids = segment_game_ids(schedule, season, segment)
-            if game_ids and "game_id" in league.columns:
-                league = league.filter(pl.col("game_id").cast(pl.String).is_in(game_ids))
-            team_col = "team_abbreviation" if "team_abbreviation" in league.columns else None
-            if team_col:
-                results = [(str(team[0, team_col]), _metric(team, metric, "team")) for team in league.partition_by(team_col)]
-                results = [(name, value) for name, value in results if value is not None]
-                target = str(request.subject.id).upper() if request.subject else ""
-                target_value = next((value for name, value in results if name.upper() == target), None)
-                if target_value is not None and results:
-                    higher = METRICS[metric][5] is not False
-                    # Equal measurements share a competition rank, independent of group order.
-                    rank = 1 + sum(value > target_value if higher else value < target_value for _, value in results)
-                    team_count = len(results)
-                    benchmark_params = {"metric": metric, "season": season, "rank": rank, "teams": team_count}
-                    benchmark_id = stable_id("execution", {"tool": "benchmark_against_league", **benchmark_params})
-                    evidence.append(
-                        AggregateEvidence(
-                            evidence_id=stable_id("evidence", benchmark_params),
-                            metric=f"{metric}_league_rank",
-                            label=f"League rank: {METRICS[metric][0]}",
-                            value=rank,
-                            comparison_value=target_value,
-                            unit=f"rank of {team_count}",
-                            sample_size=team_count,
-                            row_set_sha256=_sha(benchmark_params),
-                            dataset_manifest_ids=manifest_ids,
-                            tool_execution_id=benchmark_id,
-                            context={
-                                "rank": rank,
-                                "teams": team_count,
-                                "percentile": round(100 * (team_count - rank) / max(1, team_count - 1), 1),
-                            },
-                        )
-                    )
-                    executions.append(
-                        ToolExecutionRecord(
-                            execution_id=benchmark_id,
-                            tool="benchmark_against_league",
-                            parameters=benchmark_params,
-                            started_at=started_at,
-                            duration_ms=0,
-                            result_sha256=_sha(benchmark_params),
-                            dataset_manifest_ids=manifest_ids,
-                        )
-                    )
-                opponent_col = next(
-                    (column for column in ("opponent_team_abbreviation", "opponent_abbreviation") if column in comparison.columns), None
-                )
-                if opponent_col and "team_abbreviation" in league.columns:
-                    opponent_codes = [str(value).upper() for value in comparison.get_column(opponent_col).drop_nulls().to_list()]
-                    context_metric = (
-                        "defensive_rating" if request.analysis_domain in {"offense", "shooting", "playmaking"} else "offensive_rating"
-                    )
-                    opponent_values = []
-                    for opponent in opponent_codes:
-                        opponent_frame = league.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == opponent)
-                        value = _metric(opponent_frame, context_metric, "team")
-                        if value is not None:
-                            opponent_values.append(value)
-                    if opponent_values:
-                        league_values = [
-                            value
-                            for team in league.partition_by("team_abbreviation")
-                            if (value := _metric(team, context_metric, "team")) is not None
-                        ]
-                        schedule_strength = statistics.mean(opponent_values)
-                        league_average = statistics.mean(league_values) if league_values else schedule_strength
-                        opponent_params = {"context_metric": context_metric, "opponents": opponent_codes}
-                        opponent_id = stable_id("execution", {"tool": "adjust_for_opponents", **opponent_params})
-                        evidence.append(
-                            AggregateEvidence(
-                                evidence_id=stable_id("evidence", opponent_params),
-                                metric="opponent_context",
-                                label=f"Opponent {METRICS[context_metric][0]}",
-                                value=round(schedule_strength - league_average, 4),
-                                baseline_value=round(league_average, 4),
-                                comparison_value=round(schedule_strength, 4),
-                                unit="points per 100 possessions versus league average",
-                                sample_size=len(opponent_values),
-                                row_set_sha256=_sha(opponent_params),
-                                dataset_manifest_ids=manifest_ids,
-                                tool_execution_id=opponent_id,
-                                context={
-                                    "opponents": opponent_codes,
-                                    "league_average": league_average,
-                                    "weighted_opponent_average": schedule_strength,
-                                },
-                                caveats=["This is descriptive schedule context, not a causal opponent adjustment."],
-                            )
-                        )
-                        executions.append(
-                            ToolExecutionRecord(
-                                execution_id=opponent_id,
-                                tool="adjust_for_opponents",
-                                parameters=opponent_params,
-                                started_at=started_at,
-                                duration_ms=0,
-                                result_sha256=_sha(opponent_params),
-                                dataset_manifest_ids=manifest_ids,
-                            )
-                        )
+            league_evidence, league_executions = self._league_context(request, comparison, supplemental, manifest_ids,
+                                                                      metrics or [metric], started_at)
+            evidence.extend(league_evidence)
+            executions.extend(league_executions)
         return evidence, executions, charts
 
     @staticmethod
+    def _league_teams(request: AnalysisRequest, window: Any, supplemental: dict[str, dict[int, pl.DataFrame]]) -> dict[str, pl.DataFrame]:
+        """Every franchise's box-score rows in the window's segment, with opponent rows attached."""
+        league = franchise_rows(supplemental.get("team_boxscores", {}).get(window.season, pl.DataFrame()))
+        if league.is_empty() or "team_abbreviation" not in league.columns:
+            return {}
+        schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
+        game_ids = segment_game_ids(schedule, window.season, _effective_segment(window.segment or "full_season", request.scope.season_type))
+        if game_ids and "game_id" in league.columns:
+            league = league.filter(pl.col("game_id").cast(pl.String).is_in(sorted(game_ids)))
+        league = canonical_column(with_opponents(league), "team_abbreviation", "_franchise")
+        return {str(frame[0, "_franchise"]): frame for frame in league.partition_by("_franchise", maintain_order=True)}
+
+    def _league_context(
+            self,
+            request: AnalysisRequest,
+            comparison: pl.DataFrame,
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifest_ids: list[str],
+            metrics: list[str],
+            started_at: datetime,
+    ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord]]:
+        """League ranks for the selected metrics and the schedule faced, in both windows."""
+        evidence: list[AggregateEvidence] = []
+        executions: list[ToolExecutionRecord] = []
+        target = canonical_nba_team(request.subject.id if request.subject else request.scope.team) or ""
+        leagues = {"baseline": self._league_teams(request, request.scope.baseline, supplemental),
+                   "comparison": self._league_teams(request, request.scope.comparison, supplemental)}
+
+        def ranking(teams: dict[str, pl.DataFrame], metric: str) -> dict[str, Any] | None:
+            values = {team: value for team, frame in teams.items() if (value := _metric(frame, metric, "team")) is not None}
+            if target not in values:
+                return None
+            higher = METRICS[metric][5] is not False
+            # Equal measurements share a competition rank, independent of group order.
+            rank = 1 + sum(value > values[target] if higher else value < values[target] for value in values.values())
+            return {"rank": rank, "teams": len(values), "value": values[target], "league_average": statistics.mean(values.values()),
+                    "percentile": round(100 * (len(values) - rank) / max(1, len(values) - 1), 1)}
+
+        for metric in [name for name in metrics if not name.startswith("lineup_")][:4]:
+            current, previous = ranking(leagues["comparison"], metric), ranking(leagues["baseline"], metric)
+            if current is None:
+                continue
+            benchmark_params = {"metric": metric, "season": request.scope.comparison.season, "rank": current["rank"],
+                                "teams": current["teams"], "scope": "30 NBA franchises; exhibition teams excluded"}
+            benchmark_id = stable_id("execution", {"tool": "benchmark_against_league", **benchmark_params})
+            evidence.append(
+                AggregateEvidence(
+                    evidence_id=stable_id("evidence", benchmark_params),
+                    metric=f"{metric}_league_rank",
+                    label=f"League rank: {METRICS[metric][0]}",
+                    value=current["rank"],
+                    comparison_value=current["value"],
+                    unit=f"rank of {current['teams']}",
+                    sample_size=current["teams"],
+                    row_set_sha256=_sha(benchmark_params),
+                    dataset_manifest_ids=manifest_ids,
+                    tool_execution_id=benchmark_id,
+                    context={
+                        "rank": current["rank"],
+                        "teams": current["teams"],
+                        "percentile": current["percentile"],
+                        "league_average": round(current["league_average"], 6),
+                        "distance_from_league_average": round(current["value"] - current["league_average"], 6),
+                        **({"baseline_rank": previous["rank"], "baseline_teams": previous["teams"],
+                            "baseline_percentile": previous["percentile"],
+                            "baseline_league_average": round(previous["league_average"], 6)} if previous else {}),
+                    },
+                )
+            )
+            executions.append(
+                ToolExecutionRecord(
+                    execution_id=benchmark_id,
+                    tool="benchmark_against_league",
+                    parameters=benchmark_params,
+                    started_at=started_at,
+                    duration_ms=0,
+                    result_sha256=_sha(benchmark_params),
+                    dataset_manifest_ids=manifest_ids,
+                )
+            )
+        opponent_col = next((column for column in ("opponent_team_abbreviation", "opponent_abbreviation") if column in comparison.columns),
+                            None)
+        if opponent_col is None or not leagues["comparison"]:
+            return evidence, executions
+        context_metric = "defensive_rating" if request.analysis_domain in {"offense", "shooting", "playmaking"} else "offensive_rating"
+        faced_by_window: dict[str, dict[str, Any]] = {}
+        for name, window in (("baseline", request.scope.baseline), ("comparison", request.scope.comparison)):
+            subject_frame = comparison if name == "comparison" else self._window_frame(
+                request, window.season, window.segment or "full_season", supplemental)
+            if opponent_col not in subject_frame.columns:
+                continue
+            opponents = [team for value in subject_frame.get_column(opponent_col).drop_nulls().to_list()
+                         if (team := canonical_nba_team(value))]
+            strength = {team: value for team, frame in leagues[name].items() if (value := _metric(frame, context_metric, "team")) is not None}
+            faced = [strength[team] for team in opponents if team in strength]
+            if faced:
+                faced_by_window[name] = {"opponents": opponents, "weighted_opponent_average": statistics.mean(faced),
+                                         "league_average": statistics.mean(strength.values())}
+        if "comparison" not in faced_by_window:
+            return evidence, executions
+        after, before = faced_by_window["comparison"], faced_by_window.get("baseline")
+        opponent_params = {"context_metric": context_metric, "opponents": after["opponents"],
+                           "baseline_opponents": before["opponents"] if before else None}
+        opponent_id = stable_id("execution", {"tool": "adjust_for_opponents", **opponent_params})
+        relative = after["weighted_opponent_average"] - after["league_average"]
+        evidence.append(
+            AggregateEvidence(
+                evidence_id=stable_id("evidence", opponent_params),
+                metric="opponent_context",
+                label=f"Opponent {METRICS[context_metric][0]}",
+                value=round(relative, 4),
+                baseline_value=round(before["weighted_opponent_average"] - before["league_average"], 4) if before else None,
+                comparison_value=round(relative, 4),
+                unit="points per 100 possessions versus league average",
+                sample_size=len(after["opponents"]),
+                row_set_sha256=_sha(opponent_params),
+                dataset_manifest_ids=manifest_ids,
+                tool_execution_id=opponent_id,
+                context={
+                    "opponents": after["opponents"],
+                    "league_average": after["league_average"],
+                    "weighted_opponent_average": after["weighted_opponent_average"],
+                    **({"baseline_league_average": before["league_average"],
+                        "baseline_weighted_opponent_average": before["weighted_opponent_average"],
+                        "baseline_games": len(before["opponents"])} if before else {}),
+                    "reading": ("Negative values mean the defenses faced allowed fewer points than average (tougher)."
+                                if context_metric == "defensive_rating"
+                                else "Positive values mean the offenses faced scored more than average (tougher)."),
+                },
+                caveats=["Descriptive schedule context for each window, not a causal opponent adjustment; "
+                         "opponent ratings cover the same window and include their games against this team."],
+            )
+        )
+        executions.append(
+            ToolExecutionRecord(
+                execution_id=opponent_id,
+                tool="adjust_for_opponents",
+                parameters=opponent_params,
+                started_at=started_at,
+                duration_ms=0,
+                result_sha256=_sha(opponent_params),
+                dataset_manifest_ids=manifest_ids,
+            )
+        )
+        return evidence, executions
+
+    def _situational_split_analysis(
+            self,
+            request: AnalysisRequest,
+            baseline: pl.DataFrame,
+            comparison: pl.DataFrame,
+            datasets: dict[int, pl.DataFrame],
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            manifests: list[DatasetManifest],
+            metric: str,
+            splits: list[str],
+    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord]:
+        """Venue, opponent and rest from box scores; period, score state and clutch from play-by-play shots."""
+        subject = request.subject
+        subject_type = subject.type if subject else "team"
+        side = "defense" if subject_type == "team" and request.analysis_domain == "defense" else "offense"
+        game_splits = [split for split in splits if split in GAME_SPLITS]
+        play_splits = [split for split in splits if split in PLAY_SPLITS]
+        prepared = []
+        for window, frame in ((request.scope.baseline, baseline), (request.scope.comparison, comparison)):
+            schedule_source = supplemental.get("team_boxscores", {}).get(window.season)
+            if schedule_source is None or schedule_source.is_empty():
+                schedule_source = supplemental.get("player_boxscores", {}).get(window.season, pl.DataFrame())
+            games = attach_game_splits(frame, franchise_rows(schedule_source)) if game_splits else frame
+            shots = pl.DataFrame()
+            if play_splits and "game_id" in frame.columns:
+                # The subject's qualifying games for this window, so player DNPs and other segments stay out.
+                game_ids = {str(value) for value in frame.get_column("game_id").drop_nulls().unique().to_list()}
+                shots = shot_attempts(datasets.get(window.season, pl.DataFrame()), game_ids, subject_type, str(subject.id), side)
+            prepared.append((games, shots))
+        return situational_splits(
+            metric=metric, metric_label=METRICS[metric][0], unit=_metric_unit(metric), splits=splits, subject_type=subject_type,
+            baseline_games=prepared[0][0], comparison_games=prepared[1][0],
+            baseline_shots=prepared[0][1], comparison_shots=prepared[1][1],
+            measure=lambda frame: _metric(frame, metric, subject_type),
+            manifest_ids=[item.manifest_id for item in manifests],
+            parameters={"subject": subject.model_dump() if subject else None, "side": side,
+                        "windows": [request.scope.baseline.model_dump(), request.scope.comparison.model_dump()]},
+        )
+
+    @staticmethod
+    def _stats_shot_profile(request: AnalysisRequest, window: Any, supplemental: dict[str, dict[int, pl.DataFrame]]
+                            ) -> dict[str, dict[str, float]] | None:
+        """Zone profile from NBA Stats shots, only when they cover every one of the team's games in the window."""
+        subject = request.subject
+        season = window.season
+        shots = supplemental.get("stats_shots", {}).get(season, pl.DataFrame())
+        stats_schedule = supplemental.get("stats_schedules", {}).get(season, pl.DataFrame())
+        team = canonical_nba_team(subject.id if subject.type == "team" else subject.team_id)
+        if shots.is_empty() or stats_schedule.is_empty() or team is None:
+            return None
+        segment = _effective_segment(window.segment or "full_season", request.scope.season_type)
+        stats_ids = segment_game_ids(stats_schedule, season, segment)
+        espn_ids = segment_game_ids(supplemental.get("schedules", {}).get(season, pl.DataFrame()), season, segment)
+        team_box = filter_team(supplemental.get("team_boxscores", {}).get(season, pl.DataFrame()), team)
+        if not stats_ids or not espn_ids or "game_id" not in team_box.columns:
+            return None
+        expected = len({str(value) for value in team_box["game_id"].to_list()} & espn_ids)
+        player = None
+        if subject.type == "player":
+            crosswalk = supplemental.get("player_crosswalk", {}).get(season, pl.DataFrame())
+            if not {"espn_athlete_id", "nba_player_id"} <= set(crosswalk.columns):
+                return None
+            matches = crosswalk.filter(pl.col("espn_athlete_id").cast(pl.String) == identifier(subject.id))["nba_player_id"]
+            matches = {identifier(value) for value in matches.drop_nulls().to_list()}
+            if len(matches) != 1:
+                return None
+            player = matches.pop()
+        team_shots = stats_shot_attempts(shots, stats_ids, team)
+        if not expected or team_shots.is_empty() or team_shots["game_id"].n_unique() != expected:
+            return None
+        return zone_profile(stats_shot_attempts(shots, stats_ids, team, player) if player else team_shots)
+
     def _shot_profile_analysis(
+            self,
             request: AnalysisRequest,
             datasets: dict[int, pl.DataFrame],
             supplemental: dict[str, dict[int, pl.DataFrame]],
             manifests: list[DatasetManifest],
-    ) -> tuple[list[AggregateEvidence], ToolExecutionRecord | None, ChartArtifact | None]:
+    ) -> tuple[list[AggregateEvidence], list[ToolExecutionRecord], list[ChartArtifact]]:
+        """Shot mix by zone on field-goal attempts only (free throws excluded); players count only their own shots."""
         subject = request.subject
         if subject is None:
-            return [], None, None
+            return [], [], []
 
         def profile(window: Any) -> dict[str, dict[str, float]]:
-            frame = datasets.get(window.season, pl.DataFrame())
-            schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
-            ids = segment_game_ids(schedule, window.season, _effective_segment(window.segment or "full_season", request.scope.season_type))
-            if ids and "game_id" in frame.columns:
-                frame = frame.filter(pl.col("game_id").cast(pl.String).is_in(ids))
-            if subject.type == "team" and "team_abbreviation" in frame.columns:
-                frame = frame.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == str(subject.id).upper())
-            elif subject.type == "player":
-                columns = [column for column in ("athlete_id_1", "athlete_id_2", "athlete_id_3", "player_id") if column in frame.columns]
-                if columns:
-                    predicate = pl.col(columns[0]).cast(pl.String) == str(subject.id)
-                    for column in columns[1:]:
-                        predicate |= pl.col(column).cast(pl.String) == str(subject.id)
-                    frame = frame.filter(predicate)
-            result = {zone: {"attempts": 0.0, "makes": 0.0} for zone in ("Rim", "Short midrange", "Long midrange", "Three")}
-            for row in frame.iter_rows(named=True):
-                description = str(row.get("description") or row.get("text") or "").lower()
-                if not (row.get("shooting_play") or "make" in description or "miss" in description):
-                    continue
-                value = _shot_value(description, row)
-                distance = _shot_distance(description, row, _shot_point(row))
-                zone = (
-                    "Three"
-                    if value == 3
-                    else "Rim"
-                    if distance is not None and distance <= 4
-                    else "Short midrange"
-                    if distance is not None and distance <= 14
-                    else "Long midrange"
-                )
-                result[zone]["attempts"] += 1
-                result[zone]["makes"] += int(bool(row.get("scoring_play")) or "make" in description)
-            return result
+            games = self._window_frame(request, window.season, window.segment or "full_season", supplemental)
+            game_ids = ({str(value) for value in games.get_column("game_id").drop_nulls().unique().to_list()}
+                        if "game_id" in games.columns else set())
+            if not game_ids:
+                return zone_profile(pl.DataFrame())
+            return zone_profile(shot_attempts(datasets.get(window.season, pl.DataFrame()), game_ids, subject.type, str(subject.id)))
 
-        before, after = profile(request.scope.baseline), profile(request.scope.comparison)
+        windows = (request.scope.baseline, request.scope.comparison)
+        official = [self._stats_shot_profile(request, window, supplemental) for window in windows]
+        # One source for both windows keeps the zones comparable.
+        source = "nba_stats_shots" if all(item is not None for item in official) else "play_by_play"
+        before, after = official if source == "nba_stats_shots" else (profile(windows[0]), profile(windows[1]))
         total_before = sum(item["attempts"] for item in before.values())
         total_after = sum(item["attempts"] for item in after.values())
         if not total_before or not total_after:
-            return [], None, None
+            return [], [], []
         manifest_ids = [item.manifest_id for item in manifests]
-        params = {"subject": subject.model_dump(), "zones": list(after)}
+        zones = [zone for zone in after if before[zone]["attempts"] or after[zone]["attempts"]]
+        params = {"subject": subject.model_dump(), "zones": zones, "free_throws": "excluded", "source": source,
+                  "distance": "NBA Stats recorded shot distance" if source == "nba_stats_shots"
+                  else "described or coordinate distance from play-by-play",
+                  "shooter": "athlete_id_1" if subject.type == "player" else "team_abbreviation"}
         execution_id = stable_id("execution", {"tool": "compare_shot_profiles", **params})
         evidence, rows = [], []
-        for zone in after:
+        for zone in zones:
             before_share, after_share = before[zone]["attempts"] / total_before, after[zone]["attempts"] / total_after
             payload = {**params, "zone": zone, "baseline_share": before_share, "comparison_share": after_share}
             evidence.append(
@@ -1680,18 +2042,19 @@ class NBAPlugin:
                     row_set_sha256=_sha(payload),
                     dataset_manifest_ids=manifest_ids,
                     tool_execution_id=execution_id,
-                    context={"zone": zone, "baseline_makes": before[zone]["makes"], "comparison_makes": after[zone]["makes"]},
+                    context={"zone": zone, "baseline_attempts": round(before[zone]["attempts"]),
+                             "comparison_attempts": round(after[zone]["attempts"]),
+                             "baseline_makes": before[zone]["makes"], "comparison_makes": after[zone]["makes"]},
                 )
             )
             rows.extend(
                 [{"zone": zone, "window": "Baseline", "share": before_share}, {"zone": zone, "window": "Comparison", "share": after_share}]
             )
-        now = datetime.now(UTC)
         execution = ToolExecutionRecord(
             execution_id=execution_id,
             tool="compare_shot_profiles",
             parameters=params,
-            started_at=now,
+            started_at=datetime.now(UTC),
             duration_ms=0,
             result_sha256=_sha(rows),
             dataset_manifest_ids=manifest_ids,
@@ -1704,8 +2067,8 @@ class NBAPlugin:
                 "data": {"values": rows},
                 "mark": "bar",
                 "encoding": {
-                    "x": {"field": "zone", "type": "nominal"},
-                    "y": {"field": "share", "type": "quantitative", "axis": {"format": ".0%"}},
+                    "x": {"field": "zone", "type": "nominal", "sort": zones},
+                    "y": {"field": "share", "type": "quantitative", "axis": {"format": ".0%"}, "title": "Share of field-goal attempts"},
                     "xOffset": {"field": "window"},
                     "color": {"field": "window", "type": "nominal"},
                     "tooltip": [
@@ -1717,7 +2080,83 @@ class NBAPlugin:
             },
             evidence_ids=[item.evidence_id for item in evidence],
         )
-        return evidence, execution, chart
+        accounting, accounting_execution, accounting_chart = shot_mix_accounting(before, after, subject.model_dump(), manifest_ids)
+        return ([*evidence, *accounting], [execution, *([accounting_execution] if accounting_execution else [])],
+                [chart, *([accounting_chart] if accounting_chart else [])])
+
+    def _lineup_windows(
+            self,
+            request: AnalysisRequest,
+            datasets: dict[int, pl.DataFrame],
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+            windows: list[tuple[int, str]],
+            source: str | None = None,
+    ) -> tuple[list[pl.DataFrame], dict[str, Any]]:
+        """Lineup frames for every window from ONE source, so windows stay comparable.
+
+        The published NBA Stats aggregate is used when it covers every window's segment and subject;
+        otherwise (date segments, ESPN player ids, or no package) units are rebuilt from play-by-play.
+        """
+        subject = request.subject
+        packages = supplemental.get("lineups", {})
+        if source in (None, "nba_stats_lineups"):
+            frames = []
+            for season, segment in windows:
+                try:
+                    frame = self._scope_lineups(packages[season], subject, request.scope.season_type, segment) if season in packages else None
+                except ValueError:
+                    frame = None
+                frames.append(frame if frame is not None and not frame.is_empty() else None)
+            if all(frame is not None for frame in frames):
+                return frames, {"source": "nba_stats_lineups"}
+            if source == "nba_stats_lineups":
+                raise ValueError("the NBA Stats lineup package does not cover this window")
+        frames, coverage = [], {"games": 0, "periods": 0, "resolved_periods": 0}
+        for season, segment in windows:
+            frame, window_coverage = self._rebuilt_lineups(request, season, segment, datasets, supplemental)
+            if frame.is_empty():
+                raise ValueError(
+                    "lineup metrics need the NBA Stats lineup package for these segments, or play-by-play plus player box scores "
+                    "with starters so five-player units can be rebuilt; neither produced a lineup for this window")
+            frames.append(frame)
+            for key in coverage:
+                coverage[key] += window_coverage.get(key, 0)
+        coverage["resolved_share"] = round(coverage["resolved_periods"] / coverage["periods"], 4) if coverage["periods"] else 0.0
+        return frames, {"source": "play_by_play_reconstruction_v1", "coverage": coverage, "resolved_share": coverage["resolved_share"]}
+
+    @staticmethod
+    def _rebuilt_lineups(
+            request: AnalysisRequest,
+            season: int,
+            segment: str,
+            datasets: dict[int, pl.DataFrame],
+            supplemental: dict[str, dict[int, pl.DataFrame]],
+    ) -> tuple[pl.DataFrame, dict[str, Any]]:
+        subject = request.subject
+        player_box = supplemental.get("player_boxscores", {}).get(season, pl.DataFrame())
+        pbp = datasets.get(season, pl.DataFrame())
+        if pbp.is_empty() or player_box.is_empty():
+            return pl.DataFrame(), {}
+        team = canonical_nba_team(subject.id if subject.type == "team" else subject.team_id)
+        if team is None and subject.type == "player":
+            id_column = "player_id" if "player_id" in player_box.columns else "athlete_id"
+            teams = canonical_column(player_box.filter(pl.col(id_column).cast(pl.String) == identifier(subject.id)), "team_abbreviation",
+                                     "_team")["_team"].drop_nulls().unique().to_list()
+            team = teams[0] if len(teams) == 1 else None
+        if team is None:
+            return pl.DataFrame(), {}
+        schedule = supplemental.get("schedules", {}).get(season, pl.DataFrame())
+        game_ids = segment_game_ids(schedule, season, _effective_segment(segment, request.scope.season_type))
+        team_games = filter_team(canonical_column(player_box, "team_abbreviation", "_team"), team, ("_team",))
+        ids = {str(value) for value in team_games["game_id"].unique().to_list()}
+        ids = ids & game_ids if game_ids else ids if segment == "full_season" else set()
+        frame, coverage = reconstruct_lineups(pbp, player_box, ids)
+        if frame.is_empty():
+            return frame, coverage
+        frame = frame.filter(pl.col("team_abbreviation") == team)
+        if subject.type == "player":
+            frame = frame.filter(pl.col("group_id").str.split("-").list.contains(identifier(subject.id)))
+        return frame, coverage
 
     @staticmethod
     def _scope_lineups(
@@ -1741,10 +2180,7 @@ class NBAPlugin:
                 "sync possession-level lineup data or choose regular season/playoffs"
             )
         if subject.type == "team":
-            if "team_abbreviation" in scoped.columns:
-                scoped = scoped.filter(pl.col("team_abbreviation").cast(pl.String).str.to_uppercase() == str(subject.id).upper())
-            elif "team_id" in scoped.columns:
-                scoped = scoped.filter(pl.col("team_id").cast(pl.String) == str(subject.id))
+            scoped = filter_team(scoped, subject.id, ("team_abbreviation",) if "team_abbreviation" in scoped.columns else ("team_id",))
         else:
             token = str(subject.id)
             if "group_id" in scoped.columns:
@@ -1774,6 +2210,36 @@ class NBAPlugin:
         return scoped
 
     @staticmethod
+    def _subject_role(row: dict[str, Any], subject: Any) -> str:
+        """How the player subject took part: the primary actor, or a credited assist, steal, block or foul drawn."""
+        target = identifier(subject.id)
+        if identifier(row.get("athlete_id_1")) == target:
+            return "primary"
+        description = str(row.get("description") or row.get("text") or "")
+        for index in (2, 3):
+            if identifier(row.get(f"athlete_id_{index}")) == target:
+                return _related_player_role(description, str(row.get(f"athlete_name_{index}") or "") or None) or "involved"
+        return "involved"
+
+    @staticmethod
+    def _possession_teams(row: dict[str, Any]) -> tuple[str, str]:
+        """Recorded team codes for the offense and defense of the possession the event belongs to.
+
+        ESPN credits a defensive rebound or a defensive foul to the defending team, so for those events
+        the recorded team is the defense; every other event's team is the offense.
+        """
+        event = str(row.get("team_abbreviation") or "")
+        home, away = str(row.get("home_team_abbrev") or ""), str(row.get("away_team_abbrev") or "")
+        event_team = canonical_nba_team(event)
+        other = away if event_team and event_team == canonical_nba_team(home) else home if event_team == canonical_nba_team(away) else ""
+        kind = f"{row.get('type_text') or ''} {row.get('description') or row.get('text') or ''}".casefold()
+        if not event:
+            return "", ""
+        if "defensive rebound" in kind or ("foul" in kind and "offensive" not in kind and "technical" not in kind):
+            return other, event
+        return event, other
+
+    @staticmethod
     def _representative_plays(
             request: AnalysisRequest,
             frame: pl.DataFrame,
@@ -1791,33 +2257,68 @@ class NBAPlugin:
         if baseline_frame is not None and baseline_manifest is not None:
             sources.insert(0, ("baseline", request.scope.baseline, baseline_frame, baseline_manifest))
         candidates: list[EvidenceCandidate] = []
+        # A team's defensive evidence is the opponent's possessions in its games, scored from the defense's side.
+        defensive = subject.type == "team" and request.analysis_domain == "defense"
+        subject_team = canonical_nba_team(subject.id if subject.type == "team" else subject.team_id)
         for window_name, window, source_frame, source_manifest in sources:
             schedule = supplemental.get("schedules", {}).get(window.season, pl.DataFrame())
-            game_ids = segment_game_ids(schedule, window.season, window.segment or "full_season")
+            segment = _effective_segment(window.segment or "full_season", request.scope.season_type)
+            game_ids = segment_game_ids(schedule, window.season, segment)
             scoped = (
                 source_frame.filter(pl.col("game_id").cast(pl.String).is_in(game_ids))
                 if game_ids and "game_id" in source_frame.columns
                 else source_frame
             )
+            if "type_text" in scoped.columns:
+                # Substitutions, timeouts and period markers are bookkeeping, not possessions.
+                scoped = scoped.filter(~pl.col("type_text").cast(pl.String).fill_null("").str.contains(ADMIN_EVENTS))
             if subject.type == "team":
-                team = str(subject.id).upper()
+                team = subject_team or str(subject.id).upper()
+                scoped = canonical_column(canonical_column(scoped, "home_team_abbrev", "_home"), "away_team_abbrev", "_away")
+                in_game = (pl.col("_home") == team) | (pl.col("_away") == team)
                 if "team_abbreviation" in scoped.columns:
-                    scoped = scoped.filter(pl.col("team_abbreviation").fill_null("").str.to_uppercase() == team)
-                elif {"home_team_abbrev", "away_team_abbrev"} <= set(scoped.columns):
-                    scoped = scoped.filter((pl.col("home_team_abbrev") == team) | (pl.col("away_team_abbrev") == team))
+                    scoped = canonical_column(scoped, "team_abbreviation", "_event_team")
+                    owner = pl.col("_event_team")
+                    if request.analysis_domain != "rebounding":
+                        # Offense and defense evidence follow the possession: a defensive rebound or a defensive
+                        # foul is recorded for the defending team but belongs to the opponent's possession.
+                        recorded_kind = pl.col("type_text").cast(pl.String).fill_null("") if "type_text" in scoped.columns else pl.lit("")
+                        text_column = "description" if "description" in scoped.columns else "text"
+                        kind = pl.concat_str(recorded_kind, pl.lit(" "), pl.col(text_column).cast(pl.String).fill_null("")).str.to_lowercase()
+                        defending = kind.str.contains("defensive rebound") | (
+                            kind.str.contains("foul") & ~kind.str.contains("offensive") & ~kind.str.contains("technical"))
+                        other = pl.when(pl.col("_event_team") == pl.col("_home")).then(pl.col("_away")).otherwise(pl.col("_home"))
+                        owner = pl.when(defending).then(other).otherwise(pl.col("_event_team"))
+                    scoped = scoped.filter(in_game & owner.is_not_null() & (owner != team) if defensive else owner == team)
+                else:
+                    scoped = scoped.filter(in_game)
             else:
                 columns = [column for column in ("athlete_id_1", "athlete_id_2", "athlete_id_3", "player_id") if column in scoped.columns]
                 if columns:
-                    predicate = pl.col(columns[0]).cast(pl.String) == str(subject.id)
-                    for column in columns[1:]:
-                        predicate |= pl.col(column).cast(pl.String) == str(subject.id)
-                    scoped = scoped.filter(predicate)
+                    target = identifier(subject.id)
+                    scoped = scoped.filter(pl.any_horizontal(
+                        pl.col(column).cast(pl.String).str.replace(r"\.0$", "") == target for column in columns))
             for row in scoped.iter_rows(named=True):
                 description = str(row.get("description") or row.get("text") or "").lower()
                 score_value = float(row.get("score_value") or 0)
                 shot_value = float(_shot_value(description, row) or score_value or 2)
-                if request.analysis_domain in {"scoring", "shooting"}:
-                    outcome = shot_value if ("make" in description or score_value > 0) else -shot_value if "miss" in description else 0.0
+                made = "make" in description or score_value > 0
+                missed = "miss" in description or " blocks " in description
+                role = NBAPlugin._subject_role(row, subject) if subject.type == "player" else "primary"
+                if defensive:
+                    outcome = -score_value if score_value else 2.0 if "turnover" in description else 1.0 if missed else 0.0
+                elif role == "steal":
+                    outcome = 2.0
+                elif role == "block":
+                    outcome = shot_value
+                elif role == "assist":
+                    outcome = shot_value if made else 1.0
+                elif role == "foul drawn":
+                    outcome = 1.0
+                elif role != "primary":
+                    outcome = 0.0
+                elif request.analysis_domain in {"scoring", "shooting"}:
+                    outcome = shot_value if made else -shot_value if missed else 0.0
                 elif request.analysis_domain == "playmaking":
                     outcome = 2.0 if "assist" in description else -2.0 if "turnover" in description else score_value * 0.25
                 elif request.analysis_domain == "rebounding":
@@ -1825,15 +2326,17 @@ class NBAPlugin:
                 elif request.analysis_domain == "turnovers":
                     outcome = -2.0 if "turnover" in description else score_value * 0.25
                 else:
-                    outcome = score_value if score_value else -1.0 if any(token in description for token in ("miss", "turnover")) else 0.0
-                event_type = str(row.get("type_text") or row.get("type_abbreviation") or "").strip().lower()
+                    outcome = score_value if score_value else -1.0 if missed or "turnover" in description else 0.0
+                recorded_type = str(row.get("type_text") or row.get("type_abbreviation") or "").strip().lower()
+                event_type = role if role not in {"primary", "involved"} else recorded_type
                 if not event_type:
                     event_type = next(
                         (token for token in ("turnover", "rebound", "assist", "miss", "make", "foul") if token in description), "event"
                     )
                 event_team = str(row.get("team_abbreviation") or subject.team_id or subject.id).upper()
                 home, away = str(row.get("home_team_abbrev") or "").upper(), str(row.get("away_team_abbrev") or "").upper()
-                opponent = away if event_team == home else home
+                reference = subject_team or canonical_nba_team(event_team)
+                opponent = away if reference and canonical_nba_team(home) == reference else home
                 context_fields = ("period", "clock", "home_score", "away_score", "description")
                 context_quality = sum(row.get(name) is not None for name in context_fields) / len(context_fields)
                 candidates.append(
@@ -1866,6 +2369,7 @@ class NBAPlugin:
             offense_players: list[str] = []
             defense_players: list[str] = []
             source_packages = ["play_by_play"]
+            possession_team, defending_team = NBAPlugin._possession_teams(row)
             if not possession_frame.is_empty() and {
                 "game_id",
                 "start_order_index",
@@ -1917,8 +2421,7 @@ class NBAPlugin:
                         for column in (f"away_player_{index}" for index in range(1, 6))
                         if lineup_row.get(column) is not None
                     ]
-                    event_team = str(row.get("team_abbreviation") or subject.team_id or subject.id).upper()
-                    if event_team == str(row.get("away_team_abbrev") or "").upper():
+                    if canonical_nba_team(possession_team) == canonical_nba_team(row.get("away_team_abbrev")):
                         offense_players, defense_players = away_players, home_players
                     else:
                         offense_players, defense_players = home_players, away_players
@@ -1929,9 +2432,10 @@ class NBAPlugin:
             shot_result = _shot_result(description, scoring_play, shooting_play)
             shot_point = _shot_point(row) if shooting_play or shot_result else None
             shot_distance = _shot_distance(description, row, shot_point) if shooting_play or shot_result else None
-            if season not in directories:
+            # Names resolve only recorded on-court ids, so build the directory only when a play has them.
+            if (offense_players or defense_players) and season not in directories:
                 directories[season] = _player_directory(supplemental, season)
-            directory, directory_packages = directories[season]
+            directory, directory_packages = directories.get(season, ({}, []))
             offense_names: list[str] = []
             offense_positions: list[str] = []
             defense_names: list[str] = []
@@ -1978,6 +2482,8 @@ class NBAPlugin:
                         away_team_abbreviation=str(row.get("away_team_abbrev") or "") or None,
                         home_score=int(row.get("home_score") or 0),
                         away_score=int(row.get("away_score") or 0),
+                        possession_team=possession_team or None,
+                        defensive_team=defending_team or None,
                         scoring_play=scoring_play,
                         shooting_play=shooting_play,
                         shot_result=shot_result,

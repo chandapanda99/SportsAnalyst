@@ -80,4 +80,28 @@ describe('basketball evidence tablet', () => {
     expect(offenseLabels).toEqual(['JT', 'DW']);
     expect(screen.getByText(/game_rosters/)).toBeTruthy();
   });
+  it('orients lineups by the recorded possession when the defense is credited with the event', () => {
+    const { container } = render(BasketballPlayTablet, {
+      props: {
+        play: {
+          evidence_id: 'nba-defensive-rebound', season: 2026, game_id: '401', play_id: 40, team: 'GS',
+          description: 'Draymond Green defensive rebound', supporting: true,
+          visualization: {
+            sport: 'nba', period: 2, clock: '5:12', home_team_abbreviation: 'GS', away_team_abbreviation: 'BOS',
+            home_score: 40, away_score: 38, team_abbreviation: 'GS', event_type: 'Defensive Rebound',
+            possession_team: 'BOS', defensive_team: 'GS',
+            offense_player_ids: ['4065648'], defense_player_ids: ['6589'],
+            offense_names: ['Jayson Tatum'], defense_names: ['Draymond Green']
+          }
+        },
+        onclose: () => undefined
+      }
+    });
+
+    const lineups = container.querySelector('.lineups')?.textContent ?? '';
+    expect(lineups).toContain('Offense · BOS');
+    expect(lineups).toContain('Defense · GS');
+    expect(screen.getByText('On offense')).toBeTruthy();
+    expect(container.querySelector('.court-player.offense')?.getAttribute('aria-label')).toContain('BOS · Jayson Tatum');
+  });
 });
