@@ -238,10 +238,12 @@ def _formulate_user_message(
 
 
 def _synthesis_mode(
-    question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None
+    question: str, aggregate_count: int, conversation_context: list[dict[str, str]] | None = None,
+    follow_up_kind: str | None = None,
 ) -> Literal["direct", "reviewed", "full"]:
     if conversation_context:
-        return "direct"
+        # A follow-up that registered new measurements gets the evidence review; explanations stay direct.
+        return "reviewed" if follow_up_kind == "new_measurement" else "direct"
     normalized = question.lower()
     complex_terms = {
         "why",
@@ -614,7 +616,8 @@ class EvidenceBoundAgent:
                 ) if self.settings.chat_model else None
             )
             ledger, aggregate_payload, play_payload = _citation_ledger(aggregate, plays)
-            synthesis_mode = _synthesis_mode(question, len(aggregate), conversation_context)
+            synthesis_mode = _synthesis_mode(question, len(aggregate), conversation_context,
+                                             (analytical_context or {}).get("follow_up_kind"))
             logger.debug(
                 "citation_ledger_created aggregate_aliases=%d play_aliases=%d synthesis_mode=%s",
                 len(aggregate_payload),
@@ -804,6 +807,8 @@ class EvidenceBoundAgent:
                     "turnovers override sacks, passing and rushing. Values are category EPA divided by ALL qualifying offensive plays, "
                     "not category EPA/play. Rank contributions in the direction of the overall change; do not rank raw rate deltas. "
                     "Derived arithmetic marked arithmetic_only has not established statistical meaning or causal attribution. "
+                    "sandbox_computation evidence (validation sandbox_reexecuted) came from model-written code over raw recorded "
+                    "rows: say it is a supplementary calculation, never present it as a sport metric or as host-verified. "
                     "For a growth or change question, prioritize the measured conclusion, supported contributors or associations, "
                     "and material counterevidence. Discuss stability using sport-appropriate intervals only when measured. "
                     "Do not force a causal driver, ruled-out alternative, or fixed number of limitations.\n\n"

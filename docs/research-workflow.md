@@ -45,6 +45,55 @@ unresolved objectives become caveats. The writer must cite evidence for covered
 objectives, with one repair attempt before deterministic fallback when citation
 coverage fails. These checks do not establish semantic entailment.
 
+### Planner guidance and evidence tiers
+
+Before its first call the planner receives a host orientation message: every
+existing metric family with its record count and headline values, and a data map
+of scoped tables per window with grain, row count and `subject_fields` (empty
+means the table cannot be attributed to the subject). Families shown there count
+as reviewed, so the planner no longer pages the evidence registry only to satisfy
+the "review all metric families" check. `scripts/audit_planner_runs.py` reports
+how saved planner runs spent their calls; on the first 14 local runs, 65% of tool
+calls were discovery and 8 runs computed nothing new.
+
+New evidence comes from three tiers, in order of preference:
+
+1. `run_sport_analysis` (after `inspect_sport_analyses`) repeats the sport plugin's
+   own `analyze` for the same subject, windows and season type with other metrics,
+   splits or analysis domain. The plugin's qualifying rules, benchmarks, opponent
+   adjustment and representative plays apply unchanged. At most three runs; new
+   evidence carries `context.sport_analysis_run` and new plays join the report.
+2. Typed scoped aggregation and JoinPlans, as below.
+3. `compute_on_extract`, the sandbox tier, for calculations the typed tools cannot
+   express. The host builds a subject-scoped extract (at most 12 fields and
+   20,000 rows) and runs model-written JavaScript in a fresh QuickJS runtime with
+   no host functions, twice, registering outputs only when both runs match. The
+   evidence (`sandbox_computation`, validation `sandbox_reexecuted`) records the code
+   and input hashes and is described to the writer as a supplementary calculation,
+   not a host-verified metric. At most four runs.
+
+`search_fields` ranks recorded fields for a concept across authorized datasets,
+using the data dictionary in `analysis/research/dictionary.py` (curated nflverse
+play-by-play and common box-score definitions with unit and timing: `context`
+fields are known before the play, `outcome` fields are results). Uncurated names
+fall back to marked name-based inference. `inspect_dataset_schema` returns the same
+definitions, and `inspect_field_values` profiles one field on the subject's scoped
+rows (null rate, range, most common values) so filters use recorded literals.
+
+### Follow-up questions
+
+Follow-ups give the planner structured thread state from
+`analysis/thread_state.py`: each turn's scope, objectives with their evidence IDs
+and unresolved reasons, claims with cited evidence, and cited games. Plain prose
+summaries are no longer the only reference for "that drop" or "those games".
+Follow-ups may use `run_sport_analysis`, so they can select new representative
+plays. When a question needs other seasons, season type or analysis domain, the
+planner calls `propose_scope_change`. The host accepts installed seasons only and
+then runs a linked investigation (same subject, `parent_investigation_id` set)
+instead of answering from the wrong sample. Head-to-head reports cannot change
+scope this way. A follow-up that registers new measurements is synthesised in
+reviewed mode; one that explains existing evidence stays direct.
+
 ### NFL phase accounting
 
 NFL overall-offense EPA runs include a deterministic exclusive accounting
@@ -102,8 +151,7 @@ has dataset-name filtering. Column previews are deliberately short:
 `inspect_dataset_profile` audits exact snapshot schema/key counts without returning
 raw records or paths. A declared contract or unique snapshot key is not proof of
 historical coverage, compatible identities, or a usable statistical method.
-Installed manifests and acquisition capabilities have independent pagination
-(`next_offset` and `capability_next_offset`). Capabilities include adapter-owned
+Installed manifests and acquisition capabilities have independent pagination (`next_offset` and `capability_next_offset`). Capabilities include adapter-owned
 dependency packages and distinguish downloadable packages from installed-only
 packages. Their existence is never reported as verified upstream availability.
 

@@ -538,12 +538,17 @@ class AnalystApplication:
             from sports_analyst.analysis.scoped_data import ScopedData
 
             self.events.emit(identifier, "analyzing", "Checking the question against measured evidence", 0.57)
+            from sports_analyst.analysis.sport_runs import SportRuns
+
             scoped_data = ScopedData(self, request, partition, identifier)
             scoped_data.progress = lambda message: self.events.emit(identifier, "preparing", message, 0.57)
+            sport_runs = SportRuns(self, request, identifier, loaded={
+                "datasets": datasets, "manifests": manifests, "supplemental": supplemental,
+                "supplemental_manifests": supplemental_manifests})
             complete_calculations(self.settings, request.question, result, {
                 "sport": request.sport, "subject": request.subject.model_dump(mode="json") if request.subject else None,
                 "domain": request.analysis_domain, "scope": request.scope.model_dump(mode="json"),
-            }, data_access=scoped_data)
+            }, data_access=scoped_data, sport_runs=sport_runs)
             from sports_analyst.analysis.research.presentation import add_research_charts
 
             add_research_charts(result, request=request, data_access=scoped_data)
@@ -772,15 +777,24 @@ class AnalystApplication:
             self.events.emit(identifier, "analyzing", "Reusing the report's validated evidence", 0.55)
             thread = self.store.investigation_thread(root.run.investigation_id)
             conversation_context = [{"question": item.run.question, "summary": item.summary} for item in thread]
+            from sports_analyst.analysis.thread_state import thread_state
+
+            planner_context = thread_state(thread)
             # Measurements registered by earlier follow-ups stay citable; the root report's evidence is never altered.
             thread_evidence = list(root.aggregate_evidence)
             thread_executions = list(root.executions)
             thread_manifests = {m.manifest_id: m for m in root.dataset_manifests}
             known_evidence = {item.evidence_id for item in thread_evidence}
             known_executions = {item.execution_id for item in thread_executions}
+            thread_plays = list(root.play_evidence)
+            known_plays = {item.evidence_id for item in thread_plays}
             for earlier in thread:
                 if earlier.run.investigation_id == root.run.investigation_id:
                     continue
+                for item in earlier.play_evidence:
+                    if item.evidence_id not in known_plays:
+                        known_plays.add(item.evidence_id)
+                        thread_plays.append(item)
                 for item in earlier.aggregate_evidence:
                     if item.evidence_id not in known_evidence:
                         known_evidence.add(item.evidence_id)
@@ -832,15 +846,28 @@ class AnalystApplication:
                                    scoped_data(side_request(request, comparison_subject), f"{identifier}:second-subject"))
         else:
             scoped = scoped_data(request, identifier)
-        work = SimpleNamespace(aggregate_evidence=thread_evidence, executions=[],
-                               caveats=[], charts=list(root.charts))
+        from sports_analyst.analysis.sport_runs import SportRuns
+
+        prior_evidence = {item.evidence_id for item in thread_evidence}
+        work = SimpleNamespace(aggregate_evidence=thread_evidence, executions=[], play_evidence=thread_plays,
+                               caveats=[], charts=list(root.charts), scope_change=None)
         subject_scope = (request.subject.model_dump(mode="json") if request.subject
                          else {"type": "team", "id": request.scope.team})
         complete_calculations(self.settings, question, work, {
             "sport": request.sport, "subject": subject_scope, "domain": request.analysis_domain,
             "scope": request.scope.model_dump(mode="json"),
             **({"comparison_subject": comparison_subject.model_dump(mode="json")} if head_to_head else {}),
-        }, scoped, second, conversation_context=conversation_context)
+        }, scoped, second, conversation_context=planner_context,
+            sport_runs=None if head_to_head else SportRuns(self, request, identifier), allow_scope_change=not head_to_head)
+        if work.scope_change:
+            # The question needs a different sample: run a linked investigation instead of answering from the wrong one.
+            logger.info("follow_up_rescoped investigation_id=%s parent_id=%s", identifier, root.run.investigation_id)
+            self.events.emit(identifier, "planning", "Re-scoping the analysis for this question", 0.6)
+            rescoped = AnalysisRequest.model_validate({**work.scope_change["request"], "question": question,
+                                                       "parent_investigation_id": root.run.investigation_id})
+            return self._investigate(rescoped, identifier, {**trace_metadata, "follow_up_kind": "scope_change"}, root_span)
+        new_evidence = [item for item in work.aggregate_evidence if item.evidence_id not in prior_evidence]
+        follow_up_kind = "new_measurement" if new_evidence else "explain_existing"
         if not head_to_head:
             # Research charts label series by period, which would merge the two subjects' measurements.
             add_research_charts(work, request=request, data_access=scoped)
@@ -860,6 +887,7 @@ class AnalystApplication:
                                                 for e in work.executions if e.tool == "complete_calculations"]
         failed = any(e.tool == "complete_calculations_failed" for e in work.executions)
         context["calculation_stage_status"] = "failed" if failed else "complete_or_not_requested"
+        context["follow_up_kind"] = follow_up_kind
         with self.telemetry.span("sports-analyst.synthesize-follow-up", metadata=trace_metadata, parent=root_span) as synthesis_span:
             draft, model_id, fallback = self.agent.synthesize(
                 question,
@@ -867,7 +895,7 @@ class AnalystApplication:
                 root.run.scope.baseline,
                 root.run.scope.comparison,
                 work.aggregate_evidence,
-                root.play_evidence,
+                work.play_evidence,
                 root.run.scope.included_seasons if root.run.scope.season_range else None,
                 conversation_context,
                 root.run.analysis_domain,
@@ -899,7 +927,7 @@ class AnalystApplication:
                 calls=[
                     PlannedToolCall(
                         tool="reuse_parent_evidence",
-                        arguments={"parent_investigation_id": root.run.investigation_id},
+                        arguments={"parent_investigation_id": root.run.investigation_id, "follow_up_kind": follow_up_kind},
                         purpose="Answer the follow-up without repeating unchanged deterministic analysis.",
                     )
                 ],
@@ -924,7 +952,7 @@ class AnalystApplication:
                 summary=draft.summary,
                 claims=draft.claims,
                 aggregate_evidence=work.aggregate_evidence,
-                play_evidence=root.play_evidence,
+                play_evidence=work.play_evidence,
                 charts=work.charts,
                 executions=[*thread_executions, *work.executions],
                 dataset_manifests=list(source_manifests.values()),

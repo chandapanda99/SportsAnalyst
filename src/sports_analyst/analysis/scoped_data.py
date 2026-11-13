@@ -122,8 +122,149 @@ class ScopedData:
         return [{"dataset_id": key, "dataset": item.dataset, "season": item.season,
                  "columns": item.columns, "coverage": item.coverage, "availability": item.availability,
                  "attribution": item.attribution, "contract": contract(item).model_dump(mode="json"),
-                 "scope_note": "Declared contract; snapshot keys and coverage checked on execution."}
+                 "subject_fields": self.identity_fields(item), "row_count": item.row_count,
+                 "windows": self.windows_for(item),
+                 "scope_note": "Declared contract; snapshot keys and coverage checked on execution. "
+                               "Empty subject_fields means direct aggregation cannot scope this table to the subject."}
                 for key, item in self.manifests.items()]
+
+    def windows_for(self, manifest):
+        """Window names whose season this snapshot covers (season 0 is a shared reference table)."""
+        scope = self.request.scope
+        names = [name for name in ("baseline", "comparison") if getattr(scope, name).season == manifest.season]
+        if scope.season_range and manifest.season in scope.included_seasons:
+            names.append(f"season:{manifest.season}")
+        return names
+
+    def identity_fields(self, manifest):
+        """Columns that attribute a row to the selected subject; empty when the table cannot be scoped."""
+        columns = set(manifest.columns)
+        subject = self.request.subject
+        if subject and subject.type == "player":
+            candidates = ("player_id", "athlete_id", "passer_player_id", "rusher_player_id", "receiver_player_id")
+            if self.request.analysis_domain == "defender":
+                from sports_analyst.plugins.nfl_player import DEFENSIVE_NAME_COLUMNS
+
+                candidates = (*candidates, "gsis_id", "pfr_player_id", *DEFENSIVE_NAME_COLUMNS)
+            return [field for field in candidates if field in columns]
+        # A defensive investigation's plays are the ones the team defended.
+        pbp_team = "defteam" if self.request.analysis_domain == "defense" else "posteam"
+        names = (pbp_team,) if self.request.sport == "nfl" and manifest.dataset == "play_by_play" else (
+            ("team_abbreviation", "team_abbrev", "team", "recent_team") if self.request.sport in {"nfl", "nba"} else ("team_id",))
+        return [field for field in names if field in columns]
+
+    def period(self, manifest, window):
+        if window.startswith("season:") and self.request.scope.season_range:
+            year = int(window.removeprefix("season:"))
+            if year not in self.request.scope.included_seasons:
+                raise ValueError("Season is outside the investigation scope")
+            period = AnalysisWindow(season=year)
+        elif window in {"baseline", "comparison"}:
+            period = getattr(self.request.scope, window)
+        else:
+            raise ValueError("Select baseline or comparison")
+        if period.season != manifest.season:
+            raise ValueError("Dataset season does not match the selected window")
+        return period
+
+    def subject_predicate(self, manifest, window):
+        """Host-enforced subject, season-type and window filter: (predicate, required columns, subject identifier)."""
+        period = self.period(manifest, window)
+        columns = set(manifest.columns)
+        subject = self.request.subject
+        identifier = str(subject.id if subject else self.request.scope.team)
+        identity = self.identity_fields(manifest)
+        if not identity:
+            raise ValueError("Table has no supported subject-attribution field; use a compatible attributed table")
+        predicate = reduce(or_, (pl.col(field).cast(pl.String) == identifier for field in identity))
+        required = set(identity)
+        if "season_type" in columns and self.request.sport == "nfl" and self.request.scope.season_type != "ALL":
+            predicate &= pl.col("season_type") == self.request.scope.season_type
+            required.add("season_type")
+        elif self.request.scope.season_type != "ALL":
+            raise ValueError("This table cannot verify the requested season type; "
+                             "use existing sport-specific evidence or an ALL scope")
+        if "completed" in columns:
+            predicate &= pl.col("completed") == True  # noqa: E712
+            required.add("completed")
+        if period.start_date or period.end_date:
+            date = next((name for name in ("game_date", "date", "game_date_time") if name in columns), None)
+            if date is None:
+                raise ValueError("Date window requires an attributed date column")
+            required.add(date)
+            if period.start_date:
+                predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) >= str(period.start_date)
+            if period.end_date:
+                predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) <= str(period.end_date)
+        elif not self.request.scope.season_range:
+            if "week" not in columns:
+                raise ValueError("This table cannot establish the requested week/season-segment window")
+            if period.segment:
+                raise ValueError("Named segments require sport-specific attribution; this generic tool cannot infer them")
+            predicate &= pl.col("week").is_between(*period.weeks)
+            required.add("week")
+        return predicate, required, identifier
+
+    def _collect(self, dataset_id, columns, predicate, row_limit):
+        manifest = self.manifests[dataset_id]
+        materialized = self.app.store.materialize_manifest(manifest)
+        if dataset_id not in self.verified:
+            from sports_analyst.datasets.snapshots import sha256_file
+
+            if sha256_file(Path(materialized.local_path)) != manifest.sha256:
+                raise ValueError("Source snapshot checksum changed; prepare the investigation again")
+            self.verified.add(dataset_id)
+        # The file comes from the trusted catalog, not from an LLM path argument.
+        frame = pl.scan_parquet(materialized.local_path).select(sorted(columns)).filter(predicate).limit(row_limit + 1).collect()
+        if frame.height > row_limit:
+            raise ValueError(f"Subject slice exceeds {row_limit} rows; narrow the filters (no partial result returned)")
+        return frame
+
+    def _spend(self):
+        self.calls += 1
+        if self.calls > 16:
+            raise ValueError("Scoped data query budget exhausted")
+
+    def field_values(self, dataset_id, field, window):
+        """Profile one recorded column on the subject's scoped rows: null rate, range and most common values."""
+        from sports_analyst.analysis.research.dictionary import describe, profile
+
+        if dataset_id not in self.manifests:
+            raise ValueError(f"Unknown dataset_id={dataset_id!r}; inspect_scoped_datasets returns authorized dataset IDs")
+        manifest = self.manifests[dataset_id]
+        if field not in manifest.columns:
+            raise ValueError(f"Unknown field {field!r}; use search_fields or inspect_dataset_schema")
+        self._spend()
+        predicate, required, _ = self.subject_predicate(manifest, window)
+        frame = self._collect(dataset_id, required | {field}, predicate, 200_000)
+        return {"dataset_id": dataset_id, "dataset": manifest.dataset, "window": window,
+                **profile(frame, field), "definition": describe(manifest.sport, manifest.dataset, field),
+                "note": "Profile of the selected subject's scoped rows in this window only."}
+
+    def extract(self, dataset_id, window, fields, filters, row_limit=20_000):
+        """Scoped, column-projected rows for sandboxed computation; never paths or other subjects' rows."""
+        if dataset_id not in self.manifests:
+            raise ValueError(f"Unknown dataset_id={dataset_id!r}; inspect_scoped_datasets returns authorized dataset IDs")
+        manifest = self.manifests[dataset_id]
+        columns = set(manifest.columns)
+        if not 1 <= len(fields) <= 12 or len(set(fields)) != len(fields) or not set(fields) <= columns:
+            raise ValueError(f"Select 1-12 distinct recorded fields from this dataset. Unknown: {sorted(set(fields) - columns)}")
+        if len(filters) > 8:
+            raise ValueError("At most 8 filters")
+        self._spend()
+        predicate, required, identifier = self.subject_predicate(manifest, window)
+        extra = pl.lit(True)
+        for condition in filters:
+            field, op = condition["field"], condition["op"]
+            if field not in columns or op not in {"eq", "ne", "gt", "ge", "lt", "le", "is_not_null"}:
+                raise ValueError(f"Invalid filter field={field!r}, op={op!r}")
+            required.add(field)
+            extra &= research_predicate([Filter(field=field, op=op, value=condition.get("value"))], columns)
+        frame = self._collect(dataset_id, required | set(fields), predicate, 200_000).filter(extra)
+        if frame.height > row_limit:
+            raise ValueError(f"Extract has {frame.height} rows, above the {row_limit}-row sandbox limit; add filters")
+        return {"dataset_id": dataset_id, "source_sha256": manifest.sha256, "window": window, "subject": identifier,
+                "fields": list(fields), "filters": filters, "rows": frame.select(fields).to_dicts()}
 
     def aggregate(self, dataset_id, window, group_by, measures, filters, game_dataset_id="", game_fields=None):
         self.calls += 1
@@ -158,18 +299,6 @@ class ScopedData:
                 "rows": payload["rows"], "qualifying_rows": payload["qualifying_rows"], "join_plan_id": checked["plan_id"]}
             return {**response, "result_sha256": digest(response)}
         manifest = self.manifests[dataset_id]
-        fields = sorted(manifest.columns)
-        if window.startswith("season:") and self.request.scope.season_range:
-            year = int(window.removeprefix("season:"))
-            if year not in self.request.scope.included_seasons:
-                raise ValueError("Season is outside the investigation scope")
-            period = AnalysisWindow(season=year)
-        elif window in {"baseline", "comparison"}:
-            period = getattr(self.request.scope, window)
-        else:
-            raise ValueError("Select baseline or comparison")
-        if period.season != manifest.season:
-            raise ValueError("Dataset season does not match the selected window")
         if len(group_by) > 3 or not 1 <= len(measures) <= 8 or len(filters) > 8:
             raise ValueError("Query exceeds grouping/measurement/filter budget")
         columns = set(manifest.columns)
@@ -178,50 +307,8 @@ class ScopedData:
         for field in group_by:
             if field not in columns:
                 raise ValueError(f"Unknown grouping field: {field!r}. Allowed fields={fields}")
-        subject = self.request.subject
-        identifier = str(subject.id if subject else self.request.scope.team)
-        if subject and subject.type == "player":
-            candidates = ("player_id", "athlete_id", "passer_player_id", "rusher_player_id", "receiver_player_id")
-            if self.request.analysis_domain == "defender":
-                from sports_analyst.plugins.nfl_player import DEFENSIVE_NAME_COLUMNS
-
-                candidates = (*candidates, "gsis_id", "pfr_player_id", *DEFENSIVE_NAME_COLUMNS)
-            identity = [field for field in candidates if field in columns]
-        else:
-            # A defensive investigation's plays are the ones the team defended.
-            pbp_team = "defteam" if self.request.analysis_domain == "defense" else "posteam"
-            names = (pbp_team,) if self.request.sport == "nfl" and manifest.dataset == "play_by_play" else (
-                ("team_abbreviation", "team_abbrev", "team", "recent_team") if self.request.sport in {"nfl", "nba"} else ("team_id",))
-            identity = [field for field in names if field in columns]
-        if not identity:
-            raise ValueError("Table has no supported subject-attribution field; use a compatible attributed table")
-        predicate = reduce(or_, (pl.col(field).cast(pl.String) == identifier for field in identity))
-        required = (set(group_by) & original_columns) | set(identity)
-        if "season_type" in columns and self.request.sport == "nfl" and self.request.scope.season_type != "ALL":
-            predicate &= pl.col("season_type") == self.request.scope.season_type
-            required.add("season_type")
-        elif self.request.scope.season_type != "ALL":
-            raise ValueError("This table cannot verify the requested season type; "
-                             "use existing sport-specific evidence or an ALL scope")
-        if "completed" in columns:
-            predicate &= pl.col("completed") == True  # noqa: E712
-            required.add("completed")
-        if period.start_date or period.end_date:
-            date = next((name for name in ("game_date", "date", "game_date_time") if name in columns), None)
-            if date is None:
-                raise ValueError("Date window requires an attributed date column")
-            required.add(date)
-            if period.start_date:
-                predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) >= str(period.start_date)
-            if period.end_date:
-                predicate &= pl.col(date).cast(pl.String).str.slice(0, 10) <= str(period.end_date)
-        elif not self.request.scope.season_range:
-            if "week" not in columns:
-                raise ValueError("This table cannot establish the requested week/season-segment window")
-            if period.segment:
-                raise ValueError("Named segments require sport-specific attribution; this generic tool cannot infer them")
-            predicate &= pl.col("week").is_between(*period.weeks)
-            required.add("week")
+        predicate, required, identifier = self.subject_predicate(manifest, window)
+        required |= set(group_by) & original_columns
         extra_predicate = pl.lit(True)
         for condition in filters:
             field, op, value = condition["field"], condition["op"], condition.get("value")
@@ -258,19 +345,7 @@ class ScopedData:
             definitions.append({"result": alias, "op": op, "field": field})
         if len(required) > 24:
             raise ValueError("Query exceeds column budget")
-        materialized = self.app.store.materialize_manifest(manifest)
-        if dataset_id not in self.verified:
-            from sports_analyst.datasets.snapshots import sha256_file
-
-            if sha256_file(Path(materialized.local_path)) != manifest.sha256:
-                raise ValueError("Source snapshot checksum changed; prepare the investigation again")
-            self.verified.add(dataset_id)
-        # The file comes from the trusted catalog, not from an LLM path argument.
-        query = pl.scan_parquet(materialized.local_path).select(sorted(required)).filter(predicate)
-        frame = query.limit(200_001).collect()
-        if frame.height > 200_000:
-            raise ValueError("Subject slice exceeds 200000 rows; narrow the filters (no partial result returned)")
-        frame = frame.filter(extra_predicate)
+        frame = self._collect(dataset_id, required, predicate, 200_000).filter(extra_predicate)
         result = (frame.group_by(group_by).agg(pl.len().alias("qualifying_rows"), *expressions)
                   if group_by else frame.select(pl.len().alias("qualifying_rows"), *expressions))
         if result.height > 100:

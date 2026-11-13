@@ -54,7 +54,12 @@ def definitions(plan, manifests, relationships):
                 "points" if field in {"points", "points_scored", "points_allowed"} else
                 "goals" if field in {"goals", "goals_for", "goals_against"} else
                 "expected_goals" if field in {"xg", "expected_goals", "non_penalty_xg"} else
-                "expected_points" if field == "epa" else "recorded column units")
+                "expected_points" if field == "epa" else None)
+        if unit is None:
+            from sports_analyst.analysis.research.dictionary import describe
+
+            known = describe(source.sport, source.dataset, field)
+            unit = known["unit"] if known and known.get("source") == "curated" and known.get("unit") else "recorded column units"
         definition = field
         if m.op == "rate":
             definition, unit = rate_definition(m)
