@@ -515,6 +515,7 @@ class CFBPlugin:
                 raise ValueError("No comparable advanced college-football metrics: model identity is absent or differs between windows. "
                                  "Re-prepare both windows with the same current model bundle.")
             raise ValueError("No comparable college-football metrics have attributed coverage in both windows")
+        seasonal, seasonal_gaps = self.seasonal(request, datasets, supplemental, aggregates, source, subject, ids)
         for name, window in windows:
             stats = supplemental.get(source, {}).get(window.season, pl.DataFrame())
             scoring = supplemental.get("scoring_events", {}).get(window.season, pl.DataFrame())
@@ -582,6 +583,14 @@ class CFBPlugin:
         if selected_plays:
             covered_windows = {item.window for item in selected_plays}
             evidence = selected_plays + [item for item in evidence if item.window not in covered_windows]
+        executions = []
+        if seasonal:
+            seasonal_id = seasonal[0].tool_execution_id
+            executions.append(ToolExecutionRecord(
+                execution_id=seasonal_id, tool="analyze_season_trends",
+                parameters={"seasons": list(request.scope.included_seasons), "metrics": [item.metric for item in aggregates]},
+                started_at=datetime.now(UTC), duration_ms=0, result_sha256=sha([item.model_dump() for item in seasonal]),
+                dataset_manifest_ids=ids))
         execution = ToolExecutionRecord(
             execution_id=execution_id,
             tool="compare_cfb_windows",
@@ -617,6 +626,24 @@ class CFBPlugin:
         ]
         if gaps:
             caveats.append("Metrics lacking coverage in both windows: " + ", ".join(gaps))
+        charts = [chart]
+        primary = next((item for item in aggregates if item.metric in requested_metrics), aggregates[0])
+        trend_rows = [{"season": item.context["season"], "value": item.value, "series": primary.label}
+                      for item in seasonal if item.metric == f"seasonal_{primary.metric}"]
+        if len(trend_rows) > 2:
+            charts.append(ChartArtifact(
+                chart_id=stable_id("chart", {**parameters, "view": "season-trend", "metric": primary.metric}),
+                title=f"Season-by-season {primary.label}",
+                specification={"$schema": "https://vega.github.io/schema/vega-lite/v5.json", "data": {"values": trend_rows},
+                               "mark": {"type": "line", "point": True},
+                               "encoding": {"x": {"field": "season", "type": "ordinal", "sort": "ascending"},
+                                            "y": {"field": "value", "type": "quantitative", "axis": {"title": primary.label}},
+                                            "color": {"field": "series", "type": "nominal", "legend": None},
+                                            "tooltip": [{"field": "season", "type": "ordinal", "title": "Season"},
+                                                        {"field": "value", "type": "quantitative", "title": primary.label}]}},
+                evidence_ids=[item.evidence_id for item in seasonal if item.metric == f"seasonal_{primary.metric}"]))
+        if seasonal_gaps:
+            caveats.append("Seasons without usable recorded coverage for a metric are gaps, not zero: " + "; ".join(seasonal_gaps))
         absent = sorted(set(request.scope.included_seasons) - set(datasets))
         if absent:
             caveats.append(f"No verified player-season observations for {absent}; these intermediate seasons were not treated as zero.")
@@ -636,7 +663,51 @@ class CFBPlugin:
                     f"{item.partition_key} {item.season}: {item.coverage.get('completed_matches', 0)}/"
                     f"{item.coverage.get('expected_matches', 0)} game summaries retrieved."
                 )
-        return CFBResult(aggregates, evidence, [chart], [execution], list(dict.fromkeys(caveats)))
+        return CFBResult([*aggregates, *seasonal], evidence, charts, [execution, *executions], list(dict.fromkeys(caveats)))
+
+    def seasonal(self, request, datasets, supplemental, aggregates, source, subject, ids):
+        """Measure every season of a season range with the endpoints' own definitions, so middle seasons are shown."""
+        if request.scope.comparison_design != "full_seasons" or len(request.scope.included_seasons) < 3:
+            return [], []  # a two-season range has no middle season to show
+        output, gaps = [], []
+        execution_id = stable_id("execution", {"tool": "analyze_season_trends", "scope": request.scope.model_dump(mode="json"),
+                                               "subject": subject.model_dump(mode="json")})
+        for season in request.scope.included_seasons:
+            if season not in datasets:
+                gaps.append(f"{season}: no schedule")
+                continue
+            schedule = self.window(datasets[season], request.scope.baseline.model_copy(update={"season": season}), request)
+            for item in aggregates:
+                endpoint = (item.baseline_value if season == request.scope.baseline.season
+                            else item.comparison_value if season == request.scope.comparison.season else None)
+                metric_source = "play_context" if item.metric in CONTEXT_METRICS else "enriched_plays" if item.metric in ADVANCED else source
+                if metric_source == "play_context":
+                    data = context_frame(supplemental.get("recorded_plays", {}).get(season, pl.DataFrame()),
+                                         supplemental.get("enriched_plays", {}).get(season, pl.DataFrame()))
+                else:
+                    data = supplemental.get(metric_source, {}).get(season, pl.DataFrame())
+                if item.metric in ADVANCED:
+                    # Modeled values are comparable only under the provider version the endpoints used.
+                    versions = ({*data["model_identity"].drop_nulls().to_list()}
+                                if "model_identity" in data.columns and data["model_identity"].null_count() == 0 else set())
+                    if versions != set(item.context.get("provider_versions") or []):
+                        gaps.append(f"{season} · {item.label} (model version differs)")
+                        continue
+                value, count = self.value(item.metric, schedule, data, subject)
+                if endpoint is not None:
+                    value = endpoint
+                    count = item.context["baseline_sample"] if season == request.scope.baseline.season else item.context["comparison_sample"]
+                if value is None or not count:
+                    gaps.append(f"{season} · {item.label}")
+                    continue
+                payload = {"execution": execution_id, "metric": item.metric, "season": season, "value": round(value, 6)}
+                output.append(AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload), metric=f"seasonal_{item.metric}", label=f"{season} · {item.label}",
+                    value=round(value, 6), unit=item.unit, sample_size=int(count), row_set_sha256=sha(payload),
+                    dataset_manifest_ids=ids, tool_execution_id=execution_id,
+                    context={"season": season, "metric": item.metric, "sample_definition": item.context.get("sample_definition")},
+                    caveats=["Recorded per-season measurement with the endpoints' definition; not opponent-adjusted."]))
+        return output, gaps
 
     @staticmethod
     def schools(schedule, stats, subject):

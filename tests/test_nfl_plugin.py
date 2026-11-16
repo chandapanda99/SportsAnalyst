@@ -144,6 +144,9 @@ def test_nfl_player_analysis_supports_quarterback_receiving_and_rushing(pbp_pair
         "supporting_signal", "counter_signal"
     }
     assert result.charts[0].specification["usermeta"]["chartKind"] == "metric-rows"
+    # Every compared metric is measured per season, not just the primary one.
+    seasonal = {(item.metric, item.context["season"]) for item in result.aggregate_evidence if item.metric.startswith("seasonal_")}
+    assert seasonal == {(f"seasonal_{metric}", season) for metric in ("qb_epa_per_dropback", "qb_sack_rate") for season in (2024, 2025)}
 
     directory = pl.DataFrame(
         {

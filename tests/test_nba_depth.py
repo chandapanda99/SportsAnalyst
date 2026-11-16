@@ -189,3 +189,33 @@ def test_nba_stats_loaders_receive_start_years_and_old_packages_are_excluded(tmp
     result = NBAPlugin().analyze(_request(AnalysisSubject(type="team", id="GSW"), "shooting"), datasets, manifests, supplemental,
                                  {"stats_shots": {2025: _manifest("stats_shots", 2025)}})
     assert any("stats_shots" in caveat and "Download them again" in caveat for caveat in result.caveats)
+
+
+def test_season_ranges_measure_every_season_between_the_endpoints():
+    from test_nba_analysis import _play_by_play, _player_box, _schedule, _team_box
+
+    from sports_analyst.models import AnalysisRequest, AnalysisScope, AnalysisWindow
+
+    seasons = (2024, 2025, 2026)
+    supplemental = {"team_boxscores": {season: _team_box(season, 37 + season - 2024) for season in seasons},
+                    "player_boxscores": {season: _player_box(season) for season in seasons},
+                    "schedules": {season: _schedule(season) for season in seasons}}
+    datasets = {season: _play_by_play(season, layup_made=season > 2024) for season in seasons}
+    manifests = {season: _manifest("play_by_play", season) for season in seasons}
+    request = AnalysisRequest(
+        sport="nba", subject=AnalysisSubject(type="team", id="GSW"), question="How did the defense grow over three seasons?",
+        analysis_domain="defense", metrics=["defensive_rating", "opponent_effective_fg_pct"],
+        scope=AnalysisScope(team="GSW", baseline=AnalysisWindow(season=2024), comparison=AnalysisWindow(season=2026),
+                            season_type="ALL", comparison_design="full_seasons"))
+    result = NBAPlugin().analyze(request, datasets, manifests, supplemental, {})
+    for metric in ("defensive_rating", "opponent_effective_fg_pct"):
+        seasonal = {item.context["season"]: item for item in result.aggregate_evidence if item.metric == f"seasonal_{metric}"}
+        assert set(seasonal) == set(seasons), metric  # the middle season is measured, not reported missing
+        assert seasonal[2025].label.startswith("2025 · ") and seasonal[2025].context["season_label"] == "2024–25"
+        assert seasonal[2025].sample_size == 8
+    middle = next(item for item in result.aggregate_evidence if item.metric == "seasonal_opponent_effective_fg_pct"
+                  and item.context["season"] == 2025)
+    assert middle.value == pytest.approx((38 + 6) / 85, abs=1e-6)
+    assert any(item.tool == "analyze_season_trends" for item in result.executions)
+    trend = next(chart for chart in result.charts if chart.title.startswith("Season-by-season"))
+    assert [row["season"] for row in trend.specification["data"]["values"]] == list(seasons)

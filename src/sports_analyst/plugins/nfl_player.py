@@ -1065,23 +1065,29 @@ class NFLPlayerAnalysisMixin:
         frames = season_frames or {windows[0].season: baseline, windows[1].season: comparison}
         trend_id = stable_id("execution", {"tool": "analyze_player_trends", "subject": subject.id, "metric": primary})
         trend_started_at, trend_started = datetime.now(UTC), perf_counter()
+        # Every compared metric is measured in every season of a range, so no report column shows a missing middle season.
+        compared = [primary, *(metric for metric in selected_metrics
+                               if metric != primary and any(item.metric == metric for item in evidence))]
         for season, frame in sorted(frames.items()):
-            value = _value(frame, PLAYER_METRICS[primary][0])
-            if value is None:
-                continue
-            payload = {"subject": subject.id, "season": season, "metric": primary, "value": value}
-            item = AggregateEvidence(
-                evidence_id=stable_id("evidence", payload),
-                metric=f"seasonal_{primary}",
-                label=f"{season} · {PLAYER_METRICS[primary][1]}",
-                value=round(value, 6),
-                sample_size=frame.height,
-                row_set_sha256=_sha(payload),
-                dataset_manifest_ids=[manifests[season].manifest_id],
-                tool_execution_id=trend_id,
-            )
-            trend_evidence.append(item)
-            trend_values.append({"season": season, "value": value, "metric": PLAYER_METRICS[primary][1]})
+            for metric in compared:
+                value = _value(frame, PLAYER_METRICS[metric][0])
+                if value is None:
+                    continue
+                payload = {"subject": subject.id, "season": season, "metric": metric, "value": value}
+                item = AggregateEvidence(
+                    evidence_id=stable_id("evidence", payload),
+                    metric=f"seasonal_{metric}",
+                    label=f"{season} · {PLAYER_METRICS[metric][1]}",
+                    value=round(value, 6),
+                    sample_size=frame.height,
+                    row_set_sha256=_sha(payload),
+                    dataset_manifest_ids=[manifests[season].manifest_id],
+                    tool_execution_id=trend_id,
+                    context={"season": season, "metric": metric},
+                )
+                trend_evidence.append(item)
+                if metric == primary:
+                    trend_values.append({"season": season, "value": value, "metric": PLAYER_METRICS[primary][1]})
         evidence.extend(trend_evidence)
         executions.append(
             _execution_record(
@@ -1158,7 +1164,7 @@ class NFLPlayerAnalysisMixin:
                             "tooltip": [{"field": "season"}, {"field": "value", "format": ".3f"}],
                         },
                     },
-                    evidence_ids=[item.evidence_id for item in trend_evidence],
+                    evidence_ids=[item.evidence_id for item in trend_evidence if item.metric == f"seasonal_{primary}"],
                 )
             )
 

@@ -1309,21 +1309,53 @@ class NBAPlugin:
             evidence_ids=[item.evidence_id for item in aggregate],
         )
         charts = [comparison_chart]
+        seasonal_evidence: list[AggregateEvidence] = []
+        seasonal_execution: ToolExecutionRecord | None = None
         if request.scope.comparison_design == "full_seasons":
             primary = aggregate[0]
+            # Every season in the range is measured for every compared metric, so the report shows the path
+            # between the endpoints, not just the endpoints.
+            season_started_at, season_started = datetime.now(UTC), perf_counter()
+            season_parameters = {**parameters, "seasons": list(request.scope.included_seasons),
+                                 "segment": "full_season", "season_type": request.scope.season_type}
+            season_execution_id = stable_id("execution", {"tool": "analyze_season_trends", **season_parameters})
             trend_values: list[dict[str, Any]] = []
             for season in request.scope.included_seasons:
-                if primary.metric.startswith("lineup_"):
-                    try:
-                        season_frame = self._lineup_windows(request, datasets, supplemental, [(season, "full_season")],
-                                                            lineup_source["source"] if lineup_source else None)[0][0]
-                    except ValueError:
+                frames: dict[bool, pl.DataFrame | None] = {}
+                for item in aggregate:
+                    lineup = item.metric.startswith("lineup_")
+                    if lineup not in frames:
+                        try:
+                            frames[lineup] = (self._lineup_windows(request, datasets, supplemental, [(season, "full_season")],
+                                                                   lineup_source["source"] if lineup_source else None)[0][0]
+                                              if lineup else self._window_frame(request, season, "full_season", supplemental))
+                        except ValueError:
+                            frames[lineup] = None
+                    season_frame = frames[lineup]
+                    if season_frame is None or season_frame.is_empty():
                         continue
-                else:
-                    season_frame = self._window_frame(request, season, "full_season", supplemental)
-                value = _metric(season_frame, primary.metric, subject_type)
-                if value is not None:
-                    trend_values.append({"series": primary.label, "season": season, "value": value})
+                    value = _metric(season_frame, item.metric, subject_type)
+                    if value is None or not math.isfinite(value):
+                        continue
+                    season_label = f"{season - 1}–{str(season)[-2:]}"
+                    payload = {"tool": "analyze_season_trends", **season_parameters, "season": season, "metric": item.metric}
+                    seasonal_evidence.append(AggregateEvidence(
+                        evidence_id=stable_id("evidence", payload), metric=f"seasonal_{item.metric}",
+                        label=f"{season} · {item.label}", value=round(value, 6), unit=item.unit,
+                        sample_size=_sample_size(season_frame, item.metric), row_set_sha256=_sha(payload),
+                        dataset_manifest_ids=[manifest.manifest_id for manifest in all_manifests
+                                              if manifest.season in {season, 0}],
+                        tool_execution_id=season_execution_id,
+                        context={"season": season, "season_label": season_label, "metric": item.metric,
+                                 "sample_definition": "games" if not lineup else "lineup possessions"}))
+                    if item.metric == primary.metric:
+                        trend_values.append({"series": primary.label, "season": season, "season_label": season_label,
+                                             "value": value})
+            seasonal_execution = ToolExecutionRecord(
+                execution_id=season_execution_id, tool="analyze_season_trends", parameters=season_parameters,
+                started_at=season_started_at, duration_ms=int((perf_counter() - season_started) * 1000),
+                result_sha256=_sha([item.model_dump(mode="json") for item in seasonal_evidence]),
+                dataset_manifest_ids=[manifest.manifest_id for manifest in all_manifests])
             if trend_values:
                 charts.append(
                     ChartArtifact(
@@ -1344,10 +1376,12 @@ class NBAPlugin:
                                 ],
                             },
                         },
-                        evidence_ids=[primary.evidence_id],
+                        evidence_ids=[primary.evidence_id, *(item.evidence_id for item in seasonal_evidence
+                                                             if item.metric == f"seasonal_{primary.metric}")],
                     )
                 )
-        executions = [execution, play_execution]
+        executions = [execution, play_execution, *([seasonal_execution] if seasonal_execution else [])]
+        aggregate.extend(seasonal_evidence)
         if any(item.metric.startswith("lineup_") for item in aggregate):
             lineup_evidence, lineup_execution, lineup_chart = self._lineup_analysis(request, baseline, comparison, all_manifests,
                                                                                     lineup_source)
