@@ -45,7 +45,7 @@ jobs:
           }
           uv lock --check
           if ($LASTEXITCODE -ne 0) { throw "uv.lock is stale" }
-          uv sync --frozen --prerelease allow --extra desktop --extra desktop-build --extra test
+          uv sync --frozen --prerelease allow --extra desktop --extra test
           if ($LASTEXITCODE -ne 0) { throw "Locked desktop dependency installation failed" }
       - name: Test desktop and dataset workflows
         shell: powershell
