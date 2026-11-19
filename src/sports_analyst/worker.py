@@ -79,7 +79,24 @@ def execute_job(settings: Settings, job: dict) -> None:
             logger.warning("job_failure_update_unavailable job_id=%s; lease will expire", key)
 
 
-def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, stop_event: Any | None = None) -> None:
+def _apply_settings_updates(settings: Settings, updates: Any) -> Settings:
+    """Adopt provider changes made in the app; a job already running keeps its own copy."""
+    import queue
+
+    while updates is not None:
+        try:
+            fields = updates.get_nowait()
+        except queue.Empty:
+            break
+        except (EOFError, OSError):
+            break
+        settings = settings.model_copy(update=fields)
+        logger.info("worker_model_settings_updated provider=%s", settings.model_provider)
+    return settings
+
+
+def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, stop_event: Any | None = None,
+               settings_updates: Any | None = None) -> None:
     from sports_analyst.jobs.local import SQLiteJobStore
     from sports_analyst.observability.logging import configure_logging
 
@@ -99,6 +116,7 @@ def run_worker(settings: Settings, *, once: bool = False, drain: bool = False, s
     context = multiprocessing.get_context("spawn")
     idle = settings.job_poll_seconds
     while not stop.is_set():
+        settings = _apply_settings_updates(settings, settings_updates)
         try:
             job = jobs.claim(settings.job_lease_seconds)
         except Exception as error:

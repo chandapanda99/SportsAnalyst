@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock, local
 from time import perf_counter
 from typing import Any
 
@@ -59,7 +59,14 @@ class AnalystApplication:
         analysis_runtime: bool = True,
         startup_progress: Callable[[str], None] | None = None,
     ) -> None:
-        self.settings = settings or get_settings()
+        self._settings = settings or get_settings()
+        # A run pins the settings and agent it started with, so a provider change
+        # made while it is running only affects work started afterwards.
+        self._pinned = local()
+        self._model_update_lock = Lock()
+        self.model_settings_store = None
+        self.model_settings_listeners: list[Callable[[Settings], None]] = []
+        self.model_status: dict[str, Any] = {"state": "idle", "message": None, "model_id": None}
         configure_logging(self.settings.log_level)
         if startup_progress:
             startup_progress("Loading your saved sports data...")
@@ -106,7 +113,105 @@ class AnalystApplication:
         self.plugins["nfl"] = value
 
     @property
+    def settings(self) -> Settings:
+        pinned = getattr(self._pinned, "runtime", None)
+        return pinned[0] if pinned else self._settings
+
+    @settings.setter
+    def settings(self, value: Settings) -> None:
+        self._settings = value
+
+    @contextmanager
+    def pinned_model_runtime(self):
+        """Keep this thread's run on the provider it started with."""
+        if getattr(self._pinned, "runtime", None):
+            yield
+            return
+        with self._runtime_lock:
+            runtime = (self._settings, self.agent)
+        self._pinned.runtime = runtime
+        try:
+            yield
+        finally:
+            self._pinned.runtime = None
+
+    def model_settings_editable(self) -> tuple[bool, str | None]:
+        if not self._analysis_enabled:
+            return False, "This server does not run analyses, so its model settings are managed by the deployment."
+        if self._settings.job_backend == "object":
+            return False, "Model settings for this hosted deployment are managed by its operator."
+        if self._settings.job_backend == "sqlite" and not self.model_settings_listeners:
+            return False, "A separate worker runs analyses here; change its environment and restart it."
+        return True, None
+
+    def model_settings(self) -> dict[str, Any]:
+        from sports_analyst.model_settings import REASONING_EFFORTS, public_view
+
+        editable, reason = self.model_settings_editable()
+        store = self.model_settings_store
+        return {
+            **public_view(self._settings),
+            "status": dict(self.model_status),
+            "providers": [{"id": "azure_foundry", "label": "Azure AI Foundry"}, {"id": "ollama", "label": "Ollama"}],
+            "reasoning_efforts": list(REASONING_EFFORTS),
+            "editable": editable,
+            "read_only_reason": reason,
+            "persistence": "saved" if store is not None else "session",
+            "persistence_detail": (store.description if store is not None else
+                                   "Applies until the app restarts. To keep it, set the same values in your .env file."),
+        }
+
+    def update_model_settings(self, update) -> dict[str, Any]:
+        """Validate, test and apply new provider settings, keeping the old ones on failure."""
+        from sports_analyst.model_settings import ModelSettingsError, check_connection, describe_failure, merge
+
+        editable, reason = self.model_settings_editable()
+        if not editable:
+            raise PermissionError(reason)
+        if not self._model_update_lock.acquire(blocking=False):
+            raise ModelSettingsError("Another connection check is already running. Wait for it to finish.")
+        try:
+            current = self._settings
+            candidate, persisted, new_key = merge(current, update)
+            previous_status = dict(self.model_status)
+            self.model_status = {"state": "connecting", "message": None, "model_id": None}
+            secrets = (new_key, current.foundry_api_key.get_secret_value() if current.foundry_api_key else None)
+            try:
+                model_id = check_connection(candidate)
+            except Exception as error:
+                message = describe_failure(error, secrets)
+                logger.warning("model_settings_check_failed provider=%s error_type=%s",
+                               candidate.model_provider, type(error).__name__)
+                self.model_status = previous_status
+                return {"ok": False, "error": message, "settings": self.model_settings()}
+            saved_error = None
+            if self.model_settings_store is not None:
+                try:
+                    self.model_settings_store.save(persisted, new_key, bool(update.clear_api_key))
+                except Exception as error:
+                    logger.warning("model_settings_save_failed error_type=%s", type(error).__name__)
+                    saved_error = "Connected, but the settings could not be saved for the next launch."
+            from sports_analyst.analysis.agents import EvidenceBoundAgent
+
+            with self._runtime_lock:
+                self._settings = candidate
+                self._agent = EvidenceBoundAgent(candidate) if self._analysis_enabled else None
+            for listener in list(self.model_settings_listeners):
+                try:
+                    listener(candidate)
+                except Exception as error:
+                    logger.warning("model_settings_listener_failed error_type=%s", type(error).__name__)
+            self.model_status = {"state": "ready", "message": saved_error, "model_id": model_id}
+            logger.info("model_settings_applied provider=%s model_id=%s", candidate.model_provider, model_id)
+            return {"ok": True, "error": None, "warning": saved_error, "settings": self.model_settings()}
+        finally:
+            self._model_update_lock.release()
+
+    @property
     def agent(self):
+        pinned = getattr(self._pinned, "runtime", None)
+        if pinned:
+            return pinned[1]
         with self._runtime_lock:
             if self._analysis_enabled and self._agent is None:
                 from sports_analyst.analysis.agents import EvidenceBoundAgent
@@ -461,7 +566,7 @@ class AnalystApplication:
                 inputs={"question": request.question, "scope": request.scope.model_dump(mode="json")},
                 metadata=metadata,
                 tags=tags,
-        ) as root_span:
+        ) as root_span, self.pinned_model_runtime():
             bundle = self._investigate(request, identifier, metadata, root_span)
             self.telemetry.add_outputs(
                 root_span,
@@ -732,7 +837,7 @@ class AnalystApplication:
                 inputs={"question": question, "parent_investigation_id": root.run.investigation_id},
                 metadata=metadata,
                 tags=tags,
-        ) as root_span:
+        ) as root_span, self.pinned_model_runtime():
             bundle = self._follow_up(root, question, identifier, metadata, root_span)
             self.telemetry.add_outputs(
                 root_span,

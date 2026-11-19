@@ -114,6 +114,33 @@ uv run sports-analyst providers check
 
 If provider construction or model synthesis fails, the completed deterministic evidence remains available and the saved report is marked as a fallback.
 
+### Changing the model while the app runs
+
+Select the AI model indicator at the bottom of the side navigation to view and change
+the provider, endpoint, deployments, reasoning effort and sign-in. **Test & save**
+makes one short request to each model (analysis and, when set, wording) before
+applying anything. If the check fails, the previous connection stays in use and the
+dialog shows why. Reports already running finish with the model they started with;
+new reports use the new settings.
+
+The API key is write-only: the app reports only whether one is saved and never
+returns or logs it. A saved key is not reused when the endpoint moves to a different
+server; enter the key for the new endpoint or choose Microsoft Entra sign-in.
+Choosing Ollama clears `CHAT_MODEL`, because that names an Azure deployment.
+
+Where changes are kept:
+
+- **Windows desktop:** saved for the next launch. Non-secret values go to
+  `desktop.json` in the per-user config folder and the key goes to Windows
+  Credential Manager, the same places as first-run setup. The background worker
+  picks up the change before its next job. Variables already set in the shell
+  environment still win at startup.
+- **Development server (`sports-analyst serve`):** applies until the server
+  restarts. `.env` is never rewritten; copy the values there to keep them.
+- **Hosted deployments** (`JOB_BACKEND=object`), API-only replicas, and a SQLite
+  queue with a separately started worker show the settings read-only, because the
+  process that runs analyses would not see the change.
+
 ### LangSmith tracing
 
 LangSmith tracing is opt-in. Add the following to `.env` to trace the deterministic pipeline and Deep Agent activity:

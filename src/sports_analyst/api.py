@@ -12,8 +12,9 @@ from pathlib import Path
 from threading import RLock
 from time import monotonic
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
@@ -23,6 +24,7 @@ from sports_analyst.application.service import AnalystApplication
 from sports_analyst.datasets.errors import safe_sync_message
 from sports_analyst.datasets.soccer.catalog import SOCCER_COMPETITIONS
 from sports_analyst.jobs.common import TERMINAL_STAGES, JobCancelled
+from sports_analyst.model_settings import ModelSettingsError, ModelSettingsUpdate
 from sports_analyst.models import (
     AnalysisOptions,
     AnalysisRequest,
@@ -134,6 +136,31 @@ def create_app(application: AnalystApplication | None = None, frontend_dir: Path
     @api.get("/api/capabilities", response_model=RuntimeCapabilities)
     def capabilities() -> RuntimeCapabilities:
         return service.capabilities()
+
+    @api.get("/api/model-settings")
+    def model_settings() -> dict[str, Any]:
+        """Current provider settings; secrets are reported only as set or not set."""
+        return service.model_settings()
+
+    @api.put("/api/model-settings")
+    def update_model_settings(update: ModelSettingsUpdate, request: Request) -> dict[str, Any]:
+        # A web page on another site must not be able to repoint the model, even on localhost.
+        origin = request.headers.get("origin")
+        host = request.headers.get("host", "")
+        loopback = {"localhost", "127.0.0.1", "::1"}
+        same_site = origin is None or urlparse(origin).netloc == host or (
+            # The development server proxies from another local port.
+            urlparse(origin).hostname in loopback and urlparse(f"//{host}").hostname in loopback)
+        if not same_site:
+            raise HTTPException(403, "Model settings can only be changed from this app")
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            raise HTTPException(415, "Send model settings as JSON")
+        try:
+            return service.update_model_settings(update)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except ModelSettingsError as error:
+            return {"ok": False, "error": str(error), "field": error.field, "settings": service.model_settings()}
 
     @api.delete("/api/datasets/{sport}")
     def clear_datasets(sport: str, request: ClearDatasetsRequest, x_data_admin_token: str | None = Header(default=None)) -> dict:

@@ -271,6 +271,28 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByRole('button', { name: /Run analysis/i })).toBeTruthy();
   });
 
+  it('opens the model connection settings from the rail indicator', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/model-settings')
+      ? Promise.resolve(new Response(JSON.stringify({
+          provider: 'azure_foundry', provider_label: 'Azure AI Foundry', configured: false, model: 'gpt', chat_model: '',
+          reasoning_effort: '', chat_reasoning_effort: '', foundry_endpoint: '', foundry_api_key_set: false,
+          foundry_authentication: 'azure_identity', ollama_base_url: 'http://127.0.0.1:11434', ollama_model: 'qwen3:8b',
+          status: {state: 'idle', message: null, model_id: null},
+          providers: [{id: 'azure_foundry', label: 'Azure AI Foundry'}, {id: 'ollama', label: 'Ollama'}],
+          reasoning_efforts: ['low'], editable: true, read_only_reason: null, persistence: 'session', persistence_detail: 'Until restart.'
+        }), {status: 200, headers: {'content-type': 'application/json'}}))
+      : baseFetch(input, init));
+    render(App);
+    const indicator = await screen.findByRole('button', {name: /AI model: Azure AI Foundry, No AI model set up\. Set up the model connection/});
+    await waitFor(() => expect((indicator as HTMLButtonElement).disabled).toBe(false));
+    expect(indicator.getAttribute('aria-haspopup')).toBe('dialog');
+    await fireEvent.click(indicator);
+    expect(indicator.getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByLabelText(/Endpoint/)).toBeTruthy();
+    expect(screen.getByRole('button', {name: 'Test & save'})).toBeTruthy();
+  });
+
   it('starts an investigation with preparable seasons even when its library is empty', async () => {
     const baseFetch = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {

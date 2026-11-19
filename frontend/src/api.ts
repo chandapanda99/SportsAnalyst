@@ -1,4 +1,4 @@
-import type { AnalysisOptions, Capabilities, CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption, TeamOption } from './types';
+import type { AnalysisOptions, Capabilities, ModelSettings, ModelSettingsResult, ModelSettingsUpdate, CFBGameRosterPlayer, CFBRecordedPlay, CFBTeamContext, DatasetManifest, Evidence, Investigation, InvestigationRequest, InvestigationSummary, PlayerOption, SportOption, TeamOption } from './types';
 
 let progressTransport: 'stream' | 'poll' = 'stream';
 const pendingKey = 'sports-analyst:pending-job:v1';
@@ -47,6 +47,7 @@ export function pollingStream(job: PendingJob, timeoutSeconds?: number): EventSt
 
 function requestLabel(url: string): string {
   if (url.includes('/capabilities')) return 'Analysis settings';
+  if (url.includes('/model-settings')) return 'AI model connection check';
   if (url.endsWith('/sports')) return 'Available sports';
   if (url.includes('/options')) return 'Season and analysis options';
   if (url.includes('/players')) return 'Player search';
@@ -129,6 +130,11 @@ export const api = {
     progressTransport = result.job_progress_transport ?? 'stream';
     return result;
   },
+  modelSettings: () => json<ModelSettings>('/api/model-settings'),
+  // The backend makes a small request to each model before applying; allow for a slow first answer.
+  saveModelSettings: (update: ModelSettingsUpdate) => boundedRequest('/api/model-settings', {
+    method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(update)
+  }, response => response.json() as Promise<ModelSettingsResult>, 90_000),
   sports: () => json<SportOption[]>('/api/sports'),
   analysisOptions: (sport = 'nfl', competition?: string) => json<AnalysisOptions>(`/api/sports/${sport}/options${competition ? `?competition=${encodeURIComponent(competition)}` : ''}`),
   players: (sport: string, query = '', competition?: string, teamId?: string, season?: number) => json<PlayerOption[]>(`/api/sports/${sport}/players?query=${encodeURIComponent(query)}${competition ? `&competition=${encodeURIComponent(competition)}` : ''}${teamId ? `&team_id=${encodeURIComponent(teamId)}` : ''}${season ? `&season=${season}` : ''}`),

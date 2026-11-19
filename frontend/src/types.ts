@@ -78,6 +78,10 @@ export type MetricOption = {
   preparable_seasons?: number[];
   value: string; label: string; category: string; description: string; analysis_domain: string; available_seasons: number[]; subject_types?: string[];
 };
+/** What a metric means and how it is calculated, shown from a metric's About button. */
+export type MetricExplanation = {
+  label: string; interpretation: string; qualifying_plays: string; formula: string; higher_is_better: boolean | null; limitations: string[];
+};
 export type SplitDimensionOption = {
   value: string; label: string; description: string; available_seasons: number[];
 };
@@ -182,4 +186,19 @@ export type Investigation = {
 };
 export type InvestigationSummary = Pick<Investigation, 'run' | 'summary' | 'model_id' | 'fallback_used'>;
 export type Capabilities = { providers: string[]; configured_provider: string; model_configured: boolean; custom_analysis: boolean; sports: string[]; job_progress_transport?: 'stream' | 'poll' };
+export type ModelProviderId = 'azure_foundry' | 'ollama';
+export type ModelSettings = {
+  provider: string; provider_label: string; configured: boolean;
+  model: string; chat_model: string; reasoning_effort: string; chat_reasoning_effort: string;
+  foundry_endpoint: string; foundry_api_key_set: boolean; foundry_authentication: 'api_key' | 'azure_identity';
+  ollama_base_url: string; ollama_model: string;
+  status: { state: 'idle' | 'connecting' | 'ready'; message: string | null; model_id: string | null };
+  providers: Array<{ id: ModelProviderId; label: string }>; reasoning_efforts: string[];
+  editable: boolean; read_only_reason: string | null; persistence: 'saved' | 'session'; persistence_detail: string;
+};
+export type ModelSettingsUpdate = {
+  provider: ModelProviderId; model?: string; chat_model?: string; reasoning_effort?: string; chat_reasoning_effort?: string;
+  foundry_endpoint?: string; foundry_api_key?: string; clear_api_key?: boolean; ollama_base_url?: string; ollama_model?: string;
+};
+export type ModelSettingsResult = { ok: boolean; error: string | null; field?: string | null; warning?: string | null; settings: ModelSettings };
 export type SportOption = { value: string; label: string; available: boolean; live_available: boolean; live_message?: string };

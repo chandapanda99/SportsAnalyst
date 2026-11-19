@@ -238,6 +238,10 @@ def test_desktop_owns_appdata_worker_lifecycle(tmp_path: Path) -> None:
         def Event():
             return FakeEvent()
 
+        @staticmethod
+        def Queue():
+            return "updates"
+
         def Process(self, **kwargs):
             self.process = FakeProcess(**kwargs)
             return self.process
@@ -253,7 +257,7 @@ def test_desktop_owns_appdata_worker_lifecycle(tmp_path: Path) -> None:
     assert context.process.started is True
     assert context.process.kwargs == {
         "target": _run_desktop_worker,
-        "args": (durable_settings, controller.worker_stop),
+        "args": (durable_settings, controller.worker_stop, "updates"),
         "name": "sports-analyst-worker",
         "daemon": False,
     }

@@ -417,17 +417,52 @@ button, input, textarea, select {
     text-transform: uppercase
 }
 
-.runtime {
+.rail button.runtime {
     margin-top: auto;
+    border: 0;
     border-top: 1px solid var(--line);
-    padding: 20px 8px 0;
+    border-radius: 0;
+    padding: 20px 8px 4px;
     display: flex;
     gap: 10px;
-    align-items: center
+    align-items: center;
+    width: 100%;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer
 }
 
-.runtime-icon {
+.rail button.runtime:hover {
+    background: transparent;
+    color: inherit
+}
+
+.rail button.runtime:hover:not(:disabled) .runtime-text strong {
+    color: var(--mint)
+}
+
+.rail button.runtime:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 2px
+}
+
+.rail button.runtime:disabled {
+    cursor: default
+}
+
+.rail button.runtime[data-state="unconfigured"] .runtime-text span, .rail button.runtime[data-state="error"] .runtime-text span {
+    color: var(--color-status-warning)
+}
+
+.rail button.runtime[data-state="error"] .runtime-text span {
+    color: var(--color-status-danger, var(--color-status-warning))
+}
+
+.rail button.runtime > .runtime-icon {
     display: grid;
+    font: inherit;
     flex: 0 0 32px;
     width: 32px;
     height: 32px;
@@ -439,17 +474,39 @@ button, input, textarea, select {
     background: var(--color-surface-chip)
 }
 
-.runtime-icon.ready {
+.rail button.runtime > .runtime-icon.ready {
     color: var(--mint);
     border-color: color-mix(in srgb, var(--mint) 38%, var(--color-border-strong))
 }
 
-.runtime strong, .runtime > div span {
+.rail button.runtime > .runtime-icon.error {
+    color: var(--color-status-danger, var(--color-status-warning));
+    border-color: var(--color-status-danger-border)
+}
+
+.rail button.runtime > .runtime-text {
+    min-width: 0;
+    font: inherit;
+    color: inherit
+}
+
+.rail button.runtime > .runtime-action {
+    margin-left: auto;
+    min-width: 0;
+    padding: 4px 10px;
+    border: 1px solid var(--color-border-control);
+    border-radius: 999px;
+    font: 500 12px var(--font-mono);
+    color: var(--mint);
+    white-space: nowrap
+}
+
+.runtime-text strong, .runtime-text > span {
     display: block;
     font-size: var(--text-sm)
 }
 
-.runtime > div span {
+.runtime-text > span {
     color: var(--muted);
     margin-top: 2px
 }
@@ -2988,7 +3045,7 @@ button.analyst-bubble:focus-visible,
         display: none
     }
 
-    .rail nav, .runtime {
+    .rail nav, .rail button.runtime {
         display: none
     }
 

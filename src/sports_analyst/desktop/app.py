@@ -17,11 +17,11 @@ from typing import Any
 from sports_analyst.desktop.config import DesktopConfigStore
 
 
-def _run_desktop_worker(settings: Any, stop_event: Any) -> None:
+def _run_desktop_worker(settings: Any, stop_event: Any, settings_updates: Any = None) -> None:
     """Process target kept at module scope for Windows spawn/PyInstaller."""
     from sports_analyst.worker import run_worker
 
-    run_worker(settings, stop_event=stop_event)
+    run_worker(settings, stop_event=stop_event, settings_updates=settings_updates)
 
 
 def _setup_icon_data_uri() -> str:
@@ -125,6 +125,7 @@ class DesktopController:
         self.worker_context = worker_context
         self.worker_process: Any = None
         self.worker_stop: Any = None
+        self.worker_settings: Any = None
         self.url = ""
         self.startup_step = 0
         self.startup_message = "Starting Open Sports Analyst…"
@@ -158,6 +159,11 @@ class DesktopController:
         self._set_startup_stage("Reading your desktop settings")
         settings = get_settings().model_copy(update={"job_backend": "sqlite", "persistence_backend": "local"})
         application = AnalystApplication(settings, startup_progress=self._set_startup_stage)
+        from sports_analyst.desktop.config import DesktopModelSettingsStore
+
+        application.model_settings_store = DesktopModelSettingsStore(self.config_store)
+        # The worker runs analyses in its own process; send it provider changes made in the app.
+        application.model_settings_listeners.append(self._send_model_settings)
         self._set_startup_stage("Starting the local app")
 
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -193,14 +199,22 @@ class DesktopController:
             return
         context = self.worker_context or multiprocessing.get_context("spawn")
         stop_event = context.Event()
+        self.worker_settings = context.Queue()
         process = context.Process(
             target=_run_desktop_worker,
-            args=(settings, stop_event),
+            args=(settings, stop_event, self.worker_settings),
             name="sports-analyst-worker",
             daemon=False,
         )
         process.start()
         self.worker_stop, self.worker_process = stop_event, process
+
+    def _send_model_settings(self, settings: Any) -> None:
+        from sports_analyst.model_settings import MODEL_FIELDS
+
+        if self.worker_settings is not None:
+            # A local pipe to the worker process; nothing is written to disk.
+            self.worker_settings.put({field: getattr(settings, field) for field in MODEL_FIELDS})
 
     def save_configuration(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -230,7 +244,7 @@ class DesktopController:
                 self.worker_process.join(timeout=3)
             with suppress(ValueError):
                 self.worker_process.close()
-        self.worker_process = self.worker_stop = None
+        self.worker_process = self.worker_stop = self.worker_settings = None
         self.server = self.server_thread = self.socket = None
         self.url = ""
 

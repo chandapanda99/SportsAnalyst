@@ -14,6 +14,7 @@ SETTING_KEYS = (
     "MODEL_PROVIDER",
     "MODEL",
     "CHAT_MODEL",
+    "CHAT_REASONING_EFFORT",
     "FOUNDRY_ENDPOINT",
     "REASONING_EFFORT",
     "OLLAMA_BASE_URL",
@@ -84,6 +85,20 @@ class DesktopConfigStore:
             if value and (overwrite or key not in os.environ):
                 os.environ[key] = value
 
+    def forget_secret(self, key: str) -> None:
+        if key in SECRET_KEYS:
+            self._delete_secret(key)
+
+    @staticmethod
+    def _delete_secret(key: str) -> None:
+        import keyring
+        from keyring.errors import PasswordDeleteError
+
+        try:
+            keyring.delete_password(KEYRING_SERVICE, key)
+        except PasswordDeleteError:
+            pass
+
     @staticmethod
     def _set_secret(key: str, value: str) -> None:
         import keyring
@@ -98,3 +113,21 @@ class DesktopConfigStore:
             return keyring.get_password(KEYRING_SERVICE, key)
         except Exception:
             return None
+
+
+class DesktopModelSettingsStore:
+    """Remember provider changes made in the app for the next desktop launch."""
+
+    description = ("Saved for the next launch: settings in your desktop.json, the API key in Windows Credential Manager. "
+                   "Variables set in your shell environment still take priority at startup.")
+
+    def __init__(self, store: DesktopConfigStore) -> None:
+        self.store = store
+
+    def save(self, values: dict[str, str], api_key: str | None, clear_api_key: bool) -> None:
+        payload: dict[str, Any] = {key.upper(): value for key, value in values.items()}
+        if api_key:
+            payload["FOUNDRY_API_KEY"] = api_key
+        self.store.save(payload)
+        if clear_api_key and not api_key:
+            self.store.forget_secret("FOUNDRY_API_KEY")
