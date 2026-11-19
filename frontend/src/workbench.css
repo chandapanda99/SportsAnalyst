@@ -1517,7 +1517,7 @@ button:disabled {
 }
 
 @media (max-width: 650px) {
-    /* The data panel below repeats the sync status, so the header keeps only the title. */
+    /* The Data library shows the download count in full, so a phone's header keeps only the title. */
     .topbar {
         padding-bottom: 14px;
         margin-bottom: 20px;

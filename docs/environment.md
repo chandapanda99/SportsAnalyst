@@ -192,9 +192,9 @@ They intentionally exclude prompts, questions, evidence contents, SQL text, mana
 
 The web workbench reflows for narrow screens. NFL/college-football fields and NBA courts offer an expanded view with zoom buttons, touch pan/pinch, a play-focus shortcut, and a full-view reset. Tap a marker or use the player/event picker for persistent details; recorded, projected, and inferred labels are preserved. Escape closes the expanded view and restores focus.
 
-On phones, mixed-metric comparisons show exact values and first-to-last numeric differences before the optional chart. Rate differences use percentage points, not relative percentage changes. Metric filters and expanded charts remain available. College-football comparison tables scroll inside their own labeled region.
+On phones, mixed-metric comparisons show exact values and first-to-last numeric differences before the optional chart. Rate differences use percentage points, not relative percentage changes. Metric filters and expanded charts remain available. College-football comparison tables and the report's key-metrics stat sheet scroll inside their own labeled regions. The report bar is one row that scrolls sideways, and the follow-up box stays pinned to the bottom of the screen on a single row.
 
-For mobile QA, check 320px and 390px portrait layouts, landscape, the on-screen keyboard, marker selection, expand/zoom/reset, and report navigation. Desktop browser emulation is useful but does not replace Android Chrome and iPhone Safari checks, especially for pinch gestures, safe areas, and keyboard behavior.
+For mobile QA, check 320px and 390px portrait layouts, landscape, the on-screen keyboard, marker selection, expand/zoom/reset, report navigation through the report bar, and the pinned follow-up box with the keyboard open. Desktop browser emulation is useful but does not replace Android Chrome and iPhone Safari checks, especially for pinch gestures, safe areas, and keyboard behavior.
 
 ### Testing over cellular with ngrok
 

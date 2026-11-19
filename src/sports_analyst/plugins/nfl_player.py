@@ -486,7 +486,7 @@ def _scope_defender(
     if participation is None or participation.is_empty() or "defense_players" not in participation.columns:
         raise ValueError(
             f"Defender analysis needs the Participation package for {season} to know which snaps a defender played. "
-            "Sync it from Manage Data and run the analysis again."
+            "Download it from the Data library and run the analysis again."
         )
     team = subject.team_id or request.scope.team
     scoped_team = team.upper() if team and team.upper() not in {"NFL", "ALL"} else None

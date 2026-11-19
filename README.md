@@ -62,22 +62,31 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` request
 
 ## Using the workbench
 
-Choose a sport and subject, comparison windows, metrics and a question. A head-to-head
-comparison measures two teams or two players over the same season, or over a range of up to
-six seasons where each season is compared on its own. In college football the second subject
-is found by browsing to its school. Follow-up questions on a head-to-head report can run
-additional research, which is repeated for both subjects. Soccer
-adds competition selection; college football uses season-specific subdivision,
-conference and school discovery. Conference selection organizes navigation rather
-than limiting analysis to conference games.
+Build an analysis in five numbered steps: the report type (a team or a player, change over
+time or head-to-head), the subject, the time frame, the metrics to focus on, and a question.
+A head-to-head comparison measures two teams or two players over the same season, or over a
+range of up to six seasons where each season is compared on its own. In college football the
+second subject is found by browsing to its school. Follow-up questions on a head-to-head report
+can run additional research, which is repeated for both subjects. Soccer adds competition
+selection; college football uses season-specific subdivision, conference and school discovery.
+Conference selection organizes navigation rather than limiting analysis to conference games.
+**How it works** reopens the short guide shown on first use.
 
-Running an analysis prepares missing supported data through the worker. Use **Sync Data** for explicit downloads or clearing. Successful historical snapshots are
-reused; current seasons refresh, and incomplete coverage remains visible.
+Running an analysis downloads any missing supported data through the worker, so downloading
+ahead is optional. The **Data library** (in the sidebar, or at `#/data`) handles explicit
+downloads, current-season refreshes and clearing downloaded data. Successful historical
+snapshots are reused; current seasons refresh, and incomplete coverage remains visible.
+An analysis or download keeps running while you open saved reports, the setup page or the Data
+library: the Film Room shows it as a live entry, and a report that finishes while you are
+elsewhere waits behind a **Report ready** notice. One analysis, download or follow-up runs at a
+time.
 
-Results include an answer, metric comparisons, findings, charts and recorded
-evidence. Open a tablet to inspect a cited event or browse its game where supported.
-The Film Room saves reports and their follow-up questions; exports preserve
-evidence and provenance. Saved reports are not retroactively rewritten by updates.
+Reports open with the answer and a stat sheet of key metrics, followed by findings, charts and
+recorded evidence. A bar at the top links to each section, switches between the report and its
+follow-ups, and offers **Edit and rerun** (the setup page filled in from the report),
+**Export report** and **Ask a follow-up**. Open a tablet to inspect a cited event or browse its
+game where supported. The Film Room saves reports and their follow-up questions; exports
+preserve evidence and provenance. Saved reports are not retroactively rewritten by updates.
 
 ## Architecture
 

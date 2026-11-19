@@ -21,17 +21,29 @@ catalog does not necessarily mean that it produces a separate execution record y
 ### Guided workbench
 
 The options response includes `data_setup`: `required_datasets`, `recommended_datasets`, source `descriptions`, a `label`, and a summary `description`. Each plugin owns its
-quick-setup policy. Older option payloads remain supported through optional frontend metadata and a default backend model; investigation payloads and stored reports are
+quick-setup policy, which the Data library offers as its recommended setup. Older option payloads remain supported through optional frontend metadata and a default backend model; investigation payloads and stored reports are
 unchanged.
+
+The setup page has five numbered steps: report type, subject, time frame, focus and question. For a sport with neither player subjects
+nor head-to-head comparisons, the report-type step is left out and the rest are numbered from one.
 
 The workbench starts with recommended metrics and exposes the full catalog through **Customize metrics**. **About** loads the metric-definition endpoint for interpretation,
 qualifying sample, directionality, formula, and limitations. **Optional breakdowns** is the user-facing name for diagnostic cuts; an empty selection retains the service's
 automatic recommendations.
 
-The **Analysis brief** checks required source coverage, subject, comparison periods, metrics, and question before enabling **Run analysis**. A readiness item focuses the
-relevant section. Data downloads require an explicit click, with local installation status displayed separately from package selection.
+The **Analysis brief** checks the subject, comparison periods, metrics, and question before enabling **Run analysis**. Its **Data** line says what is already
+downloaded or what will download when the analysis runs, and links to the Data library; data appears in the readiness list only while it blocks the run. A
+readiness item focuses the relevant step. **Run analysis** stays disabled while another analysis, download or follow-up is running, because they share one
+progress channel.
 
-Reports display the answer and selected metric changes first, automatically load the first finding's supporting evidence, and place evidence inline on narrow screens. Raw
+The **Data library** (`#/data`) holds explicit downloads: seasons, packages, download scope, college-football conference downloads, current-season refreshes
+and clearing downloaded data. Downloads require an explicit click, with local installation status displayed separately from package selection. College-football
+downloads are scoped to one school; the library and the setup page share that selection.
+
+Reports display the answer and a key-metrics stat sheet first: one row per metric and a column per period, or for a head-to-head a column per subject with the
+difference and the leader. They automatically load the first finding's supporting evidence and place evidence inline on narrow screens. A sticky report bar links to
+each section, switches between the report and its follow-ups, and offers **Edit and rerun**, which fills the setup page from the report's saved run; a
+college-football school, or a player missing from the downloaded list, may need choosing again. The follow-up box stays at the bottom of the screen. Raw
 source references, caveats, and executed tools remain accessible through expandable details. “Reference period” in the UI corresponds to `baseline` in existing APIs and
 evidence records.
 
@@ -322,7 +334,7 @@ narrative formation labels and per-play personnel-source status are available to
 full-game browsing available as secondary context. Missing play coverage falls back to explicitly labeled game context. All marker positions remain illustrative;
 formation labels and personnel endpoint entries do not establish tracking, routes, defensive assignments or a verified full on-field lineup.
 
-The data manager supports explicit selected-school downloads; the conference selector also provides an explicit conference download for the selected sync seasons.
+The Data library supports explicit selected-school downloads; its conference selector also provides an explicit conference download for the selected seasons.
 Scoped snapshots coexist in the catalog using team/player partition identities, while game summaries are shared across schools. Cloud replicas coordinate source requests
 through durable leases; desktop processes use local leases. Clearing College Football data clears its source cache and snapshots, not saved investigations.
 
@@ -409,7 +421,9 @@ selection metadata, and source provenance. Football evidence keeps the field vis
 Follow-up questions reuse the saved investigation context. History is scoped by sport in the workbench.
 
 Investigation progress is streamed over server-sent events. If that stream disconnects, the frontend checks the persisted status. A completed result is rendered only after
-both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff.
+both its full bundle and conversation thread pass completeness checks; transient persistence/read races are retried with bounded backoff. Analyses and downloads
+keep running while the reader opens other views: the Film Room lists the running job, and a result that completes away from the progress view is announced with an
+**Open report** notice rather than opened over the reader's current page.
 
 The desktop uses an AppData-backed SQLite queue and a managed sibling worker;
 command-line development retains in-process execution. See [environment settings](environment.md).

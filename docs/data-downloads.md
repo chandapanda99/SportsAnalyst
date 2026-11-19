@@ -4,7 +4,8 @@ NFL, NBA, soccer and college-football investigations check their selected data s
 Progress remains attached to the investigation; a separate manual sync is no longer required when a valid subject and preparable periods can be selected.
 The UI distinguishes **locally available** seasons from **preparable** source seasons. A preparable metric is not a promise that both windows contain usable values:
 the deterministic analysis still verifies attribution, required fields and qualifying samples. Player selection requires a discoverable identity; this flow does not
-invent player history, historical roster membership or missing source statistics. Explicit library downloads remain available for offline use and bulk research.
+invent player history, historical roster membership or missing source statistics. Explicit downloads in the **Data library** remain available for offline use and
+bulk research.
 
 NFL/NBA retain their published bulk package formats. Ordinary preparation fetches core/metric dependencies rather than every optional package.
 Successful historical snapshots are reused; incomplete acquisition is retried. Automatic current-season preparation reuses snapshots acquired within one hour,
@@ -162,7 +163,7 @@ open-sports-analyst/
 
 Set `DATA_DIR` in `.env` to use a different root directory.
 
-The data manager's **Clear downloaded data** action removes all seasons for the active sport (only the selected competition for soccer), including source caches. Saved
+The Data library's **Clear downloaded data** action removes all seasons for the active sport (only the selected competition for soccer), including source caches. Saved
 investigations
 and settings are retained; dataset-backed tools need a fresh sync afterward. Deletion is
 permanent unless you have a backup or object-storage versioning enabled.
