@@ -4,6 +4,8 @@
   export let title: string;
   export let message: string;
   export let ondismiss: () => void;
+  /** An optional next step, such as opening a report that finished while the reader was elsewhere. */
+  export let action: {label: string; run: () => void} | null = null;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let remaining = 8000;
@@ -45,7 +47,8 @@
       <circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>
     </svg>
   </span>
-  <div class="completion-copy"><strong>{title}</strong><p>{message}</p></div>
+  <div class="completion-copy"><strong>{title}</strong><p>{message}</p>
+    {#if action}<button type="button" class="completion-action" on:click={() => { action?.run(); ondismiss(); }}>{action.label}</button>{/if}</div>
   <button type="button" class="completion-dismiss" aria-label={'Dismiss ' + title + ' notification'} on:click={ondismiss}>×</button>
 </section>
 
@@ -92,6 +95,17 @@
     font-size: var(--text-xl);
     cursor: pointer;
   }
+  .completion-action {
+    margin-top: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--color-accent-primary);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-accent-primary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+  .completion-action:hover { background: color-mix(in srgb, var(--color-accent-primary) 12%, transparent); }
   .completion-dismiss:hover { color: var(--color-text-primary); background: var(--color-surface-control); }
   .completion-dismiss:focus-visible { outline: 2px solid var(--color-accent-primary); outline-offset: 2px; }
   @keyframes toast-arrive { from { opacity: 0; transform: translateY(.6rem); } to { opacity: 1; transform: translateY(0); } }

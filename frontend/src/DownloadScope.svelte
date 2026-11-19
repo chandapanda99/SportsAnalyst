@@ -23,7 +23,7 @@
   function notify(mode: typeof kind, value: string, options: TeamOption[], pending: boolean, problem: string) {
     const ready = mode === 'league' || Boolean(value && options.some(item => item.value === value) && !pending
       && (!problem || mode === 'team'));
-    onchange({kind: mode, ready, label: mode === 'league' ? (sport === 'soccer' ? 'Entire Competition' : 'Entire League')
+    onchange({kind: mode, ready, label: mode === 'league' ? (sport === 'soccer' ? 'Entire competition' : 'Entire league')
       : options.find(item => item.value === value)?.label ?? 'Choose a download scope',
       ...(mode === 'team' && value ? {team_ids: [value]} : {}),
       ...(mode === 'conference' && value ? {conference_id: value} : {}),
@@ -44,17 +44,17 @@
   onDestroy(() => {version += 1;});
 </script>
 
-<section class="download-scope" aria-label="Download Scope" aria-busy={loading}>
-  <div class="scope-intro"><strong>Download Scope</strong><p>Choose the teams to prepare. Their games against opponents outside the selected group are included.</p></div>
+<section class="download-scope" aria-label="Download scope" aria-busy={loading}>
+  <div class="scope-intro"><strong>Download scope</strong><p>Choose the teams to prepare. Their games against opponents outside the selected group are included.</p></div>
   <div class="scope-fields">
-    <label>Download By<select bind:value={kind} disabled={disabled} on:change={() => {identity = '';}}>
-      <option value="league">{sport === 'soccer' ? 'Entire Competition' : 'Entire League'}</option>
+    <label>Download by<select bind:value={kind} disabled={disabled} on:change={() => {identity = '';}}>
+      <option value="league">{sport === 'soccer' ? 'Entire competition' : 'Entire league'}</option>
       <option value="team">Team</option>
-      <option value="conference">{sport === 'soccer' ? 'Conference / Group' : 'Conference'}</option>
+      <option value="conference">{sport === 'soccer' ? 'Conference or group' : 'Conference'}</option>
       {#if sport !== 'soccer'}<option value="division">Division</option>{/if}
     </select></label>
     {#if kind !== 'league'}
-      <label>{kind === 'team' ? 'Download Team' : kind === 'division' ? 'Download Division' : sport === 'soccer' ? 'Download Conference / Group' : 'Download Conference'}
+      <label>{kind === 'team' ? 'Team to download' : kind === 'division' ? 'Division to download' : sport === 'soccer' ? 'Conference or group to download' : 'Conference to download'}
         <select bind:value={identity} disabled={disabled || loading || !choices.length}>
           <option value="">Choose {kind === 'team' ? 'a team' : kind === 'division' ? 'a division' : 'a conference or group'}</option>
           {#each choices as option}<option value={option.value}>{option.label}</option>{/each}
@@ -64,7 +64,7 @@
   </div>
   {#if loading}<p role="status">Checking groups and teams for the selected season…</p>{/if}
   {#if error}<div class="scope-error" role="status"><span>{error}{kind === 'team' && teams.length ? ' You can still select a listed team.' : ''}</span>
-    <button type="button" disabled={disabled || loading} on:click={() => void load(key)}>Retry Groups</button></div>{/if}
+    <button type="button" disabled={disabled || loading} on:click={() => void load(key)}>Retry</button></div>{/if}
   {#if !loading && !error && catalog && kind !== 'league' && kind !== 'team' && !choices.length}
     <p role="status">No {kind === 'division' ? 'divisions' : 'conferences or groups'} are recorded for this competition and season. Choose Team or Entire Competition.</p>
   {/if}

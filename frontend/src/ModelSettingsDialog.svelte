@@ -265,10 +265,8 @@
 
   label, legend {
     display: block;
-    font: 12px var(--font-mono);
+    font: 600 var(--text-sm) var(--font-sans);
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: .08em;
   }
 
   input:not([type="radio"]), select {

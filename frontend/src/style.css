@@ -63,15 +63,11 @@ button, input, textarea, select {
     color: #a7bfd0;
     font-size: var(--text-base);
     font-weight: 400;
-    letter-spacing: .13em;
-    text-transform: uppercase;
 }
 
 .desktop-startup-kicker {
     color: #68e0c3;
     font: 12px Consolas, monospace;
-    letter-spacing: .12em;
-    text-transform: uppercase;
 }
 
 .desktop-startup-card h1 {
@@ -211,8 +207,6 @@ button, input, textarea, select {
 .brand span {
     color: var(--muted);
     font-size: var(--text-3xl);
-    letter-spacing: .1em;
-    text-transform: uppercase
 }
 
 .rail nav {
@@ -239,7 +233,7 @@ button, input, textarea, select {
 }
 
 .rail button > span {
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-sans);
     color: var(--mint);
     min-width: 25px
 }
@@ -301,8 +295,7 @@ button, input, textarea, select {
     border: 1px solid color-mix(in srgb, var(--mint) 28%, var(--line));
     border-radius: var(--radius-pill);
     color: var(--mint);
-    font: 11px var(--font-mono);
-    letter-spacing: .04em
+    font: 11px var(--font-sans);
 }
 
 .recent-report {
@@ -327,7 +320,7 @@ button, input, textarea, select {
     border-radius: 50%;
     background: color-mix(in srgb, var(--mint) 10%, var(--color-surface-raised));
     color: var(--mint);
-    font: 600 11px var(--font-mono)
+    font: 600 11px var(--font-sans)
 }
 
 .rail .recent-report-link > div {
@@ -403,8 +396,7 @@ button, input, textarea, select {
 }
 
 .nav-label, .eyebrow {
-    font: 500 12px var(--font-mono);
-    letter-spacing: .14em;
+    font: 500 12px var(--font-sans);
     color: var(--mint)
 }
 
@@ -414,7 +406,6 @@ button, input, textarea, select {
     gap: 8px;
     padding: 24px 10px 8px;
     color: var(--color-text-tertiary);
-    text-transform: uppercase
 }
 
 .rail button.runtime {
@@ -496,7 +487,7 @@ button, input, textarea, select {
     padding: 4px 10px;
     border: 1px solid var(--color-border-control);
     border-radius: 999px;
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-sans);
     color: var(--mint);
     white-space: nowrap
 }
@@ -650,7 +641,7 @@ main.soccer-background {
 
 .sport-tabs small {
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono)
+    font: 11px var(--font-sans)
 }
 
 .topbar {
@@ -678,7 +669,7 @@ main.soccer-background {
     padding: 9px 13px;
     border-radius: var(--radius-pill);
     color: var(--muted);
-    font: 12px var(--font-mono)
+    font: 12px var(--font-sans)
 }
 
 .status-chip .ui-icon {
@@ -693,7 +684,7 @@ main.soccer-background {
     margin-bottom: 25px
 }
 
-.ask-panel {
+.ask-panel, .data-library {
     width: 100%;
     max-width: 1480px;
     margin: 5vh auto 70px;
@@ -742,7 +733,7 @@ main.soccer-background {
     margin-bottom: 22px
 }
 
-.scope-heading h3 {
+.scope-heading h2, .scope-heading h3 {
     margin: 6px 0 0;
     font-size: var(--text-2xl)
 }
@@ -792,8 +783,7 @@ main.soccer-background {
 .subject-toggle > span {
     margin-right: 4px;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
-    text-transform: uppercase
+    font: 11px var(--font-sans);
 }
 
 .subject-toggle button {
@@ -813,10 +803,8 @@ main.soccer-background {
 
 .scope-controls > label, .team-control > label, .window-grid label {
     display: block;
-    font: 12px var(--font-mono);
+    font: 12px var(--font-sans);
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: .08em
 }
 
 .scope-controls input, .scope-controls select, .window-grid select, .onboarding select, .team-combobox > input {
@@ -926,7 +914,7 @@ main.soccer-background {
     border: 1px solid var(--color-border-control);
     border-radius: var(--radius-xs);
     color: var(--mint);
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-sans);
     text-align: center
 }
 
@@ -1023,10 +1011,8 @@ main.soccer-background {
 
 .window-grid legend {
     margin-bottom: 12px;
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-sans);
     color: var(--mint);
-    text-transform: uppercase;
-    letter-spacing: .1em
 }
 
 .week-pair {
@@ -1049,8 +1035,7 @@ main.soccer-background {
 
 .window-summary span {
     color: var(--muted);
-    font: 12px var(--font-mono);
-    text-transform: uppercase
+    font: 12px var(--font-sans);
 }
 
 .window-summary strong {
@@ -1141,9 +1126,7 @@ main.soccer-background {
 .metric-group-title {
     margin: 0 0 12px;
     color: var(--mint);
-    font: 500 12px/1.3 var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: .1em
+    font: 500 12px/1.3 var(--font-sans);
 }
 
 .metric-groups label {
@@ -1191,7 +1174,7 @@ main.soccer-background {
     border: 0;
     background: transparent;
     color: var(--mint);
-    font: 12px var(--font-mono);
+    font: 12px var(--font-sans);
     cursor: pointer
 }
 
@@ -1266,10 +1249,8 @@ main.soccer-background {
 }
 
 .scope-grid label, .question-heading label {
-    font: 12px var(--font-mono);
+    font: 12px var(--font-sans);
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: .1em
 }
 
 .scope-grid input, .question-field textarea, .onboarding input:not([type="checkbox"]) {
@@ -1311,7 +1292,7 @@ main.soccer-background {
     padding: 6px 0;
     background: transparent;
     color: var(--mint);
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-sans);
     cursor: pointer
 }
 
@@ -1357,64 +1338,16 @@ main.soccer-background {
     min-width: 0;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
-    background: linear-gradient(145deg, var(--color-surface), var(--color-surface-low));
+    background: var(--color-surface);
     box-shadow: 0 16px 40px rgb(0 0 0 / 18%)
-}
-
-.data-manager summary {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 17px 18px;
-    cursor: pointer;
-    list-style: none
-}
-
-.data-manager summary::-webkit-details-marker {
-    display: none
-}
-
-.data-manager summary span, .data-manager summary strong, .data-manager summary small {
-    display: block
-}
-
-.data-manager summary small {
-    max-width: 290px;
-    margin-top: 5px;
-    color: var(--muted);
-    font-size: var(--text-sm);
-    line-height: 1.5
-}
-
-.data-manager summary b {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--mint);
-    font: 12px var(--font-mono);
-    white-space: nowrap
-}
-
-.data-manager summary i {
-    display: block;
-    font-style: normal;
-    transition: transform var(--duration-standard) var(--ease-standard)
-}
-
-.data-manager[open] summary i {
-    transform: rotate(180deg)
-}
-
-.data-manager .onboarding {
-    border-top: 1px solid var(--line)
 }
 
 .sync-guidance strong, .sync-guidance span {
     display: block
 }
 
-.sync-guidance strong {
+.sync-guidance strong, .sync-guidance h2 {
+    margin: 0;
     font-size: var(--text-base)
 }
 
@@ -1603,9 +1536,7 @@ main.soccer-background {
 
 .season-picker legend, .dataset-picker legend {
     color: var(--color-text-secondary);
-    font: 12px var(--font-mono);
-    letter-spacing: .08em;
-    text-transform: uppercase
+    font: 12px var(--font-sans);
 }
 
 .season-picker {
@@ -1664,14 +1595,14 @@ main.soccer-background {
     display: flex;
     flex-direction: column;
     white-space: nowrap;
-    font: 600 13px var(--font-mono);
+    font: 600 13px var(--font-sans);
     letter-spacing: 0
 }
 
 .season-options small {
     justify-self: end;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-sans);
     letter-spacing: 0;
     text-transform: none;
     white-space: nowrap
@@ -1750,10 +1681,8 @@ main.soccer-background {
     border-radius: var(--radius-pill);
     background: color-mix(in srgb, var(--mint) 10%, transparent);
     color: var(--mint);
-    font: 600 11px var(--font-mono);
-    letter-spacing: .04em;
+    font: 600 11px var(--font-sans);
     line-height: 1.4;
-    text-transform: uppercase
 }
 
 .dataset-options .dataset-name b.partial {
@@ -1764,7 +1693,7 @@ main.soccer-background {
 
 .dataset-options label small {
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-sans);
     line-height: 1.25;
     white-space: normal
 }
@@ -1862,7 +1791,7 @@ main.soccer-background {
 }
 
 .promise-grid article > span {
-    font: 13px var(--font-mono);
+    font: 13px var(--font-sans);
     color: var(--mint)
 }
 
@@ -1911,8 +1840,7 @@ main.soccer-background {
 
 .progress-message small {
     color: var(--color-text-tertiary);
-    font: 500 11px var(--font-mono);
-    letter-spacing: .1em
+    font: 500 11px var(--font-sans);
 }
 
 .progress-message h2 {
@@ -2009,14 +1937,12 @@ main.soccer-background {
     display: flex;
     justify-content: space-between;
     color: var(--color-text-tertiary);
-    font: 500 11px var(--font-mono);
-    letter-spacing: .12em
+    font: 500 11px var(--font-sans);
 }
 
 .play-caption b {
     color: var(--mint);
     font: inherit;
-    letter-spacing: .04em
 }
 
 .catch-scene {
@@ -2073,7 +1999,7 @@ main.soccer-background {
     margin-bottom: 32px;
     padding: 26px 28px;
     border: 1px solid var(--line);
-    background: linear-gradient(135deg, var(--color-surface), var(--color-surface-low))
+    background: var(--color-surface)
 }
 
 .conversation {
@@ -2090,7 +2016,7 @@ main.soccer-background {
     gap: 24px;
     padding: 22px 26px;
     border-bottom: 1px solid var(--line);
-    background: linear-gradient(135deg, var(--color-surface-accented), var(--color-surface-low))
+    background: var(--color-surface-raised)
 }
 
 .conversation-header h2 {
@@ -2113,15 +2039,14 @@ main.soccer-background {
     border: 1px solid var(--color-border-accent);
     border-radius: var(--radius-pill);
     color: var(--mint);
-    font: 11px var(--font-mono)
+    font: 11px var(--font-sans)
 }
 
 .conversation-messages {
     display: flex;
     flex-direction: column;
     gap: 18px;
-    padding: 26px;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface-low) 55%, transparent), transparent)
+    padding: 26px
 }
 
 .chat-row {
@@ -2147,7 +2072,7 @@ main.soccer-background {
     height: 40px;
     place-items: center;
     border-radius: 50%;
-    font: 600 11px var(--font-mono)
+    font: 600 11px var(--font-sans)
 }
 
 .user-avatar {
@@ -2172,9 +2097,7 @@ main.soccer-background {
     display: block;
     margin: 0;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
-    letter-spacing: .08em;
-    text-transform: uppercase
+    font: 11px var(--font-sans);
 }
 
 .chat-message-meta {
@@ -2188,8 +2111,7 @@ main.soccer-background {
 .chat-message-meta time {
     flex: 0 0 auto;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
-    letter-spacing: .04em
+    font: 11px var(--font-sans);
 }
 
 .chat-bubble p {
@@ -2331,7 +2253,7 @@ button.analyst-bubble:focus-visible,
 .chat-composer > small {
     grid-column: 1/-1;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono)
+    font: 11px var(--font-sans)
 }
 
 .report-hero h2 {
@@ -2341,12 +2263,14 @@ button.analyst-bubble:focus-visible,
     letter-spacing: -.01em
 }
 
+/* The answer is the report's main output: the largest text on the page, slightly condensed, at a readable line length. */
 .report-summary > p {
-    max-width: 1096px;
+    max-width: 68ch;
     margin: 13px 0 0;
-    color: var(--color-text-soft);
-    font-size: var(--text-xl);
-    line-height: 1.65
+    color: var(--color-text-primary);
+    font-size: clamp(var(--text-xl), 1.7vw, var(--text-2xl));
+    font-stretch: var(--font-width-display);
+    line-height: 1.5
 }
 
 .report-meta {
@@ -2388,8 +2312,7 @@ button.analyst-bubble:focus-visible,
     min-width: 0;
     padding: 16px 20px;
     border-bottom: 1px solid var(--line);
-    font: 12px var(--font-mono);
-    letter-spacing: .12em;
+    font: 12px var(--font-sans);
     color: var(--color-text-soft)
 }
 
@@ -2400,7 +2323,6 @@ button.analyst-bubble:focus-visible,
     font-family: inherit;
     font-size: var(--text-md);
     font-weight: 600;
-    letter-spacing: .1em
 }
 
 .section-title > small {
@@ -2409,7 +2331,6 @@ button.analyst-bubble:focus-visible,
     color: var(--color-text-secondary);
     font-size: var(--text-2xs);
     line-height: 1.4;
-    letter-spacing: .1em;
     overflow-wrap: anywhere;
     text-align: right
 }
@@ -2471,7 +2392,7 @@ button.analyst-bubble:focus-visible,
 }
 
 .finding-number {
-    font: 13px var(--font-mono);
+    font: 13px var(--font-sans);
     color: var(--color-text-tertiary)
 }
 
@@ -2482,12 +2403,12 @@ button.analyst-bubble:focus-visible,
 }
 
 .claim-meta span {
-    font: 12px var(--font-mono);
+    text-transform: capitalize;
+    font: 12px var(--font-sans);
     color: var(--color-canvas);
     background: var(--mint);
     padding: 4px 7px;
     border-radius: var(--radius-xs);
-    text-transform: uppercase
 }
 
 .claim-meta span.interpretation {
@@ -2514,7 +2435,7 @@ button.analyst-bubble:focus-visible,
 }
 
 .citations > span {
-    font: 12px var(--font-mono);
+    font: 12px var(--font-sans);
     color: var(--color-text-secondary);
     background: var(--color-surface-chip);
     border: 1px solid var(--color-border-strong);
@@ -2524,10 +2445,10 @@ button.analyst-bubble:focus-visible,
 
 .evidence-panel {
     position: sticky;
-    top: 24px;
+    top: calc(var(--report-bar-height, 0px) + 24px);
     display: flex;
     flex-direction: column;
-    max-height: calc(100vh - 48px);
+    max-height: calc(100vh - 48px - var(--report-bar-height, 0px));
     min-height: 400px;
     overflow: hidden
 }
@@ -2565,9 +2486,7 @@ button.analyst-bubble:focus-visible,
 
 .evidence-collection-heading span {
     color: var(--mint);
-    font: 11px var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: .08em
+    font: 11px var(--font-sans);
 }
 
 .evidence-list {
@@ -2597,7 +2516,7 @@ button.analyst-bubble:focus-visible,
 
 .evidence-record-heading > span {
     color: var(--color-text-tertiary);
-    font: 12px var(--font-mono)
+    font: 12px var(--font-sans)
 }
 
 .evidence-record h3 {
@@ -2635,11 +2554,10 @@ button.analyst-bubble:focus-visible,
 .delta span {
     font-size: var(--text-xs);
     color: var(--muted);
-    text-transform: uppercase
 }
 
 .delta strong {
-    font: 22px var(--font-mono);
+    font: 22px var(--font-sans);
     margin-top: 4px
 }
 
@@ -2879,8 +2797,6 @@ button.analyst-bubble:focus-visible,
 .evidence-window-heading strong {
     color: var(--color-text-primary);
     font-size: var(--text-sm);
-    letter-spacing: .055em;
-    text-transform: uppercase
 }
 
 .evidence-window-heading small {
@@ -2926,7 +2842,6 @@ button.analyst-bubble:focus-visible,
     font-weight: var(--font-weight-strong);
     line-height: 1;
     letter-spacing: .015em;
-    text-transform: uppercase;
     white-space: nowrap
 }
 
@@ -3131,10 +3046,6 @@ button.analyst-bubble:focus-visible,
         padding: 16px 20px
     }
 
-    .report-hero .export {
-        width: max-content
-    }
-
     .working {
         max-width: 700px;
         margin: 56px auto
@@ -3218,6 +3129,24 @@ button.analyst-bubble:focus-visible,
         min-height: 44px
     }
 
+    /* The pinned follow-up box stays one row on a phone; the keyboard hint is left to the field's description. */
+    .followup-dock {
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: var(--space-2) var(--space-3)
+    }
+
+    .followup-dock button {
+        min-width: 0
+    }
+
+    .followup-dock > small {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%)
+    }
+
     .intro-grid {
         gap: 20px
     }
@@ -3228,10 +3157,6 @@ button.analyst-bubble:focus-visible,
 
     .sync-fields, .dataset-options, .library-skeleton {
         grid-template-columns: 1fr
-    }
-
-    .data-manager summary {
-        display: grid
     }
 
     .library-load-error {

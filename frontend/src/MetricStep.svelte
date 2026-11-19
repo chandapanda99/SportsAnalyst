@@ -2,6 +2,8 @@
   import Icon from './Icon.svelte';
   import type {AnalysisOptions, MetricExplanation, MetricOption, PlayerOption} from './types';
 
+  /** The step number shown on the card, such as "4". */
+  export let step: string;
   export let activeSport: string;
   export let analysisOptions: AnalysisOptions | null;
   export let subjectType: 'team' | 'player';
@@ -34,18 +36,18 @@
 
 <section class="metric-card" aria-labelledby="metric-heading">
   <div class="scope-heading">
-    <div><span class="eyebrow">03 · Focus</span>
+    <div><span class="eyebrow step-label"><b class="step-number">{step}</b>Focus</span>
       <h3 id="metric-heading" tabindex="-1">Choose {subjectType === 'player' ? 'player metrics' : 'what to measure'}</h3></div>
     <div class="metric-actions">
       <button type="button" aria-expanded={customizeMetrics} on:click={() => customizeMetrics = !customizeMetrics}>Customize metrics</button>
       {#if customizeMetrics}
         <button class="text-button" type="button" on:click={selectAllMetrics} disabled={allAvailableMetricsSelected || !availableMetrics.length}>
           <Icon name="clipboard-plus" size={16}/>
-          {allAvailableMetricsSelected ? 'All Available Selected' : 'Select All Metrics'}
+          {allAvailableMetricsSelected ? 'All available selected' : 'Select all metrics'}
         </button>
         <button class="text-button" type="button" on:click={useRecommendedMetrics}>
           <Icon name="sparkles" size={16}/>
-          Use Recommended Metrics
+          Use recommended metrics
         </button>
       {/if}
     </div>
@@ -59,8 +61,8 @@
     {/each}
   </div>
   <p class="section-help">
-    <strong>{subjectType === 'player' ? 'Only player-compatible metrics are shown.' : 'Recommended metrics are selected by default.'}</strong>
-    Start here, or customize your selection. Open “About” to learn what a metric means and how it is calculated.</p>
+    {subjectType === 'player' ? 'Only metrics that apply to players are shown.' : 'Recommended metrics are already selected.'}
+    Use About to see how each one is calculated.</p>
   <div class="metric-groups">
     {#each [...new Set(domainMetrics.filter(metric => customizeMetrics || recommendedMetricIds.includes(metric.value) || selectedMetrics.includes(metric.value)).map(metric => metric.category))] as category}
       <section class="metric-group" role="group" aria-label={category}>
@@ -101,7 +103,7 @@
   {#if customizeMetrics}
     <button class="text-button clear-metrics" type="button" on:click={() => { metricsEdited = true; selectedMetrics = []; }}>
       <Icon name="wand" size={16}/>
-      Clear All Metrics
+      Clear all metrics
     </button>
   {/if}
   {#if analysisOptions && selectedAvailableMetricCount === 0}
@@ -111,7 +113,7 @@
     <summary>Optional breakdowns</summary>
     {#if activeSport === 'nfl' && subjectType === 'player'}
       <div class="split-selector player-diagnostic-note">
-        <div><h4>Player Context</h4>
+        <div><h4>Player context</h4>
           <p>Player comparisons use attributed plays plus compatible synced player statistics. Team-oriented diagnostic cuts are disabled for
             player analyses.</p></div>
       </div>

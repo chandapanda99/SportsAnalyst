@@ -17,9 +17,7 @@
 
 .soccer-competition-bar label {
     color: var(--color-text-secondary);
-    font: 12px var(--font-mono);
-    letter-spacing: .08em;
-    text-transform: uppercase;
+    font: 12px var(--font-sans);
 }
 
 .soccer-competition-select {
@@ -63,7 +61,7 @@
     pointer-events: none;
     color: var(--color-text-secondary);
 }
-.ask-panel {
+.ask-panel, .data-library {
     max-width: 1440px;
     margin: 1.5rem auto 3rem;
 }
@@ -90,7 +88,7 @@
     margin: .4rem 0 .6rem;
 }
 
-.ask-copy p {
+.ask-copy p, .data-library .intro-grid > .section-help {
     max-width: 75ch;
     font-size: var(--text-base);
 }
@@ -99,7 +97,16 @@
     font-size: clamp(1.5rem, 2.4vw, 2.4rem);
 }
 
-.getting-started, .analysis-brief, .metric-info, .methodology, .key-metrics article {
+/* How it works and the download count sit together at the end of the page header. */
+.topbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3) var(--space-4);
+}
+
+.getting-started, .analysis-brief, .metric-info, .methodology {
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
@@ -130,7 +137,7 @@
 
 .getting-started .guide-steps {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
     gap: 1rem;
     padding: 0;
     margin: 1.25rem 0 0;
@@ -138,25 +145,10 @@
 }
 
 .getting-started .guide-steps li {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: .8rem;
-    min-height: 12.5rem;
     padding: 1rem;
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
-}
-
-.guide-icon {
-    display: grid;
-    width: 2.35rem;
-    height: 2.35rem;
-    place-items: center;
-    border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--color-border-subtle));
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--mint) 9%, var(--color-surface-panel));
-    color: var(--mint);
 }
 
 .getting-started .guide-steps small,
@@ -167,8 +159,7 @@
 .getting-started .guide-steps small {
     margin-bottom: .35rem;
     color: var(--mint);
-    font: 600 .68rem var(--font-mono);
-    letter-spacing: .11em;
+    font: 600 .68rem var(--font-sans);
 }
 
 .getting-started .guide-steps b {
@@ -177,20 +168,10 @@
 }
 
 .getting-started .guide-steps p {
-    margin: .5rem 0 .85rem;
+    margin: .5rem 0 0;
     line-height: 1.5;
     font-size: var(--text-md);
     color: var(--color-text-secondary);
-}
-
-.getting-started .guide-step-action {
-    display: inline-flex;
-    align-items: center;
-    gap: .4rem;
-    min-height: 0;
-    padding: .45rem .6rem;
-    color: var(--mint);
-    font-size: var(--text-sm);
 }
 
 .guide-outcome {
@@ -346,6 +327,12 @@
     font-size: var(--text-base);
 }
 
+/* The data line names what is downloaded; the link under it opens the Data library. */
+.analysis-brief .brief-data-link {
+    display: flex;
+    margin-top: var(--space-1);
+}
+
 .readiness {
     list-style: none;
     margin: 0;
@@ -480,9 +467,7 @@
     padding: 0 .6rem;
     background: var(--color-surface);
     color: var(--mint);
-    font: 600 .75rem var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: .1em;
+    font: 600 .75rem var(--font-sans);
 }
 
 .question-field h3 label {
@@ -496,9 +481,7 @@
     display: block;
     margin-top: 1rem;
     color: var(--color-text-tertiary);
-    font: 11px var(--font-mono);
-    letter-spacing: .1em;
-    text-transform: uppercase;
+    font: 11px var(--font-sans);
 }
 
 .metric-info {
@@ -566,10 +549,8 @@ summary {
 
 .season-options .season-current {
     color: var(--mint);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-sans);
     font-style: normal;
-    letter-spacing: .06em;
-    text-transform: uppercase;
 }
 
 .dataset-options .coverage-detail {
@@ -613,14 +594,6 @@ summary {
 
 .metric-groups label.unavailable {
     opacity: .78;
-}
-
-.data-manager summary {
-    padding: .9rem 1.1rem;
-}
-
-.data-manager summary small {
-    max-width: none;
 }
 
 .data-setup-header, .data-readiness-row {
@@ -725,15 +698,11 @@ summary {
 }
 
 .key-metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
-    gap: 1rem;
     margin: 1.5rem 0;
 }
 
 .key-metrics .key-metrics-note {
-    grid-column: 1 / -1;
-    margin: 0;
+    margin: 0 0 var(--space-3);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
 }
@@ -786,9 +755,7 @@ summary {
 
 .thread-origin small {
     color: var(--mint);
-    font: 11px var(--font-mono);
-    letter-spacing: .08em;
-    text-transform: uppercase;
+    font: 11px var(--font-sans);
 }
 
 .thread-origin span {
@@ -818,31 +785,78 @@ summary {
     }
 }
 
-.key-metrics h3 {
-    font-size: var(--text-base);
-    line-height: 1.4;
-    margin: 0 0 1rem;
+/* Key metrics read as a stat sheet: a row per metric, periods side by side, figures in condensed equal-width digits. */
+.stat-sheet-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
 }
 
-.key-metrics article > div {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
-    gap: 1rem 1.5rem;
+.stat-sheet {
+    width: 100%;
+    border-collapse: collapse;
 }
 
-.key-metrics article > div.many-periods {
-    grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
-    gap: 1rem;
-}
-
-.key-metrics article > div.many-periods b {
-    font-size: var(--text-xl);
-}
-
-.key-metrics p em {
-    display: inline-block;
+.stat-sheet th, .stat-sheet td {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--line);
+    text-align: right;
+    vertical-align: baseline;
     white-space: nowrap;
-    margin-left: .35rem;
+}
+
+.stat-sheet thead th {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.stat-sheet thead th:first-child, .stat-sheet tbody th {
+    text-align: left;
+    white-space: normal;
+}
+
+.stat-sheet tbody th[scope="row"] {
+    color: var(--color-text-primary);
+    font-weight: 600;
+}
+
+.stat-sheet .stat-group th {
+    padding-top: var(--space-5);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+}
+
+.stat-sheet tbody:last-child tr:last-child > * {
+    border-bottom: 0;
+}
+
+.stat-sheet .stat-value {
+    color: var(--color-text-primary);
+    font-size: var(--text-2xl);
+    font-stretch: var(--font-width-figures);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.stat-sheet .stat-change {
+    color: var(--color-text-soft);
+    font-size: var(--text-lg);
+    font-stretch: var(--font-width-figures);
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-sheet small {
+    display: block;
+    margin-top: var(--space-1);
+    color: var(--color-text-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 400;
+}
+
+.stat-sheet em {
+    display: inline-block;
     padding: .1rem .45rem;
     border: 1px solid var(--mint);
     border-radius: var(--radius-pill);
@@ -851,53 +865,9 @@ summary {
     font-style: normal;
 }
 
-.key-metrics p em.worse {
+.stat-sheet em.worse {
     border-color: var(--color-status-warning);
     color: var(--color-status-warning);
-}
-
-.key-metrics span {
-    color: var(--color-text-secondary);
-    font-size: var(--text-sm);
-}
-
-.key-metrics b {
-    display: block;
-    color: var(--color-text-primary);
-    font-size: var(--text-2xl);
-    margin-top: .4rem;
-}
-
-.key-metrics table.season-pairs {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-md);
-    font-variant-numeric: tabular-nums;
-}
-
-.key-metrics .season-pairs th,
-.key-metrics .season-pairs td {
-    padding: .4rem .5rem .4rem 0;
-    border-bottom: 1px solid var(--color-border-subtle);
-    text-align: left;
-    vertical-align: top;
-}
-
-.key-metrics .season-pairs thead th {
-    color: var(--color-text-secondary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-}
-
-.key-metrics .season-pairs td {
-    color: var(--color-text-primary);
-}
-
-.key-metrics small {
-    display: block;
-    margin-top: .25rem;
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
 }
 
 .film-room-empty {
@@ -936,8 +906,120 @@ summary {
 
 .report-actions {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: .5rem;
+}
+
+/* A step's number sits in a small marker before its short name, so the five steps read as one sequence. */
+.step-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.step-number {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--mint) 16%, transparent);
+    color: var(--mint);
+    font-stretch: var(--font-width-figures);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+/* The question sits above the progress, where the finished report's answer will appear. */
+.working-question {
+    position: relative;
+    z-index: 1;
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--line);
+}
+
+.working .working-note {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+}
+
+/* The report bar stays at the top of the screen: tabs and section links on the left, actions on the right. */
+.report-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-6);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+}
+
+.report-bar-nav {
+    display: grid;
+    flex: 1 1 24rem;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.report-tabs, .report-sections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.report-tabs button, .report-sections button {
+    flex: none;
+    padding: var(--space-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.report-tabs button:hover, .report-sections button:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text-primary);
+}
+
+/* The open tab is marked the way the open sport tab is: a frame with the accent along its bottom edge. */
+.report-tabs button.active {
+    border-color: var(--line);
+    border-bottom-color: var(--mint);
+    background: var(--color-surface-panel);
+    color: var(--color-text-primary);
+}
+
+.report-sections button.active {
+    color: var(--mint);
+}
+
+.report-view [id^="report-"][tabindex="-1"] {
+    scroll-margin-top: calc(var(--report-bar-height, 0px) + var(--space-4));
+}
+
+/* The follow-up box stays at the bottom of the screen while the report is read. */
+.followup-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin: var(--space-6) 0 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+}
+
+.followup-dock textarea {
+    min-height: 0;
 }
 
 .report-question {
@@ -956,28 +1038,6 @@ summary {
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
     font-weight: 400;
-}
-
-.followup-view {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: .5rem 1rem;
-    margin-bottom: 1rem;
-    padding: .6rem .8rem;
-    border: 1px solid var(--mint);
-    border-radius: var(--radius-md);
-}
-
-.followup-view button {
-    min-height: 2.5rem;
-    padding: .45rem .75rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background: var(--color-surface-control);
-    color: var(--color-text-primary);
-    cursor: pointer;
 }
 
 .play-panel {
@@ -1150,9 +1210,7 @@ summary {
     margin: 0;
     padding: .9rem 1rem .3rem;
     color: var(--mint);
-    font: .75rem var(--font-mono);
-    letter-spacing: .05em;
-    text-transform: uppercase;
+    font: .75rem var(--font-sans);
 }
 
 .reading-guide {
@@ -1241,10 +1299,6 @@ button:disabled {
         gap: 1rem;
     }
 
-    .getting-started .guide-steps li {
-        min-height: 0;
-    }
-
     .report-grid {
         grid-template-columns: minmax(0, 1fr);
     }
@@ -1261,6 +1315,25 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+    /* On narrow screens the report bar is one row that scrolls sideways, so it stays short. */
+    .report-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+
+    .report-bar-nav {
+        flex: none;
+        grid-auto-flow: column;
+    }
+
+    .report-tabs, .report-sections {
+        flex-wrap: nowrap;
+    }
+
+    .report-bar .report-actions {
+        flex-wrap: nowrap;
+    }
+
     .rail {
         padding: 1rem;
     }
@@ -1361,10 +1434,6 @@ button:disabled {
 
     .metric-actions {
         justify-content: flex-start;
-    }
-
-    .key-metrics {
-        grid-template-columns: minmax(0, 1fr);
     }
 
     main {

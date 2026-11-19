@@ -1,3 +1,4 @@
+import '@fontsource-variable/archivo/wdth.css';
 import './style.css';
 import './workbench.css';
 import { mount } from 'svelte';

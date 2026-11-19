@@ -65,21 +65,32 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   vi.stubGlobal('fetch', fetch);
   render(App);
   const collegeTab = await screen.findByRole('button', {name: 'College Football'});
-  expect(document.getElementById('data-setup')!.compareDocumentPosition(document.getElementById('scope-heading')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // Downloads live in the Data library, so the setup page holds only the numbered steps.
+  expect(document.getElementById('data-setup')).toBeNull();
   await fireEvent.click(collegeTab);
   await screen.findByText('Saved college comparison');
   expect(document.querySelector('.recent-subject-badge img')?.getAttribute('src')).toBe('https://a.espncdn.com/i/teamlogos/ncaa/500/1.png');
   await screen.findByRole('option', {name: 'Selected Conference'});
+  const kind = screen.getByRole('region', {name: 'What kind of report?'});
   const subject = screen.getByRole('region', {name: 'Who do you want to understand?'});
-  const dataSetup = document.getElementById('data-setup')!;
-  expect(subject.compareDocumentPosition(dataSetup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(dataSetup.compareDocumentPosition(document.getElementById('comparison-heading')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(dataSetup.querySelector('.cfb-conference-download')).toBeTruthy();
+  expect(kind.compareDocumentPosition(subject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(subject.compareDocumentPosition(document.getElementById('comparison-heading')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(kind.querySelector('.step-label')?.textContent).toBe('1Report type');
+  expect(subject.querySelector('.step-label')?.textContent).toBe('2Subject');
   expect(subject.querySelector('#sport-team')).toBeNull(); // School selection is the single team control.
-  expect((dataSetup.querySelector('.download-data-button') as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole('button', {name: 'Download Entire Conference'}) as HTMLButtonElement).disabled).toBe(true);
-  await fireEvent.click(screen.getByRole('button', {name: 'Choose a School'}));
-  expect(document.activeElement?.id).toBe('scope-heading');
+  expect(document.querySelector('.analysis-brief')?.textContent).toContain('Choose a school first');
+  let dataSetup = document.createElement('section');
+  if (workflow.includes('download')) {
+    await fireEvent.click(screen.getByRole('button', {name: 'Data library'}));
+    await screen.findByRole('heading', {level: 1, name: 'Data library'});
+    await screen.findByRole('option', {name: 'Selected Conference'});
+    dataSetup = document.getElementById('data-setup')!;
+    expect(dataSetup.querySelector('.cfb-conference-download')).toBeTruthy();
+    expect((dataSetup.querySelector('.download-data-button') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', {name: 'Download entire conference'}) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByRole('button', {name: 'Choose a school'}));
+    expect(document.activeElement?.id).toBe('library-school-heading');
+  }
   if (workflow === 'player selection' || workflow === 'player head-to-head') {
     await fireEvent.click(screen.getByRole('button', {name: 'Player'}));
     expect((screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement).disabled).toBe(true);
@@ -98,7 +109,7 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
       await fireEvent.change(screen.getByLabelText('School'), {target: {value: '1'}});
     }
     await fireEvent.click(screen.getByRole('checkbox', {name: 'Rosters'}));
-    await fireEvent.click(screen.getByRole('button', {name: 'Download Entire Conference'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Download entire conference'}));
     await waitFor(() => expect(downloaded).not.toBeNull());
     expect(downloaded).toMatchObject({subdivision: workflow === 'conference download with school' ? 'fcs' : 'fbs', conference_id: '8', seasons: [2025, 2024]});
     expect(downloaded.team_ids).toBeUndefined();
@@ -114,8 +125,8 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
     return;
   }
   await fireEvent.change(screen.getByLabelText('School'), {target: {value: '1'}});
-  expect(await screen.findByText('Selected School · Selected School')).toBeTruthy();
   if (workflow === 'school download') {
+    expect(await screen.findByText('Downloading for Selected School')).toBeTruthy();
     await fireEvent.click(dataSetup.querySelector('.download-data-button')!);
     await waitFor(() => expect(downloaded).not.toBeNull());
     expect(downloaded).toMatchObject({team_ids: ['1'], seasons: [2025, 2024]});
@@ -183,10 +194,19 @@ it.each(['analysis', 'school download', 'conference download', 'conference downl
   const coverageQuestion = screen.getByRole('button', {name: /How reliable is the results trend given unequal game counts/});
   await fireEvent.click(coverageQuestion);
   expect((screen.getByLabelText('What do you want to know?') as HTMLTextAreaElement).value).toBe(coverageQuestion.textContent?.trim());
+  await waitFor(() => expect(document.querySelector('.analysis-brief')?.textContent).not.toContain('Choose a school first'));
+  // The Data library shows this school's coverage; returning keeps the school and the question.
+  await fireEvent.click(screen.getByRole('button', {name: 'Open data library'}));
+  expect(window.location.hash).toBe('#/data');
+  expect(await screen.findByText('Downloading for Selected School')).toBeTruthy();
   const season = await screen.findByRole('checkbox', {name: '2025 season'});
   if (!(season as HTMLInputElement).checked) await fireEvent.click(season);
   await screen.findByText('Limited source coverage · recheck hourly');
   expect(screen.getByText('2025: No recorded roster is available for this school/season')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', {name: 'New analysis'}));
+  expect(window.location.hash).toBe('');
+  await waitFor(() => expect((screen.getByLabelText('School') as HTMLSelectElement).value).toBe('1'));
+  expect((screen.getByLabelText('What do you want to know?') as HTMLTextAreaElement).value).toBe(coverageQuestion.textContent?.trim());
   await waitFor(() => expect((screen.getByRole('button', {name: /Run analysis/}) as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(screen.getByRole('button', {name: /Run analysis/}));
   await waitFor(() => expect(submitted?.sport).toBe('cfb'));

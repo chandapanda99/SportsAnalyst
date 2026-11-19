@@ -364,7 +364,7 @@ class AnalystApplication:
             if options.sport == "nba" and metric.value.startswith("lineup_"):
                 eligible = [year for year in years if year in NBA_DATASETS["lineups"].available_seasons]
             metrics.append(metric.model_copy(update={"preparable_seasons": list(eligible)}))
-        setup = options.data_setup.model_copy(update={"description": "Sync the seasons you plan to analyze. Anything still missing prepares when you run "
+        setup = options.data_setup.model_copy(update={"description": "Download the seasons you plan to analyze. Anything still missing downloads when you run "
                                                        "the analysis, and source coverage is checked before it starts."})
         return options.model_copy(update={"automatic_preparation": True, "preparable_seasons": list(years), "metrics": metrics, "data_setup": setup})
 

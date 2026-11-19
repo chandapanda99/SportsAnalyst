@@ -18,7 +18,8 @@
   export let historyLoading: boolean;
   export let historyLoadError: string;
   export let deletingInvestigationId: string;
-  export let showGuidance: boolean;
+  /** True while the Data library is the page shown. */
+  export let libraryOpen: boolean;
   export let mobileHistoryOpen: boolean;
   export let showFullFilmRoom: boolean;
   /** The desktop rail scrolls its list, so it lists every report; the stacked phone layout keeps the toggle. */
@@ -36,7 +37,11 @@
   export let loadHistory: () => Promise<void>;
   export let openInvestigation: (investigation: SavedReport | null) => Promise<void>;
   export let startNewAnalysis: () => void;
-  export let openGettingStartedGuide: () => Promise<void>;
+  export let openLibrary: () => Promise<void>;
+  /** What is running in the background, shown at the top of the Film Room; null when nothing is. */
+  export let running: {title: string; detail: string; progress: number} | null = null;
+  export let progressShown = false;
+  export let openProgress: () => Promise<void>;
   export let deleteInvestigation: (item: SavedReport) => Promise<void>;
 
   let resizingRail = false;
@@ -68,36 +73,45 @@
     <div><strong>Open Sports</strong><span>Analyst</span></div>
   </div>
   <nav aria-label="Primary">
-    <button class="sidebar-action new-investigation" class:active={!active} on:click={startNewAnalysis}>
+    <button class="sidebar-action new-investigation" class:active={!active && !libraryOpen && !progressShown} on:click={startNewAnalysis}>
       <span class="sidebar-action-icon"><Icon name="clipboard-plus" size={20}/></span>
-      <span class="sidebar-action-label">New Analysis</span>
+      <span class="sidebar-action-label">New analysis</span>
     </button>
-    <button class="sidebar-action getting-started-button" class:active={!active && showGuidance} type="button"
-            aria-expanded={!active && showGuidance} aria-controls="getting-started"
-            on:click={openGettingStartedGuide}>
-      <span class="sidebar-action-icon"><Icon name="book-open" size={20}/></span>
-      <span class="sidebar-action-label">Getting Started</span>
+    <button class="sidebar-action data-library-button" class:active={libraryOpen && !progressShown} type="button" on:click={openLibrary}>
+      <span class="sidebar-action-icon"><Icon name="database" size={20}/></span>
+      <span class="sidebar-action-label">Data library</span>
     </button>
     <button class="mobile-history-toggle" type="button" aria-expanded={mobileHistoryOpen} on:click={() => mobileHistoryOpen = !mobileHistoryOpen}>Film Room
       ({rootHistory.length})
     </button>
     <div class="nav-label">
       <Icon name="history" size={15}/>
-      Film Room · {sportTabs.find(sport => sport.value === activeSport)?.label ?? activeSport.toUpperCase()}
+      {sportTabs.find(sport => sport.value === activeSport)?.label ?? activeSport.toUpperCase()} Film Room
     </div>
     {#if historyLoading}<p role="status"><span class="button-spinner" aria-hidden="true"></span> Loading the Film Room…</p>{/if}
     {#if historyLoadError}
       <div role="alert"><p>The Film Room couldn't load. {historyLoadError}</p>
-        <button type="button" on:click={() => loadHistory()}>Retry History</button>
+        <button type="button" on:click={() => loadHistory()}>Retry</button>
       </div>
     {/if}
     {#if !historyLoading && !historyLoadError && !rootHistory.length}
       <p class="film-room-empty">No saved {activeSport === 'soccer' ? 'reports for this competition' : 'reports for this sport'} yet. Finished reports appear here.</p>
     {/if}
     <div class="film-room-list">
+    {#if running}
+      <div class="recent-report running-report">
+        <button class="recent-report-link" class:active={progressShown} aria-current={progressShown ? 'page' : undefined} on:click={openProgress}>
+          <span class="recent-subject-badge" aria-hidden="true"><span class="button-spinner"></span></span>
+          <div><strong class="recent-subject-name">{running.title}</strong>
+            {#if running.detail}<span class="recent-question">{running.detail}</span>{/if}
+            <small>{Math.round(running.progress * 100)}% · open progress</small>
+          </div>
+        </button>
+      </div>
+    {/if}
     {#each showFullFilmRoom || railScrolls ? rootHistory : rootHistory.slice(0, filmRoomPreviewCount) as item}
       <div class="recent-report">
-        <button class="recent-report-link" class:active={active ? rootIdFor(active, history) === item.run.investigation_id : false}
+        <button class="recent-report-link" class:active={active && !progressShown ? rootIdFor(active, history) === item.run.investigation_id : false}
                 on:click={() => openInvestigation(item)}>
           <TeamBadge logo={investigationTeamLogo(item)} label={investigationSubject(item, playerNamesById)}
                      initials={investigationSubjectInitials(item, playerNamesById)}/>

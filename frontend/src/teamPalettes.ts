@@ -96,7 +96,7 @@ const CHART_LABEL_COLOR = '#C5D4DF';
 const CHART_GRID_COLOR = '#31506A';
 const METRIC_PLOT_HEIGHT = 130;
 const METRIC_CHART_SPACING = 32;
-const CHART_FONT = 'Manrope, Inter, ui-sans-serif, system-ui, sans-serif';
+const CHART_FONT = '"Archivo Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif';
 
 export function teamChartPalette(team: string, sport = 'nfl', season?: number, fallback: TeamChartPalette = DEFAULT_CHART_PALETTE): TeamChartPalette {
     const supplied = branding(team, sport.toLowerCase(), season).colors;

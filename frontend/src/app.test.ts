@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import {teamLogoUrl} from './teamPalettes';
 
+/** Opens the Data library from the sidebar and waits for its season list. */
+async function openDataLibrary() {
+  await fireEvent.click(await screen.findByRole('button', {name: 'Data library'}));
+  await screen.findByRole('heading', {level: 1, name: 'Data library'});
+  await screen.findByRole('group', {name: 'Seasons to download'});
+}
+
 describe('Open Sports Analyst workbench', () => {
   let mockInvestigations: Array<Record<string, unknown>>;
 
@@ -232,10 +239,10 @@ describe('Open Sports Analyst workbench', () => {
       await screen.findByText('Loading the Film Room…');
       expect(document.querySelector('.desktop-startup-overlay')).toBeNull();
       failHistory(new Error('Investigation history timed out.'));
-      await screen.findByRole('button', {name: 'Retry History'});
+      await screen.findByRole('button', {name: 'Retry'});
       vi.mocked(fetch).mockImplementation(defaultFetch);
-      await fireEvent.click(screen.getByRole('button', {name: 'Retry History'}));
-      await waitFor(() => expect(screen.queryByRole('button', {name: 'Retry History'})).toBeNull());
+      await fireEvent.click(screen.getByRole('button', {name: 'Retry'}));
+      await waitFor(() => expect(screen.queryByRole('button', {name: 'Retry'})).toBeNull());
     } finally {
       window.history.replaceState({}, '', '/');
     }
@@ -250,10 +257,10 @@ describe('Open Sports Analyst workbench', () => {
     });
     try {
       render(App);
-      await screen.findByRole('button', {name: 'Try Again'});
+      await screen.findByRole('button', {name: 'Try again'});
       expect(screen.getByText(/We couldn't finish opening your workspace.*season and analysis options.*Options unavailable/)).toBeTruthy();
       vi.mocked(fetch).mockImplementation(defaultFetch);
-      await fireEvent.click(screen.getByRole('button', {name: 'Try Again'}));
+      await fireEvent.click(screen.getByRole('button', {name: 'Try again'}));
       await waitFor(() => expect(document.querySelector('.desktop-startup-overlay')).toBeNull());
     } finally {
       window.history.replaceState({}, '', '/');
@@ -267,7 +274,9 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByText('Who do you want to understand?')).toBeTruthy();
     expect(screen.getByLabelText('NFL team')).toBeTruthy();
     expect(screen.getByText('Choose what to measure')).toBeTruthy();
-    expect(await screen.findByText('Data Ready · Manage Data')).toBeTruthy();
+    expect(screen.getByText('What kind of report?')).toBeTruthy();
+    expect(await screen.findByRole('button', {name: 'Open data library'})).toBeTruthy();
+    expect(document.getElementById('data-setup')).toBeNull();
     expect(screen.getByRole('button', { name: /Run analysis/i })).toBeTruthy();
   });
 
@@ -318,7 +327,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
     await fireEvent.input(screen.getByLabelText('What do you want to know?'), {target: {value: 'What changed in the passing game?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getByText('Missing data will prepare when you run')).toBeTruthy();
+    expect(screen.getByText('Missing data downloads when you run')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', {name: 'Run analysis'}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(true));
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/sync-stream'))).toBe(false);
@@ -367,10 +376,15 @@ describe('Open Sports Analyst workbench', () => {
       return defaultFetch(input, init);
     });
     render(App);
-    expect(await screen.findByText('Football essentials')).toBeTruthy();
-    expect(screen.getByRole('region', {name: 'How it works'})).toBeTruthy();
-    expect(screen.queryByRole('checkbox', {name: 'Injuries'})).toBeNull();
+    expect(await screen.findByRole('region', {name: 'How it works'})).toBeTruthy();
+    expect(screen.queryByRole('button', {name: 'How it works'})).toBeNull();
+    expect(await screen.findByRole('button', {name: /Download the required data first/})).toBeTruthy();
     expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
+    await openDataLibrary();
+    expect(window.location.hash).toBe('#/data');
+    expect(screen.getByRole('button', {name: 'Data library'}).classList.contains('active')).toBe(true);
+    expect(await screen.findByText('Football essentials')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', {name: 'Injuries'})).toBeNull();
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     await fireEvent.click(screen.getByRole('button', {name: 'Download 2 sources for 2 seasons'}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(
@@ -381,24 +395,23 @@ describe('Open Sports Analyst workbench', () => {
       {seasons: [2025, 2024], datasets: ['play_by_play', 'rosters']}
     ]);
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/dataset-jobs/sync-running/status'))).toBe(true);
-    await fireEvent.click(await screen.findByRole('button', {name: 'Continue building analysis'}));
-    expect(document.activeElement?.id).toBe('scope-heading');
+    await fireEvent.click(await screen.findByRole('button', {name: 'Back to your analysis'}));
+    expect(window.location.hash).toBe('');
+    expect(document.activeElement?.id).toBe('kind-heading');
     const team = screen.getByRole('combobox', {name: 'NFL team'});
     await fireEvent.focus(team);
     await fireEvent.keyDown(team, {key: 'ArrowDown'});
     await fireEvent.keyDown(team, {key: 'Enter'});
     await fireEvent.input(screen.getByLabelText('What do you want to know?'), {target: {value: 'What changed in the passing game?'}});
     await waitFor(() => expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', {name: 'Dismiss guide'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Hide guide'}));
     cleanup();
     render(App);
-    await screen.findByText('Data Ready · Manage Data');
-    expect(screen.queryByRole('region', {name: 'How it works'})).toBeNull();
-    await fireEvent.click(screen.getByRole('button', {name: 'Getting Started'}));
+    await fireEvent.click(await screen.findByRole('button', {name: 'How it works'}));
     const guide = await screen.findByRole('region', {name: 'How it works'});
-    expect(guide).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(guide));
-    expect(screen.getByRole('button', {name: 'Getting Started'}).getAttribute('aria-expanded')).toBe('true');
+    expect(within(guide).getAllByRole('listitem').map(item => item.querySelector('small')?.textContent)).toEqual(['Step 1', 'Step 2', 'Step 3', 'Step 4', 'Step 5']);
+    expect(screen.queryByRole('button', {name: 'How it works'})).toBeNull();
   });
 
   it('explains readiness and retains custom metrics and questions through period and sport changes', async () => {
@@ -424,7 +437,7 @@ describe('Open Sports Analyst workbench', () => {
     await screen.findByRole('button', {name: /Passing.*Quarterback/});
     expect((screen.getByRole('checkbox', {name: /Success rate/}) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('What do you want to know?') as HTMLTextAreaElement).value).toBe('My own football question');
-    await fireEvent.click(screen.getByRole('button', {name: 'Clear All Metrics'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Clear all metrics'}));
     expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Choose at least one available metric to run your analysis.')).toBeTruthy();
   });
@@ -504,7 +517,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getAllByText('What changed?').length).toBeGreaterThanOrEqual(2);
     expect(resultAttempts).toBeGreaterThanOrEqual(2);
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'smooth' });
-    expect(await screen.findByText('Report Ready')).toBeTruthy();
+    expect(await screen.findByText('Report ready')).toBeTruthy();
   });
 
   it('offers the 2026 NFL season and syncs its current snapshot', async () => {
@@ -519,14 +532,14 @@ describe('Open Sports Analyst workbench', () => {
       return defaultFetch(input, init);
     });
     render(App);
-    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
+    await openDataLibrary();
     // The download list starts on the analysis seasons; the in-progress season is marked and can be added.
     const current = screen.getByRole('checkbox', {name: '2026 season'}) as HTMLInputElement;
     expect(current.checked).toBe(false);
     expect(current.closest('label')?.textContent).toContain('In progress');
     await fireEvent.click(current);
     expect(screen.getByText(/2026 is still in progress/)).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', {name: 'Download or Refresh 1 sources for 3 seasons'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'Download or refresh 1 sources for 3 seasons'}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))).toBe(true));
     const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
     expect(JSON.parse(String(syncCall?.[1]?.body))).toEqual({seasons: [2026], datasets: ['play_by_play']});
@@ -541,10 +554,10 @@ describe('Open Sports Analyst workbench', () => {
       return defaultFetch(input, init);
     });
     render(App);
-    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
-    await fireEvent.change(screen.getByLabelText('Download By'), {target:{value:'conference'}});
+    await openDataLibrary();
+    await fireEvent.change(screen.getByLabelText('Download by'), {target:{value:'conference'}});
     await waitFor(() => expect(screen.getByRole('option',{name:'AFC'})).toBeTruthy());
-    await fireEvent.change(screen.getByLabelText('Download Conference'), {target:{value:'nfl:afc'}});
+    await fireEvent.change(screen.getByLabelText('Conference to download'), {target:{value:'nfl:afc'}});
     await fireEvent.click(screen.getByRole('button', {name:/Download 1 sources for 2 seasons · AFC/}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'))).toBe(true));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/datasets/nfl/sync-stream'));
@@ -587,11 +600,12 @@ describe('Open Sports Analyst workbench', () => {
     expect(await screen.findByText('Basketball analysis')).toBeTruthy();
     expect(screen.queryByLabelText('NFL team')).toBeNull();
     expect(screen.queryByText('EPA/dropback')).toBeNull();
-    await fireEvent.click(screen.getByText(/Data Ready · Manage Data|Sync Data/, {selector: 'strong'}));
+    await openDataLibrary();
     await fireEvent.click(await screen.findByRole('button', {name: 'Customize data sources'}));
     expect((await screen.findByLabelText(/Player Crosswalk/) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByLabelText(/On-court Lineups/)).toBeNull();
     expect(screen.getByText(/not offered for selected seasons/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'New analysis'}));
     await fireEvent.click(screen.getByRole('button', { name: 'Player' }));
     const player = await screen.findByRole('combobox', { name: 'Player' }) as HTMLInputElement;
     await fireEvent.focus(player);
@@ -613,7 +627,6 @@ describe('Open Sports Analyst workbench', () => {
     const playerSeasonSelectors = screen.getAllByLabelText(/^(From|Through) season$/) as HTMLSelectElement[];
     expect(playerSeasonSelectors).toHaveLength(2);
     expect(playerSeasonSelectors.every((select) => [...select.options].map((option) => option.value).join(',') === '2024')).toBe(true);
-    expect(screen.getByText('1 player seasons available')).toBeTruthy();
 
     await fireEvent.click(screen.getByRole('button', { name: 'NFL' }));
     expect(document.querySelector('main')?.getAttribute('data-sport-background')).toBe('nfl');
@@ -665,7 +678,7 @@ describe('Open Sports Analyst workbench', () => {
     }
     vi.stubGlobal('EventSource', IdleEventSource);
     render(App);
-    await fireEvent.click(await screen.findByText('Data Ready · Manage Data'));
+    await openDataLibrary();
     await fireEvent.click(screen.getByRole('button', {name: 'Customize data sources'}));
     const season2024 = await screen.findByRole('checkbox', { name: '2024 season' }) as HTMLInputElement;
     const season2025 = screen.getByRole('checkbox', { name: '2025 season' }) as HTMLInputElement;
@@ -694,14 +707,14 @@ describe('Open Sports Analyst workbench', () => {
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
     const nextgen = screen.getByRole('checkbox', { name: /Nextgen Passing/ }) as HTMLInputElement;
-    await fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => input.checked)).toBe(true);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Deselect All' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
     expect([playByPlay, rosters, injuries, nextgen].every((input) => !input.checked)).toBe(true);
     expect(screen.getByLabelText('Rosters local status: Local 1/2')).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
     await fireEvent.click(screen.getByRole('button', { name: /Download .* sources/ }));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
       String(input) === '/api/datasets/nfl/sync-stream' && init?.method === 'POST'
@@ -760,7 +773,7 @@ describe('Open Sports Analyst workbench', () => {
     expect(fetch).toHaveBeenCalledWith('/api/investigations/investigation-delete-me', expect.objectContaining({method: 'DELETE'}));
     await waitFor(() => expect(screen.queryAllByText('Which games changed the most?')).toHaveLength(0));
     expect(screen.queryAllByText('Was it consistent across the sample?')).toHaveLength(0);
-    expect(await screen.findByText('Report Deleted')).toBeTruthy();
+    expect(await screen.findByText('Report deleted')).toBeTruthy();
   });
 
   it('keeps the report in place when a follow-up is answered', async () => {
@@ -810,9 +823,10 @@ describe('Open Sports Analyst workbench', () => {
     expect(scrollTo).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByText('The third-down answer.'));
-    expect(await screen.findByRole('button', {name: 'Back to the original report'})).toBeTruthy();
+    const tabs = await screen.findByRole('navigation', {name: 'Report and follow-ups'});
+    await waitFor(() => expect(within(tabs).getByRole('button', {name: 'Follow-up 1'}).getAttribute('aria-pressed')).toBe('true'));
     expect(document.querySelector('.key-metrics')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', {name: 'Back to the original report'}));
+    await fireEvent.click(within(screen.getByRole('navigation', {name: 'Report and follow-ups'})).getByRole('button', {name: 'Report'}));
     await waitFor(() => expect(document.querySelector('.key-metrics')).toBeTruthy());
   });
 
@@ -969,20 +983,25 @@ describe('Open Sports Analyst workbench', () => {
     }];
     render(App);
     await fireEvent.click(await screen.findByText('Which offense passed better each season?'));
-    const cards = await waitFor(() => {
-      const articles = document.querySelectorAll('.key-metrics article');
-      expect(articles.length).toBe(1);
-      return articles;
+    // One stat sheet: the metric heads a group with a row per season, both subjects side by side.
+    const sheet = await waitFor(() => {
+      const table = document.querySelector('.key-metrics table.stat-sheet');
+      expect(table).toBeTruthy();
+      return table!;
     });
-    expect(cards[0].querySelector('h3')?.textContent).toBe('EPA/dropback');
+    expect([...sheet.querySelectorAll('thead th')].map(cell => cell.textContent?.trim()))
+      .toEqual(['Metric', 'Kansas City Chiefs', 'Buffalo Bills', 'Difference', 'Ahead']);
+    expect(sheet.querySelectorAll('tbody')).toHaveLength(1);
+    expect(sheet.querySelector('.stat-group th')?.textContent).toBe('EPA/dropback');
     const rows = await waitFor(() => {
-      const found = [...cards[0].querySelectorAll('tbody tr')].map(row => [...row.children].map(cell => cell.textContent?.trim()));
-      expect(found[1][3]).toBe('Buffalo Bills');
+      const found = [...sheet.querySelectorAll('tbody tr:not(.stat-group)')].map(row => [...row.children].map(cell => cell.textContent?.trim()));
+      expect(found[1][4]).toBe('Buffalo Bills');
       return found;
     });
-    expect(rows).toEqual([['2024', '0.200', '0.100', 'Kansas City Chiefs'], ['2025', '0.050', '0.150', 'Buffalo Bills']]);
+    expect(rows.map(row => [row[0], row[1], row[2], row[4]]))
+      .toEqual([['2024', '0.200', '0.100', 'Kansas City Chiefs'], ['2025', '0.050', '0.150', 'Buffalo Bills']]);
     expect(document.querySelector('.key-metrics-note')?.textContent).toContain('no combined multi-season value');
-    expect(cards[0].textContent).not.toContain('no combined multi-season value');
+    expect(sheet.textContent).not.toContain('no combined multi-season value');
     expect(screen.getAllByText('2024–2025 · Head-to-head').length).toBeGreaterThan(0);
   });
 
@@ -1000,16 +1019,17 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     await fireEvent.click(await screen.findByText('Which offense passed better?'));
     expect(await screen.findByRole('heading', {level: 1, name: 'Kansas City Chiefs vs Buffalo Bills report'})).toBeTruthy();
-    const card = await waitFor(() => {
-      const article = document.querySelector('.key-metrics article');
-      expect(article).toBeTruthy();
-      return article!;
+    const sheet = await waitFor(() => {
+      const table = document.querySelector('.key-metrics table.stat-sheet');
+      expect(table).toBeTruthy();
+      return table!;
     });
-    expect(card.textContent).toContain('Kansas City Chiefs');
-    expect(card.textContent).toContain('Buffalo Bills');
-    expect(card.textContent).toContain('Difference');
-    await waitFor(() => expect(card.textContent).toContain('Kansas City Chiefs ahead'));
-    expect(card.textContent).not.toContain('Better');
+    expect([...sheet.querySelectorAll('thead th')].map(cell => cell.textContent?.trim()))
+      .toEqual(['Metric', 'Kansas City Chiefs', 'Buffalo Bills', 'Difference', 'Ahead']);
+    const row = () => [...sheet.querySelectorAll('tbody tr')[0].children].map(cell => cell.textContent?.trim());
+    expect(row()[0]).toBe('EPA/dropback');
+    await waitFor(() => expect(row()[4]).toBe('Kansas City Chiefs'));
+    expect(sheet.textContent).not.toContain('Better');
     expect(screen.getAllByText('2025 · Head-to-head').length).toBeGreaterThan(0);
   });
 
@@ -1025,12 +1045,79 @@ describe('Open Sports Analyst workbench', () => {
     render(App);
     await fireEvent.click(await screen.findByText('What changed for Kansas City?'));
     await waitFor(() => expect(window.location.hash).toBe('#/reports/investigation-linked'));
-    await fireEvent.click(screen.getByRole('button', {name: 'New Analysis'}));
+    await fireEvent.click(screen.getByRole('button', {name: 'New analysis'}));
     await waitFor(() => expect(window.location.hash).toBe(''));
     expect(await screen.findByText('Who do you want to understand?')).toBeTruthy();
     window.history.replaceState({}, '', '/#/reports/investigation-linked');
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect((await screen.findAllByText('Answer for What changed for Kansas City?')).length).toBeGreaterThan(0);
+  });
+
+  it('gives the Data library its own address that reloads, survives a sport change and follows browser history', async () => {
+    window.history.replaceState({}, '', '/#/data');
+    render(App);
+    expect(await screen.findByRole('heading', {level: 1, name: 'Data library'})).toBeTruthy();
+    await screen.findByRole('group', {name: 'Seasons to download'});
+    expect(screen.queryByText('Who do you want to understand?')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', {name: 'NBA'}));
+    expect(await screen.findByText('Basketball essentials')).toBeTruthy();
+    expect(window.location.hash).toBe('#/data');
+    window.history.replaceState({}, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(await screen.findByRole('heading', {level: 1, name: 'Basketball analysis'})).toBeTruthy();
+    expect(screen.getByText('What kind of report?')).toBeTruthy();
+    window.history.replaceState({}, '', '/#/data');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(await screen.findByRole('heading', {level: 1, name: 'Data library'})).toBeTruthy();
+  });
+
+  it('keeps a report bar with section links, actions and follow-up tabs', async () => {
+    const root = savedReport('investigation-bar', 'What changed?');
+    const followupRun = {...savedReport('investigation-bar-answer', 'And on third down?').run, parent_investigation_id: 'investigation-bar'};
+    mockInvestigations = [root, {...savedReport('investigation-bar-answer', 'And on third down?'), run: followupRun}];
+    render(App);
+    await fireEvent.click(await screen.findByText('What changed?'));
+    const sections = await screen.findByRole('navigation', {name: 'Report sections'});
+    expect(within(sections).getAllByRole('button').map(button => button.textContent?.trim()))
+      .toEqual(['Answer', 'Key metrics', 'Findings', 'Charts', 'Examples', 'Method', 'Follow-ups']);
+    expect(window.location.hash).toBe('#/reports/investigation-bar');
+    await fireEvent.click(within(sections).getByRole('button', {name: 'Method'}));
+    await waitFor(() => expect((document.getElementById('report-method') as HTMLDetailsElement).open).toBe(true));
+    expect(document.activeElement?.id).toBe('report-method');
+    expect(within(sections).getByRole('button', {name: 'Method'}).getAttribute('aria-current')).toBe('location');
+    // Section links scroll the page; they never change the report's address.
+    expect(window.location.hash).toBe('#/reports/investigation-bar');
+    await fireEvent.click(screen.getByRole('button', {name: 'Ask a follow-up'}));
+    expect(document.activeElement?.id).toBe('followup-question');
+    const tabs = screen.getByRole('navigation', {name: 'Report and follow-ups'});
+    expect(within(tabs).getByRole('button', {name: 'Report'}).getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(within(tabs).getByRole('button', {name: 'Follow-up 1'}));
+    await waitFor(() => expect(within(screen.getByRole('navigation', {name: 'Report and follow-ups'}))
+      .getByRole('button', {name: 'Follow-up 1'}).getAttribute('aria-pressed')).toBe('true'));
+    expect(within(screen.getByRole('navigation', {name: 'Report sections'})).queryByRole('button', {name: 'Key metrics'})).toBeNull();
+  });
+
+  it('fills the setup page from a saved report with Edit and rerun, without running anything', async () => {
+    const saved = savedReport('investigation-edit', 'What changed in the passing game?');
+    mockInvestigations = [{...saved, run: {...saved.run, subject: {type: 'team', id: 'KC', display_name: 'Kansas City Chiefs'},
+      analysis_domain: 'passing', metrics: ['epa_per_dropback'], scope: {team: 'KC', comparison_design: 'week_ranges', season_type: 'POST',
+        baseline: {season: 2024, weeks: [1, 3]}, comparison: {season: 2025, weeks: [2, 5]}}}}];
+    render(App);
+    await fireEvent.click(await screen.findByText('What changed in the passing game?'));
+    await fireEvent.click(await screen.findByRole('button', {name: 'Edit and rerun'}));
+    expect(await screen.findByText('What kind of report?')).toBeTruthy();
+    // Focus lands on step 01 once every field is filled in.
+    await waitFor(() => expect(document.activeElement?.id).toBe('kind-heading'));
+    expect((screen.getByRole('combobox', {name: 'NFL team'}) as HTMLInputElement).value).toBe('Kansas City Chiefs (KC)');
+    expect((screen.getByLabelText('What do you want to know?') as HTMLTextAreaElement).value).toBe('What changed in the passing game?');
+    const timeFrame = document.querySelector('[aria-labelledby="comparison-heading"]')!;
+    const [mode, seasonType] = [...timeFrame.querySelectorAll('.scope-controls select')] as HTMLSelectElement[];
+    expect(mode.value).toBe('week_ranges');
+    expect(seasonType.value).toBe('POST');
+    expect([...timeFrame.querySelectorAll('.week-pair select')].map(select => (select as HTMLSelectElement).value)).toEqual(['1', '3', '2', '5']);
+    expect(screen.getByRole('checkbox', {name: /EPA\/dropback/}) as HTMLInputElement).toHaveProperty('checked', true);
+    expect(window.location.hash).toBe('');
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/investigations/stream'))).toBe(false);
   });
 
   it('explains a report link that no longer exists', async () => {
@@ -1073,10 +1160,72 @@ describe('Open Sports Analyst workbench', () => {
     const run = screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement;
     await waitFor(() => expect(run.disabled).toBe(false));
     await fireEvent.click(run);
-    await fireEvent.click(await screen.findByRole('button', {name: 'Cancel Analysis'}));
-    expect(await screen.findByText('Analysis Cancelled')).toBeTruthy();
+    await fireEvent.click(await screen.findByRole('button', {name: 'Cancel analysis'}));
+    expect(await screen.findByText('Analysis cancelled')).toBeTruthy();
     expect((screen.getByRole('combobox', {name: 'NFL team'}) as HTMLInputElement).value).toContain('Kansas City');
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', {name: 'Run analysis'})));
+  });
+
+  it('keeps the app usable during a run and lets a finished report wait in the Film Room', async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    let finish: (() => void) | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('data: {"stage":"planning","message":"Planning analysis","progress":0.4}\n\n'));
+        finish = () => {
+          controller.enqueue(encoder.encode('data: {"stage":"complete","message":"Investigation ready","progress":1,"investigation_id":"investigation-background"}\n\n'));
+          controller.close();
+        };
+      }
+    });
+    mockInvestigations = [savedReport('investigation-older', 'An earlier question?')];
+    const finished = savedReport('investigation-background', 'What changed in the passing game?');
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'POST' && String(input).endsWith('/investigations/stream')) {
+        return new Response(body, {headers: {'content-type': 'text/event-stream', 'x-investigation-id': 'investigation-background'}});
+      }
+      return baseFetch(input, init);
+    });
+    render(App);
+    const team = await screen.findByRole('combobox', {name: 'NFL team'});
+    await fireEvent.focus(team);
+    await fireEvent.mouseDown(await screen.findByRole('option', {name: /Kansas City Chiefs/}));
+    await fireEvent.input(screen.getByLabelText('What do you want to know?'), {target: {value: 'What changed in the passing game?'}});
+    const run = screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(false));
+    await fireEvent.click(run);
+    expect(await screen.findByRole('heading', {level: 1, name: 'Kansas City Chiefs report'})).toBeTruthy();
+    expect(screen.getByText(/You can keep using the app/)).toBeTruthy();
+    expect(await screen.findByRole('button', {name: /Running · Kansas City Chiefs/})).toBeTruthy();
+
+    // A saved report opens mid-run; its follow-ups wait because they share the run's progress channel.
+    await fireEvent.click(screen.getByText('An earlier question?'));
+    expect((await screen.findAllByText('Answer for An earlier question?')).length).toBeGreaterThan(0);
+    expect((screen.getByRole('textbox', {name: 'Ask a follow-up question'}) as HTMLTextAreaElement).disabled).toBe(true);
+
+    // The setup page opens too, with Run waiting for the current analysis.
+    await fireEvent.click(screen.getByRole('button', {name: 'New analysis'}));
+    expect(await screen.findByText('Another analysis is running. Run this one when it finishes.')).toBeTruthy();
+    expect((screen.getByRole('button', {name: 'Run analysis'}) as HTMLButtonElement).disabled).toBe(true);
+
+    // The Film Room entry returns to the progress screen.
+    await fireEvent.click(screen.getByRole('button', {name: /Running · Kansas City Chiefs/}));
+    expect(await screen.findByRole('button', {name: 'Cancel analysis'})).toBeTruthy();
+
+    // A run that finishes while the reader is elsewhere leaves them where they are.
+    await fireEvent.click(screen.getByText('An earlier question?'));
+    await screen.findAllByText('Answer for An earlier question?');
+    mockInvestigations.push(finished);
+    finish?.();
+    expect(await screen.findByText('Report ready')).toBeTruthy();
+    expect(screen.getAllByText('Answer for An earlier question?').length).toBeGreaterThan(0);
+    expect(window.location.hash).toBe('#/reports/investigation-older');
+    await waitFor(() => expect(screen.queryByRole('button', {name: /Running ·/})).toBeNull());
+    expect((screen.getByRole('textbox', {name: 'Ask a follow-up question'}) as HTMLTextAreaElement).disabled).toBe(false);
+    await fireEvent.click(screen.getByRole('button', {name: 'Open report'}));
+    expect((await screen.findAllByText('Answer for What changed in the passing game?')).length).toBeGreaterThan(0);
+    expect(window.location.hash).toBe('#/reports/investigation-background');
   });
 
   it('says plainly when the analysis service is not running', async () => {
@@ -1095,7 +1244,7 @@ describe('Open Sports Analyst workbench', () => {
       expect(screen.queryByText('No AI model set up')).toBeNull();
       expect((screen.getByRole('button', {name: 'NBA'}) as HTMLButtonElement).disabled).toBe(true);
       online = true;
-      await fireEvent.click(screen.getByRole('button', {name: 'Try Again'}));
+      await fireEvent.click(screen.getByRole('button', {name: 'Try again'}));
       expect(await screen.findByText('Football analysis')).toBeTruthy();
       await waitFor(() => expect(screen.queryByText("The analysis service isn't running. Start it, then try again.")).toBeNull());
     } finally {
@@ -1111,7 +1260,7 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByText('What changed?'));
     const finding = await screen.findByRole('button', {name: /Inspect evidence for finding 1: .*EPA rose by 0\.128/});
     expect(finding.getAttribute('aria-label')).toBeNull();
-    expect(screen.getByRole('heading', {level: 2, name: 'Core Findings'})).toBeTruthy();
+    expect(screen.getByRole('heading', {level: 2, name: 'Core findings'})).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', {name: 'The answer'})));
     await fireEvent.click(screen.getByRole('button', {name: 'Skip to main content'}));
     expect(document.activeElement?.tagName).toBe('MAIN');
@@ -1238,17 +1387,22 @@ describe('Open Sports Analyst workbench', () => {
     expect(document.querySelector('main')?.classList.contains('soccer-background')).toBe(true);
     expect(document.querySelector('.app-shell')?.classList.contains('soccer-theme')).toBe(true);
     expect(document.querySelector('.app-shell')?.classList.contains('nba-theme')).toBe(false);
-    const competition = await screen.findByLabelText('Competition');
-    const statsBadge = await screen.findByLabelText('Team Match Statistics local status: Installed');
-    expect(statsBadge.classList.contains('partial')).toBe(false);
-    expect(screen.getByText('Team stats: 4 matches · xG for 2 of 4 matches (limited source coverage)')).toBeTruthy();
+    let competition = await screen.findByLabelText('Competition');
     expect(within(competition).getByRole('option', {name: 'UEFA Champions League'})).toBeTruthy();
     await fireEvent.change(competition, {target: {value: 'uefa.champions'}});
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
       String(input) === '/api/sports/soccer/options?competition=uefa.champions')).toBe(true));
     await fireEvent.change(competition, {target: {value: 'eng.1'}});
     expect(screen.getAllByRole('option', {name: 'UEFA Champions League'})).toHaveLength(1);
-    expect(document.getElementById('data-setup')?.contains(competition)).toBe(false);
+    expect(document.getElementById('data-setup')).toBeNull();
+    // The Data library repeats the competition picker above its downloads, outside the download panel.
+    await openDataLibrary();
+    const statsBadge = await screen.findByLabelText('Team Match Statistics local status: Installed');
+    expect(statsBadge.classList.contains('partial')).toBe(false);
+    expect(screen.getByText('Team stats: 4 matches · xG for 2 of 4 matches (limited source coverage)')).toBeTruthy();
+    expect(document.getElementById('data-setup')?.contains(screen.getByLabelText('Competition'))).toBe(false);
+    await fireEvent.click(screen.getByRole('button', {name: 'New analysis'}));
+    competition = await screen.findByLabelText('Competition');
     await fireEvent.click(await screen.findByRole('button', {name: 'Player'}));
     const playerInput = screen.getByRole('combobox', {name: 'Player'}) as HTMLInputElement;
     await fireEvent.focus(playerInput);
@@ -1258,6 +1412,7 @@ describe('Open Sports Analyst workbench', () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) =>
       String(input) === '/api/sports/soccer/options?competition=usa.1')).toBe(true));
     expect(screen.queryByText('How did Home FC change?')).toBeNull();
+    await openDataLibrary();
     const defaultFetch = vi.mocked(fetch).getMockImplementation()!;
     let finishSync: () => void = () => {};
     vi.mocked(fetch).mockImplementation((input, init) => {
@@ -1288,16 +1443,16 @@ describe('Open Sports Analyst workbench', () => {
     await fireEvent.click(await screen.findByRole('button', {name: /Download \d+ sources for \d+ seasons/}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
       String(input) === '/api/datasets/soccer/sync-stream' && JSON.parse(String(init?.body)).competition === 'usa.1')).toBe(true));
-    expect(await screen.findByText('LIVE ANALYSIS BUILDUP')).toBeTruthy();
+    expect(await screen.findByText('Live buildup')).toBeTruthy();
     expect(document.querySelector('.soccer-loading-scene')).toBeTruthy();
     expect(document.querySelector('.catch-scene')).toBeNull();
     expect(screen.getByRole('progressbar', {name: 'Download progress'}).getAttribute('aria-valuenow')).toBe('50');
     finishSync();
     await screen.findByText('Download finished');
-    expect(await screen.findByText('Data Sync Complete')).toBeTruthy();
-    await fireEvent.click(screen.getByRole('button', {name: 'Dismiss Data Sync Complete notification'}));
-    expect(screen.queryByText('Data Sync Complete')).toBeNull();
-    await fireEvent.change(competition, {target: {value: 'eng.1'}});
+    expect(await screen.findByText('Download complete')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', {name: 'Dismiss Download complete notification'}));
+    expect(screen.queryByText('Download complete')).toBeNull();
+    await fireEvent.change(screen.getByLabelText('Competition'), {target: {value: 'eng.1'}});
     await fireEvent.click(await screen.findByText('How did Home FC change?'));
     expect(document.querySelector('.recent-subject-name')?.textContent).toBe('Home FC');
     await fireEvent.click(await screen.findByRole('button', {name: /Inspect Typical evidence from/}));

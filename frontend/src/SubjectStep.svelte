@@ -4,17 +4,16 @@
   import Icon from './Icon.svelte';
   import PlayerPortrait from './PlayerPortrait.svelte';
   import SubjectSearch from './SubjectSearch.svelte';
-  import type {AnalysisOptions, PlayerOption, TeamOption} from './types';
+  import type {PlayerOption, TeamOption} from './types';
 
   type CFBSelection = Parameters<ComponentProps<typeof CFBDiscovery>['onchange']>[0];
 
+  /** The step number shown on the card, such as "2". */
+  export let step: string;
   export let activeSport: string;
-  export let analysisOptions: AnalysisOptions | null;
   export let busy: boolean;
   export let subjectType: 'team' | 'player';
   export let headToHead: boolean;
-  export let headToHeadAvailable: boolean;
-  export let scopeSeasons: number[];
   export let team: string;
   export let teamInput: string;
   export let teamFilter: string;
@@ -43,8 +42,6 @@
   export let compareSubjectId: string;
   export let compareCfbSchool: string;
   export let comparePlayersLoading: boolean;
-  export let chooseHeadToHead: (on: boolean) => void;
-  export let selectSubjectType: (type: 'team' | 'player') => void;
   export let cfbSelectionChanged: (selection: CFBSelection) => void;
   export let compareCfbChanged: (selection: CFBSelection) => void;
   export let openTeamCombobox: (event: FocusEvent) => void;
@@ -58,43 +55,25 @@
   export let loadPlayers: () => Promise<void>;
   export let searchPlayers: (query: string) => void;
   export let playerTeamLabel: (team: string) => string;
+  /** Asks for the subject again after Edit and rerun could not fill it in. */
+  export let editNotice = '';
 </script>
 
 <section class="scope-card" class:cfb-subject-card={activeSport === 'cfb'} aria-labelledby="scope-heading">
   <div class="scope-heading">
-    <div><span class="eyebrow">01 · Subject</span>
+    <div><span class="eyebrow step-label"><b class="step-number">{step}</b>Subject</span>
       <h3 id="scope-heading" tabindex="-1">{headToHead ? 'Who do you want to compare?' : 'Who do you want to understand?'}</h3></div>
-    <span>{scopeSeasons.length} {subjectType === 'player' && selectedPlayer ? 'player seasons available' : 'seasons to choose from'}</span></div>
+  </div>
+  {#if editNotice}<p class="validation" role="status">{editNotice}</p>{/if}
   {#if activeSport === 'cfb'}
     <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
                   initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
     {#if cfbHistoryLoading}<p role="status">Verifying this player’s seasons and transfer history…</p>{/if}
   {/if}
-  {#if activeSport === 'cfb'}
-    <p class="section-help">College football data is prepared one school at a time, so choose the school first. The data panel below then
-      shows what that school needs.</p>
-  {/if}
   {#if activeSport === 'cfb' && subjectType === 'player' && !resolvedTeam}
-    <p class="section-help">Choose a school above to browse its players. Full analysis datasets are not required to select your subject.</p>
-  {/if}
-  {#if headToHeadAvailable}
-    <div class="question-kind" role="group" aria-label="Kind of question">
-      <button type="button" aria-pressed={!headToHead} on:click={() => chooseHeadToHead(false)}>
-        <strong>Change over time</strong><span>Follow one {subjectType} across seasons or parts of a season.</span>
-      </button>
-      <button type="button" aria-pressed={headToHead} on:click={() => chooseHeadToHead(true)}>
-        <strong>Head-to-head</strong><span>Compare two {subjectType === 'player' ? 'players' : 'teams'} over the same seasons.</span>
-      </button>
-    </div>
+    <p class="section-help">Choose a school above to see its players.</p>
   {/if}
   <div class="scope-controls">
-    {#if (analysisOptions?.subject_types?.length ?? 0) > 1}
-      <div class="subject-toggle" role="group" aria-label="Analysis subject">
-        <span>Analyze</span>
-        <button type="button" class:active={subjectType === 'team'} on:click={() => selectSubjectType('team')}>Team</button>
-        <button type="button" class:active={subjectType === 'player'} on:click={() => selectSubjectType('player')}>Player</button>
-      </div>
-    {/if}
     {#if subjectType === 'player'}
       <div class="team-control">
         <label for="sport-player">Player</label>
@@ -105,7 +84,7 @@
                  aria-controls="sport-player-options"
                  aria-autocomplete="list"
                  aria-activedescendant={playerComboboxOpen && filteredPlayers[activePlayerIndex] ? `player-option-${filteredPlayers[activePlayerIndex].player_id}` : undefined}
-                 aria-invalid={Boolean(playerInput && !selectedPlayerId)} autocomplete="off" placeholder="Search Players…"
+                 aria-invalid={Boolean(playerInput && !selectedPlayerId)} autocomplete="off" placeholder="Search players…"
                  on:focus={openPlayerCombobox}
                  on:input={updatePlayerFilter} on:keydown={handlePlayerKeydown} on:blur={() => playerComboboxOpen = false}/>
           <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} players`}
@@ -166,7 +145,7 @@
                  aria-controls="sport-team-options"
                  aria-autocomplete="list"
                  aria-activedescendant={teamComboboxOpen && filteredTeams[activeTeamIndex] ? `team-option-${filteredTeams[activeTeamIndex].value}` : undefined}
-                 aria-invalid={Boolean(teamInput && !resolvedTeam)} autocomplete="off" placeholder="Search Teams…"
+                 aria-invalid={Boolean(teamInput && !resolvedTeam)} autocomplete="off" placeholder="Search teams…"
                  on:focus={openTeamCombobox}
                  on:input={updateTeamFilter} on:keydown={handleTeamKeydown} on:blur={() => teamComboboxOpen = false}/>
           <button class="combobox-toggle" type="button" aria-label={`Show ${activeSport.toUpperCase()} teams`} tabindex="-1"
@@ -205,7 +184,7 @@
       {#if activeSport !== 'cfb' || subjectType === 'player'}
         <div class="scope-controls">
           <SubjectSearch id="compare-subject" label="Compare with" options={compareOptions} value={compareSubjectId}
-                         placeholder={subjectType === 'player' ? 'Search Players…' : 'Search Teams…'}
+                         placeholder={subjectType === 'player' ? 'Search players…' : 'Search teams…'}
                          emptyMessage={activeSport === 'cfb' ? comparePlayersLoading ? 'Loading players…'
                              : compareCfbSchool ? 'No other players found at this school' : 'Choose a school above first'
                              : subjectType === 'player' ? 'No other players with data in every chosen season' : 'No other teams'}

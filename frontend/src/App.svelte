@@ -4,11 +4,13 @@
   import type {EventStreamResponse} from './api';
   import AnalysisBrief from './AnalysisBrief.svelte';
   import AnalysisProgress from './AnalysisProgress.svelte';
+  import CFBDiscovery from './CFBDiscovery.svelte';
   import DataManager from './DataManager.svelte';
   import FilmRoomRail from './FilmRoomRail.svelte';
   import GettingStartedGuide from './GettingStartedGuide.svelte';
   import MetricStep from './MetricStep.svelte';
   import QuestionStep from './QuestionStep.svelte';
+  import ReportKindStep from './ReportKindStep.svelte';
   import ReportView from './ReportView.svelte';
   import SubjectStep from './SubjectStep.svelte';
   import TimeFrameStep from './TimeFrameStep.svelte';
@@ -66,11 +68,12 @@
     : modelState === 'offline' ? 'Service offline'
       : modelState === 'error' ? 'Connection check failed'
         : modelState === 'ready' ? 'AI model ready' : 'No AI model set up';
-  let completionNotifications: Array<{ id: number; title: string; message: string }> = [];
+  type NotificationAction = {label: string; run: () => void};
+  let completionNotifications: Array<{ id: number; title: string; message: string; action: NotificationAction | null }> = [];
   let nextNotificationId = 0;
 
-  function notifyCompletion(title: string, message: string) {
-    completionNotifications = [...completionNotifications.slice(-2), {id: ++nextNotificationId, title, message}];
+  function notifyCompletion(title: string, message: string, action: NotificationAction | null = null) {
+    completionNotifications = [...completionNotifications.slice(-2), {id: ++nextNotificationId, title, message, action}];
   }
 
   function dismissCompletion(id: number) {
@@ -155,14 +158,23 @@
   let selectedMetrics: string[] = [];
   let selectedSplits: string[] = [];
   let syncSeasons: number[] = [];
-  let downloadScope: DownloadSelection = {kind: 'league', ready: true, label: 'Entire League'};
+  let downloadScope: DownloadSelection = {kind: 'league', ready: true, label: 'Entire league'};
   let syncDatasets: string[] = ['play_by_play'];
-  let dataManagerOpen = true;
   let initializedSelections = false;
   let stage = '';
   let progress = 0;
   let error = '';
   let busy = false;
+  // A run, download or clear keeps going while the reader moves around; the progress screen shows only while this is true.
+  let progressOpen = false;
+  let wasBusy = false;
+  $: {
+    if (busy && !wasBusy) progressOpen = true;
+    wasBusy = busy;
+  }
+  $: progressShown = busy && progressOpen;
+  let runningQuestion = '';
+  let runningSubject = '';
   let followup = '';
   let followupBusy = false;
   let investigationLoading = false;
@@ -185,7 +197,7 @@
     splitWeek: number; seasonType: 'REG' | 'POST' | 'ALL';
     comparisonMode: string; analysisDomain: string; subjectType: 'team' | 'player'; selectedPlayerId: string; playerInput: string;
     playerTeamId: string; baselineSegment: string; comparisonSegment: string; selectedMetrics: string[];
-    selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[]; dataManagerOpen: boolean;
+    selectedSplits: string[]; syncSeasons: number[]; syncDatasets: string[];
     customizeSources: boolean; customizeMetrics: boolean; metricsEdited: boolean; compareSubjectId: string; headToHeadFirst: number;
     selectedCompetition: string; baselineStartDate: string; baselineEndDate: string; comparisonStartDate: string; comparisonEndDate: string;
   };
@@ -194,10 +206,15 @@
   let customizeSources = false;
   let customizeMetrics = false;
   let metricsEdited = false;
-  let readinessKey = '';
   let syncComplete = false;
   let syncing = false;
   let mobileHistoryOpen = false;
+  // The Data library is a view of its own, at #/data, so back and forward move between it and the setup page.
+  const LIBRARY_ROUTE = '#/data';
+  let libraryOpen = false;
+  // Set when Edit and rerun could not fill in the subject; it clears once a subject is chosen.
+  let editNotice = '';
+  $: if (resolvedSubject) editNotice = '';
   let metricDirections: Record<string, boolean | null> = {};
   let firstEvidence: PrefetchedEvidence | null = null;
   let metricInfo: MetricExplanation | null = null;
@@ -246,21 +263,17 @@
   // Names the seasons the analysis will use, so the data header and the form refer to the same thing.
   $: analysisSpan = requiredSeasons.length
       ? seasonSpan(Math.min(...requiredSeasons), Math.max(...requiredSeasons)) : 'the selected seasons';
-  $: dataStatusLabel = scopeDataSynced ? 'Data synced'
-      : activeSport === 'cfb' && !resolvedTeam ? 'Choose a school to check its data'
-          : dataReady ? 'Missing data will prepare when you run' : 'Sync required data';
-  $: dataStatusDetail = activeSport === 'cfb' && !resolvedTeam ? 'Choose a school above to see the data this analysis needs.'
-      : scopeDataSynced ? `Required data is ready for ${analysisSpan}.`
-          : dataReady ? `${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source is' : 'sources are'} not synced yet. Sync now, or anything missing prepares when you run the analysis.`
-              : `Sync ${sourceGaps.length} required ${sourceGaps.length === 1 ? 'source' : 'sources'} to run this analysis.`;
+  // The brief's data line: what this analysis has on disk, and what it will download when it runs.
+  $: dataStatusLabel = activeSport === 'cfb' && !resolvedTeam ? 'Choose a school first'
+      : scopeDataSynced ? `Downloaded for ${analysisSpan}`
+          : dataReady ? 'Missing data downloads when you run' : 'Download the required data first';
   $: periodBlocker = !windowsDiffer
       ? headToHead ? periodStart > comparison ? 'Choose a first season on or before the last season'
           : `Head-to-head covers up to ${MAX_HEAD_TO_HEAD_SEASONS} seasons`
       : analysisDesign === 'full_seasons' ? 'Choose an end season after the start season' : 'Choose two different periods'
       : !hasSubjectData ? `${selectedPlayer?.name ?? 'This player'} has no recorded data for ${missingPlayerSeasons.map(seasonLabel).join(', ')}`
-          : !hasRequiredData ? `Sync ${missingRequiredSeasons.map(seasonLabel).join(', ')} before running` : '';
+          : !hasRequiredData ? `Download ${missingRequiredSeasons.map(seasonLabel).join(', ')} before running` : '';
   $: readinessSteps = [
-    {ready: dataReady, label: dataStatusLabel, target: 'data-setup'},
     {
       ready: Boolean(resolvedSubject) && (!headToHead || Boolean(compareSubjectId)),
       label: !resolvedSubject ? 'Choose a team or player' : headToHead ? compareSubjectId ? 'Subjects selected' : 'Choose who to compare with' : 'Subject selected',
@@ -274,7 +287,10 @@
     },
     {ready: question.trim().length >= 3, label: question.trim().length >= 3 ? 'Question ready' : 'Add your question', target: 'investigation-question'}
   ];
-  $: readiness = activeSport === 'cfb' ? [readinessSteps[1], readinessSteps[0], ...readinessSteps.slice(2)] : readinessSteps;
+  // Data shows in the checklist only while it blocks the run; the brief's data line covers it otherwise.
+  // A college-football school not yet chosen is already the subject step's blocker.
+  $: readiness = dataReady || (activeSport === 'cfb' && !resolvedTeam) ? readinessSteps
+      : [{ready: false, label: dataStatusLabel, target: 'data-library'}, ...readinessSteps];
   $: firstBlocker = readiness.find(item => !item.ready);
   $: recommendedMetricIds = analysisOptions?.default_metrics_by_domain?.[analysisDomain] ?? analysisOptions?.default_metrics ?? [];
   $: periodBrief = draftPeriodBrief({
@@ -295,15 +311,6 @@
     comparisonEndDate
   });
   $: if (!metricsEdited && analysisOptions) selectedMetrics = availableMetrics.filter(metric => recommendedMetricIds.includes(metric.value)).map(metric => metric.value);
-  $: if (analysisOptions && !workspaceLoading) updateReadiness(`${activeSport}:${selectedCompetition}:${requiredSeasons.join(',')}:${sourceGaps.join(',')}`, scopeDataSynced);
-
-  function updateReadiness(key: string, ready: boolean) {
-    if (key === readinessKey) return;
-    readinessKey = key;
-    // Setup stays open until this scope is synced, then folds into its status line.
-    if (!ready) dataManagerOpen = true;
-    else if (!syncComplete) dataManagerOpen = false;
-  }
 
   function dismissGuidance() {
     showGuidance = false;
@@ -314,7 +321,7 @@
   }
 
   async function focusSection(id: string) {
-    if (id === 'data-setup') dataManagerOpen = true;
+    if (id === 'data-library') return openLibrary();
     await tick();
     const element = document.getElementById(id);
     element?.focus({preventScroll: true});
@@ -462,6 +469,10 @@
           : [option])
       .sort((left, right) => modeRank(left.value) - modeRank(right.value));
   $: headToHeadAvailable = (analysisOptions?.comparison_windows ?? []).some(option => option.value === 'head_to_head');
+  $: playersAvailable = (analysisOptions?.subject_types?.length ?? 0) > 1;
+  // Report type is step 1 when there is a choice to make; the steps after it number on from there.
+  $: kindStepShown = playersAvailable || headToHeadAvailable;
+  $: stepNumber = (step: number) => String(kindStepShown ? step : step - 1);
   $: currentSeason = analysisOptions?.current_season ?? null;
   $: requiredSeasons = headToHead
       ? periodStart <= comparison ? Array.from({length: comparison - periodStart + 1}, (_, index) => periodStart + index) : [comparison]
@@ -531,7 +542,18 @@
           .map(player => ({value: player.player_id, label: player.name, detail: [player.positions.join('/'), player.teams.join('/')].filter(Boolean).join(' · ')}));
   $: if (compareSubjectId && compareOptions.length && !compareOptions.some(option => option.value === compareSubjectId)) compareSubjectId = '';
   $: compareSubjectLabel = compareOptions.find(option => option.value === compareSubjectId)?.label ?? '';
-  $: canRun = Boolean(
+  // One analysis, download or follow-up at a time: they share one progress channel.
+  $: runBlocker = busy ? syncing ? 'A download is running. Run this analysis when it finishes.'
+      : stage === 'Clearing downloaded data' ? 'Downloaded data is being cleared. Run this analysis when it finishes.'
+          : 'Another analysis is running. Run this one when it finishes.'
+      : followupBusy ? 'A follow-up is running. Run this analysis when it finishes.' : '';
+  // The Film Room's live entry for whatever is running.
+  $: running = busy ? {
+    title: syncing ? 'Downloading data' : stage === 'Clearing downloaded data' ? 'Clearing downloaded data' : `Running · ${runningSubject || 'analysis'}`,
+    detail: syncing || stage === 'Clearing downloaded data' ? stage : runningQuestion,
+    progress
+  } : null;
+  $: canRun = !runBlocker && Boolean(
       resolvedSubject && (!headToHead || compareSubjectId) && question.trim().length >= 3 && windowsDiffer && hasRequiredData && hasSubjectData
       && selectedAvailableMetricCount > 0 && dataReady
   );
@@ -573,12 +595,12 @@
           await streamDatasetSync(pollingStream(pending));
           syncComplete = true;
           await refresh();
-          notifyCompletion('Data Sync Complete', 'Your data library has been refreshed.');
+          notifyCompletion('Download complete', 'Your data library has been refreshed.');
         } else {
           await streamInvestigation(pollingStream(pending));
         }
       } catch (problem) {
-        if (problem instanceof RunCancelled) notifyCompletion('Analysis Cancelled', 'The analysis was stopped.');
+        if (problem instanceof RunCancelled) notifyCompletion('Analysis cancelled', 'The analysis was stopped.');
         else error = problemMessage(problem);
       } finally {
         busy = false;
@@ -700,7 +722,7 @@
 
   async function switchSport(sport: string, keepRoute = false) {
     if (sport === activeSport || busy) return;
-    if (!keepRoute) setReportRoute('');
+    if (!keepRoute && !libraryOpen) setReportRoute('');
     sportDrafts[activeSport] = captureDraft();
     workspaceRequestVersion += 1;
     historyRequestVersion += 1;
@@ -733,14 +755,14 @@
       comparisonStartWeek, comparisonEndWeek, splitWeek, seasonType, comparisonMode, analysisDomain, subjectType,
       selectedPlayerId, playerInput, playerTeamId, baselineSegment, comparisonSegment,
       selectedMetrics: [...selectedMetrics], selectedSplits: [...selectedSplits],
-      syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets], dataManagerOpen,
+      syncSeasons: [...syncSeasons], syncDatasets: [...syncDatasets],
       customizeSources, customizeMetrics, metricsEdited, compareSubjectId, headToHeadFirst,
       selectedCompetition, baselineStartDate, baselineEndDate, comparisonStartDate, comparisonEndDate
     };
   }
 
   function resetDraft(sport: string) {
-    downloadScope = {kind: 'league', ready: true, label: 'Entire League'};
+    downloadScope = {kind: 'league', ready: true, label: 'Entire league'};
     cfbHistoryLoading = false;
     cfbLoading = sport === 'cfb';
     cfbError = '';
@@ -781,12 +803,10 @@
     selectedSplits = [];
     syncSeasons = [];
     syncDatasets = ['play_by_play'];
-    dataManagerOpen = true;
     syncComplete = false;
     customizeSources = false;
     customizeMetrics = false;
     metricsEdited = false;
-    readinessKey = '';
     metricInfo = null;
     metricInfoVersion += 1;
     metricInfoLoading = false;
@@ -803,7 +823,6 @@
     selectedSplits = [...draft.selectedSplits];
     syncSeasons = [...draft.syncSeasons];
     syncDatasets = [...draft.syncDatasets];
-    dataManagerOpen = draft.dataManagerOpen;
     customizeSources = draft.customizeSources;
     customizeMetrics = draft.customizeMetrics;
     metricsEdited = draft.metricsEdited;
@@ -836,8 +855,6 @@
       const analysed = syncable.filter(season => season >= baseline && season <= comparison);
       syncSeasons = analysed.length ? analysed : syncable.slice(0, 2);
       selectLocallyAvailablePackages();
-      const required = analysisOptions.data_setup?.required_datasets?.length ? analysisOptions.data_setup.required_datasets : ['play_by_play'];
-      dataManagerOpen = ![baseline, comparison].every(season => required.every(source => syncedPackages(season).has(source)));
       initializedSelections = true;
     }
     const validDomains = analysisOptions.analysis_domains.filter((domain) => domainAvailableForSubject(domain));
@@ -1548,7 +1565,7 @@
 
   async function selectCompetition(competition: string, keepRoute = false) {
     if (competition === selectedCompetition || busy) return;
-    if (!keepRoute) setReportRoute('');
+    if (!keepRoute && !libraryOpen) setReportRoute('');
     selectedCompetition = competition;
     workspaceRequestVersion += 1;
     historyRequestVersion += 1;
@@ -1668,17 +1685,26 @@
           void loadHistory();
           await tick();
           [...document.querySelectorAll('.analyst-row')].at(-1)?.scrollIntoView?.({block: 'nearest'});
-          notifyCompletion('Follow-up Answered', 'Your answer is in the thread below the report.');
+          notifyCompletion('Follow-up answered', 'Your answer is in the thread below the report.');
           return true;
         }
-        active = result.run.parent_investigation_id && thread[0] ? thread[0] : result;
+        const report = result.run.parent_investigation_id && thread[0] ? thread[0] : result;
+        // A reader who moved on keeps their place; the new report waits in the Film Room and the notice opens it.
+        if (!progressOpen) {
+          void loadHistory();
+          await refresh();
+          notifyCompletion('Report ready', 'Your new report is at the top of the Film Room.',
+              {label: 'Open report', run: () => void openInvestigation(report)});
+          return true;
+        }
+        active = report;
         conversationThread = thread;
         setReportRoute(active.run.investigation_id);
         await refresh();
         dismissGuidance();
         prefetchFirstEvidence(active);
         await scrollToPageTop();
-        notifyCompletion('Report Ready', 'Your results and supporting evidence are ready to explore.');
+        notifyCompletion('Report ready', 'Your results and supporting evidence are ready to explore.');
         return true;
       } catch (problem) {
         lastError = problem;
@@ -1821,6 +1847,9 @@
   async function runAnalysis() {
     if (!canRun || !resolvedSubject) return;
     error = '';
+    runningQuestion = question.trim();
+    runningSubject = subjectType === 'player' ? selectedPlayer?.name ?? '' : analysisOptions?.teams.find(option => option.value === resolvedTeam)?.label ?? resolvedTeam;
+    if (headToHead && compareSubjectLabel) runningSubject = `${runningSubject} vs ${compareSubjectLabel}`;
     busy = true;
     active = null;
     progress = 0.03;
@@ -1890,7 +1919,7 @@
     } catch (problem) {
       busy = false;
       if (problem instanceof RunCancelled) {
-        notifyCompletion('Analysis Cancelled', 'Your selections are still here, so you can adjust them and run again.');
+        notifyCompletion('Analysis cancelled', 'Your selections are still here, so you can adjust them and run again.');
         await tick();
         document.querySelector<HTMLElement>('.brief-run .primary')?.focus();
       } else {
@@ -1916,7 +1945,7 @@
       }
       syncComplete = false;
       await refresh();
-      notifyCompletion('Synced Data Reset', scope + ' synced data has been cleared. Saved reports and settings are preserved.');
+      notifyCompletion('Downloaded data cleared', scope + ' downloads are cleared. Saved reports and settings stay.');
     } catch (problem) {
       error = problemMessage(problem);
     } finally {
@@ -1956,8 +1985,9 @@
       await refresh();
       busy = false;
       syncing = false;
-      notifyCompletion('Data Sync Complete', activeSport === 'cfb' ? 'Your data library has been refreshed.'
-          : `${downloadScope.label} library refreshed. Check the source coverage below before running.`);
+      notifyCompletion('Download complete', activeSport === 'cfb' ? 'Your data library has been refreshed.'
+          : `${downloadScope.label} library refreshed. Check the source coverage below before running.`,
+          progressOpen || libraryOpen ? null : {label: 'Open data library', run: () => void openLibrary()});
     } catch (problem) {
       error = problemMessage(problem);
       try {
@@ -2003,13 +2033,19 @@
   }
 
   async function openRoute() {
-    const investigationId = reportRoute();
     // Offline links stay in the address bar; the first successful load opens them.
-    if (!backendReady || busy || investigationId === (active?.run.investigation_id ?? '')) return;
+    if (!backendReady) return;
+    if (window.location.hash === LIBRARY_ROUTE) return showLibrary();
+    libraryOpen = false;
+    const investigationId = reportRoute();
+    if (investigationId === (active?.run.investigation_id ?? '')) return;
     if (!investigationId) return openInvestigation(null);
     try {
       const report = await api.investigation(investigationId);
       const sport = report.run.sport ?? 'nfl';
+      // While something runs the sport stays put, so another sport's report waits until it finishes.
+      if (busy && (sport !== activeSport || (sport === 'soccer' && report.run.scope.competition
+          && report.run.scope.competition !== selectedCompetition))) return;
       await switchSport(sport, true);
       if (sport === 'soccer' && report.run.scope.competition) await selectCompetition(report.run.scope.competition, true);
       await openInvestigation(report);
@@ -2020,6 +2056,8 @@
   }
 
   async function openInvestigation(investigation: Investigation | InvestigationSummary | null) {
+    libraryOpen = false;
+    progressOpen = false;
     if (!investigation) {
       investigationLoading = false;
       active = null;
@@ -2050,15 +2088,137 @@
     useRecommendedMetrics();
   }
 
-  async function openGettingStartedGuide() {
-    await openInvestigation(null);
+  async function showGuide() {
     showGuidance = true;
-    mobileHistoryOpen = false;
     await focusSection('getting-started');
   }
 
+  /** Shows the Data library without touching the address; openLibrary also records it in history. */
+  function showLibrary() {
+    active = null;
+    conversationThread = [];
+    investigationLoading = false;
+    mobileHistoryOpen = false;
+    libraryOpen = true;
+    progressOpen = false;
+  }
+
+  /** Returns to the progress screen of whatever is running, from the Film Room's live entry. */
+  async function openProgress() {
+    mobileHistoryOpen = false;
+    progressOpen = true;
+    await scrollToPageTop();
+  }
+
+  async function openLibrary() {
+    showLibrary();
+    if (window.location.hash !== LIBRARY_ROUTE) {
+      window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${LIBRARY_ROUTE}`);
+    }
+    await scrollToPageTop();
+  }
+
+  /** Opens the setup page filled in from a saved report. Running it makes a new report; the saved one stays as it is. */
+  async function editReport(report: Investigation) {
+    const {run} = report;
+    const sport = run.sport ?? 'nfl';
+    await openInvestigation(null);
+    if (sport !== activeSport) await switchSport(sport, true);
+    if (sport === 'soccer' && run.scope.competition && run.scope.competition !== selectedCompetition) {
+      await selectCompetition(run.scope.competition, true);
+    }
+    if (!analysisOptions) return;
+    await tick();
+    editNotice = '';
+    const subject = run.subject;
+    const type = subject?.type === 'player' ? 'player' : 'team';
+    if (type !== subjectType) selectSubjectType(type);
+    if (subject && type === 'player') {
+      if (sport === 'cfb') {
+        if (selectedPlayerId !== subject.id) editNotice = 'Choose the school and player again. The rest of this report is filled in.';
+      } else {
+        await loadPlayers();
+        await tick();
+        let player = knownPlayers.find(option => option.player_id === subject.id);
+        if (!player && subject.display_name) {
+          try {
+            searchedPlayers = mergePlayers(searchedPlayers, await api.players(sport, subject.display_name, sport === 'soccer' ? selectedCompetition : undefined));
+            await tick();
+            player = knownPlayers.find(option => option.player_id === subject.id);
+          } catch { /* Without a match the notice below asks for the player. */
+          }
+        }
+        if (player) {
+          await selectPlayer(player);
+          if (subject.team_id && player.teams.includes(subject.team_id)) playerTeamId = subject.team_id;
+        } else {
+          editNotice = 'Choose the player again. The rest of this report is filled in.';
+        }
+      }
+    } else if (subject) {
+      const option = analysisOptions.teams.find(item => item.value === subject.id);
+      if (sport === 'cfb') {
+        if (resolvedTeam !== subject.id) editNotice = 'Choose the school again. The rest of this report is filled in.';
+      } else if (option) {
+        selectTeam(option);
+      } else {
+        editNotice = 'Choose the team again. The rest of this report is filled in.';
+      }
+    }
+    if (run.analysis_domain && analysisOptions.analysis_domains.some(domain => domain.value === run.analysis_domain)) {
+      selectAnalysisDomain(run.analysis_domain, true);
+    }
+    await tick();
+    applyReportPeriod(run.scope);
+    await tick();
+    metricsEdited = true;
+    if (run.metrics?.length) selectedMetrics = [...run.metrics];
+    selectedSplits = [...(run.splits ?? [])];
+    question = run.question;
+    lastSuggestedQuestion = '';
+    await tick();
+    if (run.comparison_subject) compareSubjectId = run.comparison_subject.id;
+    await focusSection(kindStepShown ? 'kind-heading' : 'scope-heading');
+  }
+
+  function applyReportPeriod(scope: Investigation['run']['scope']) {
+    const design = scope.comparison_design ?? 'full_seasons';
+    const {baseline: start, comparison: end} = scope;
+    seasonType = scope.season_type === 'POST' || scope.season_type === 'ALL' ? scope.season_type : 'REG';
+    if (design === 'head_to_head') {
+      if (!headToHeadAvailable) return;
+      comparisonMode = 'head_to_head';
+      headToHeadFirst = start.season;
+      comparison = end.season;
+      return;
+    }
+    comparisonMode = comparisonOptions.some(option => option.value === design) ? design : 'full_seasons';
+    baseline = start.season;
+    comparison = end.season;
+    if (design === 'week_ranges') {
+      [baselineStartWeek, baselineEndWeek] = start.weeks;
+      [comparisonStartWeek, comparisonEndWeek] = end.weeks;
+    } else if (design === 'before_after') {
+      splitWeek = end.weeks[0];
+    } else if (design === 'season_segments') {
+      baselineSegment = start.segment ?? baselineSegment;
+      comparisonSegment = end.segment ?? comparisonSegment;
+    } else if (design === 'date_ranges') {
+      baselineStartDate = start.start_date ?? '';
+      baselineEndDate = start.end_date ?? '';
+      comparisonStartDate = end.start_date ?? '';
+      comparisonEndDate = end.end_date ?? '';
+    }
+  }
+
+  // After a download, the reader returns to the first step of the analysis they were building.
+  async function backToAnalysis() {
+    await openInvestigation(null);
+    await focusSection(kindStepShown ? 'kind-heading' : 'scope-heading');
+  }
+
   async function sendFollowup() {
-    if (!active || !followup.trim() || followupBusy) return;
+    if (!active || !followup.trim() || followupBusy || busy) return;
     const question = followup.trim();
     const root = conversationThread[0] ?? active;
     followupBusy = true;
@@ -2091,7 +2251,7 @@
       if (active && rootIdFor(active, history) === deletedRoot) {
         await openInvestigation(null);
       }
-      notifyCompletion('Report Deleted', 'The saved report and its follow-ups have been removed.');
+      notifyCompletion('Report deleted', 'The saved report and its follow-ups have been removed.');
     } catch (problem) {
       error = problemMessage(problem);
     } finally {
@@ -2106,10 +2266,10 @@
      style={`--rail-width: ${railWidth}px`}>
   <button class="skip-link" type="button" on:click={() => mainElement?.focus()}>Skip to main content</button>
   <FilmRoomRail {activeSport} {sportTabs} {active} {history} {rootHistory} {playerNamesById} {historyLoading} {historyLoadError}
-                {deletingInvestigationId} {showGuidance} bind:mobileHistoryOpen bind:showFullFilmRoom {railScrolls} bind:railWidth
+                {deletingInvestigationId} {libraryOpen} bind:mobileHistoryOpen bind:showFullFilmRoom {railScrolls} bind:railWidth
                 {appShellElement} {capabilities} {modelState} {modelTitle} {modelDetail} bind:modelSettingsOpen
                 {investigationSubject} {investigationSubjectInitials} {investigationWindow} {loadHistory} {openInvestigation}
-                {startNewAnalysis} {openGettingStartedGuide} {deleteInvestigation}/>
+                {startNewAnalysis} {openLibrary} {deleteInvestigation} {running} {progressShown} {openProgress}/>
 
   <ModelSettingsDialog bind:open={modelSettingsOpen}
                        on:checking={(event) => modelChecking = event.detail}
@@ -2134,13 +2294,22 @@
       {/each}
     </nav>
     <!-- The sport tab above already names the sport; a report page needs only its title. -->
-    <header class="topbar" class:report-topbar={!!active}>
+    <header class="topbar" class:report-topbar={!!active && !progressShown}>
       <div>
-        <h1>{active ? `${investigationSubject(active, playerNamesById)} report` : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
+        <h1>{progressShown && runningSubject && !syncing && stage !== 'Clearing downloaded data' ? `${runningSubject} report` : active ? `${investigationSubject(active, playerNamesById)} report` : libraryOpen ? 'Data library' : `${activeSport === 'nba' ? 'Basketball' : activeSport === 'soccer' ? 'Soccer' : activeSport === 'cfb' ? 'College football' : 'Football'} analysis`}</h1>
       </div>
-      {#if analysisOptions && !active}
-        <div class="status-chip">
-          <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} synced · {datasets.length} local files
+      {#if !active && !progressShown}
+        <div class="topbar-actions">
+          {#if !libraryOpen && !showGuidance && !investigationLoading}
+            <button class="text-button" type="button" aria-controls="getting-started" aria-expanded="false" on:click={showGuide}>
+              <Icon name="book-open" size={16}/>How it works
+            </button>
+          {/if}
+          {#if analysisOptions}
+            <div class="status-chip">
+              <Icon name="database" size={16}/>{syncedSeasonCount} {syncedSeasonCount === 1 ? 'season' : 'seasons'} downloaded · {datasets.length} files
+            </div>
+          {/if}
         </div>
       {/if}
     </header>
@@ -2149,91 +2318,111 @@
       <div class="error" role="alert">{error}</div>
     {/if}
     {#if workspaceLoadError && !workspaceLoading && (initialWorkspaceReady || serviceOffline)}
-      <button class="retry-workspace" type="button" on:click={() => { error = ''; void refresh(); }}>Try Again</button>
+      <button class="retry-workspace" type="button" on:click={() => { error = ''; void refresh(); }}>Try again</button>
     {/if}
 
+    {#snippet competitionPicker()}
+      <div class="soccer-competition-bar">
+        <label for="soccer-competition">Competition</label>
+        <span class="soccer-competition-select">
+          <select id="soccer-competition" value={selectedCompetition} disabled={busy}
+                  on:change={(event) => void selectCompetition(event.currentTarget.value)}>
+            {#each soccerCompetitions as competition}
+              <option value={competition.value}>{competition.label}</option>
+            {/each}
+          </select>
+          <Icon name="chevron-down" size={17}/>
+        </span>
+      </div>
+    {/snippet}
     {#if investigationLoading}
       <section class="page-operation-loading" role="status" aria-live="polite" aria-busy="true">
         <span class="library-spinner" aria-hidden="true"></span>
         <div><strong>Loading saved report</strong><small>Retrieving its findings, follow-ups and evidence…</small></div>
       </section>
-    {:else if !active && !busy}
-      {#snippet subjectCard()}
-        <SubjectStep {activeSport} {analysisOptions} {busy} {subjectType} {headToHead} {headToHeadAvailable} {scopeSeasons} {team}
-                     bind:teamInput {teamFilter} bind:teamComboboxOpen bind:activeTeamIndex {filteredTeams} {resolvedTeam}
-                     {players} {playersLoading} {playerLoadError} {playerSearching} bind:playerInput {playerFilter}
-                     bind:playerComboboxOpen bind:activePlayerIndex {filteredPlayers} {selectedPlayerId} {selectedPlayer}
-                     bind:playerTeamId {resolvedSubject} {cfbBrowseSeason} {cfbSubdivision} {cfbConference} {cfbHistoryLoading}
-                     {compareOptions} bind:compareSubjectId {compareCfbSchool} {comparePlayersLoading} {chooseHeadToHead}
-                     {selectSubjectType} {cfbSelectionChanged} {compareCfbChanged} {openTeamCombobox} {updateTeamFilter}
-                     {handleTeamKeydown} {selectTeam} {openPlayerCombobox} {updatePlayerFilter} {handlePlayerKeydown}
-                     {selectPlayer} {loadPlayers} {searchPlayers} {playerTeamLabel}/>
-      {/snippet}
-      <section class="ask-panel">
+    {:else if progressShown}
+      <AnalysisProgress {activeSport} {syncing} {stage} {progress} {runningInvestigationId} {cancelling} {cancelRun}
+                        question={syncing ? '' : runningQuestion} bind:progressHeading/>
+    {:else if libraryOpen}
+      <section class="data-library" aria-labelledby="data-setup-heading">
         <div class="intro-grid">
-          <GettingStartedGuide {activeSport} {showGuidance} {dismissGuidance} {focusSection}/>
-          {#if activeSport === 'cfb'}{@render subjectCard()}{/if}
-          {#if activeSport === 'soccer'}
-            <div class="soccer-competition-bar">
-              <label for="soccer-competition">Competition</label>
-              <span class="soccer-competition-select">
-                <select id="soccer-competition" value={selectedCompetition} disabled={busy}
-                        on:change={(event) => void selectCompetition(event.currentTarget.value)}>
-                  {#each soccerCompetitions as competition}
-                    <option value={competition.value}>{competition.label}</option>
-                  {/each}
-                </select>
-                <Icon name="chevron-down" size={17}/>
-              </span>
-            </div>
+          <p class="section-help">Download seasons ahead of time, refresh a season that is still being played, or clear what is stored. Analyses
+            download anything they are missing when they run.</p>
+          {#if activeSport === 'soccer'}{@render competitionPicker()}{/if}
+          {#if activeSport === 'cfb'}
+            <section class="scope-card cfb-subject-card" aria-labelledby="library-school-heading">
+              <div class="scope-heading">
+                <div><h2 id="library-school-heading" tabindex="-1">Choose a school</h2></div>
+              </div>
+              <p class="section-help">College football downloads one school at a time. It is the same school your analysis uses.</p>
+              <CFBDiscovery initialSeason={cfbBrowseSeason} initialSubdivision={cfbSubdivision}
+                            initialConference={cfbConference} initialTeam={team} disabled={busy} onchange={cfbSelectionChanged}/>
+            </section>
           {/if}
           <DataManager {activeSport} {sports} {selectedCompetition} {analysisOptions} {setup} {datasets} {comparison} {currentSeason}
                        {resolvedTeam} {cfbConference} {cfbConferenceLabel} {cfbLoading} {cfbError} {cfbTeams} {syncSeasons} {syncDatasets}
-                       bind:downloadScope bind:dataManagerOpen bind:customizeSources {syncComplete} {busy} {stage} {workspaceLoading}
-                       {workspaceLoadError} {serviceOffline} {scopeDataSynced} {dataStatusDetail} {requiredSources} {visibleSyncDatasets}
+                       bind:downloadScope bind:customizeSources {syncComplete} {busy} {stage} {workspaceLoading}
+                       {workspaceLoadError} {serviceOffline} {requiredSources} {visibleSyncDatasets}
                        {sourceGaps} {eligibleSyncDatasets} {allEligibleSyncDatasetsSelected} {seasonLabel} {datasetLabel} {sourceRole}
                        {seasonPackageStatus} {packageCoverage} {packageInstallStatus} {packageEligible} {focusSection} {refresh}
                        {chooseQuickSetup} {toggleSyncSeason} {toggleSyncDataset} {toggleAllSyncDatasets} {syncData} {syncCFBConference}
-                       {clearDownloadedData}/>
+                       {clearDownloadedData} {backToAnalysis}/>
+        </div>
+      </section>
+    {:else if !active}
+      <section class="ask-panel">
+        <div class="intro-grid">
+          <GettingStartedGuide {showGuidance} {dismissGuidance}/>
+          {#if activeSport === 'soccer'}{@render competitionPicker()}{/if}
         </div>
         <div class="guided-workbench">
           <div class="configuration">
-            {#if activeSport !== 'cfb'}{@render subjectCard()}{/if}
-            <TimeFrameStep {activeSport} {analysisOptions} {subjectType} {selectedPlayer} {headToHead} bind:comparisonMode {comparisonOptions}
-                           bind:seasonType {scopeSeasons} {currentSeason} {requiredSeasons} {missingRequiredSeasons} {missingPlayerSeasons}
-                           {periodBlocker} {windowsDiffer} {periodStart} bind:headToHeadFirst bind:baseline bind:comparison bind:baselineStartWeek
-                           bind:baselineEndWeek bind:comparisonStartWeek bind:comparisonEndWeek bind:splitWeek bind:baselineSegment
-                           bind:comparisonSegment bind:baselineStartDate bind:baselineEndDate bind:comparisonStartDate bind:comparisonEndDate
+            {#if kindStepShown}
+              <ReportKindStep step={stepNumber(1)} {subjectType} {headToHead} {headToHeadAvailable} {playersAvailable}
+                              {chooseHeadToHead} {selectSubjectType}/>
+            {/if}
+            <SubjectStep step={stepNumber(2)} {activeSport} {busy} {subjectType} {headToHead} {team}
+                         bind:teamInput {teamFilter} bind:teamComboboxOpen bind:activeTeamIndex {filteredTeams} {resolvedTeam}
+                         {players} {playersLoading} {playerLoadError} {playerSearching} bind:playerInput {playerFilter}
+                         bind:playerComboboxOpen bind:activePlayerIndex {filteredPlayers} {selectedPlayerId} {selectedPlayer}
+                         bind:playerTeamId {resolvedSubject} {cfbBrowseSeason} {cfbSubdivision} {cfbConference} {cfbHistoryLoading}
+                         {compareOptions} bind:compareSubjectId {compareCfbSchool} {comparePlayersLoading}
+                         {cfbSelectionChanged} {compareCfbChanged} {openTeamCombobox} {updateTeamFilter}
+                         {handleTeamKeydown} {selectTeam} {openPlayerCombobox} {updatePlayerFilter} {handlePlayerKeydown}
+                         {selectPlayer} {loadPlayers} {searchPlayers} {playerTeamLabel} {editNotice}/>
+            <TimeFrameStep step={stepNumber(3)} {activeSport} {analysisOptions} {subjectType} {selectedPlayer} {headToHead}
+                           bind:comparisonMode {comparisonOptions} bind:seasonType {scopeSeasons} {currentSeason} {requiredSeasons}
+                           {missingRequiredSeasons} {missingPlayerSeasons} {periodBlocker} {windowsDiffer} {periodStart}
+                           bind:headToHeadFirst bind:baseline bind:comparison bind:baselineStartWeek bind:baselineEndWeek
+                           bind:comparisonStartWeek bind:comparisonEndWeek bind:splitWeek bind:baselineSegment bind:comparisonSegment
+                           bind:baselineStartDate bind:baselineEndDate bind:comparisonStartDate bind:comparisonEndDate
                            {seasonLabel} {availableSegments}/>
 
-            <MetricStep {activeSport} {analysisOptions} {subjectType} {analysisDomain} {visibleDomains} {domainMetrics} {availableMetrics}
-                        {availableMetricIds} {recommendedMetricIds} bind:selectedMetrics {selectedAvailableMetricCount}
+            <MetricStep step={stepNumber(4)} {activeSport} {analysisOptions} {subjectType} {analysisDomain} {visibleDomains} {domainMetrics}
+                        {availableMetrics} {availableMetricIds} {recommendedMetricIds} bind:selectedMetrics {selectedAvailableMetricCount}
                         {allAvailableMetricsSelected} bind:customizeMetrics bind:metricsEdited {selectedSplits} {requiredSeasons}
                         {metricInfo} {metricInfoLoading} {metricInfoError} bind:metricInfoElement {selectAnalysisDomain} {toggleMetric}
                         {selectAllMetrics} {useRecommendedMetrics} {explainMetric} {closeMetricInfo} {splitAvailable} {toggleSplit}/>
 
-            <QuestionStep bind:question bind:lastSuggestedQuestion {questionExamples} bind:showAllQuestionExamples/>
+            <QuestionStep step={stepNumber(5)} bind:question bind:lastSuggestedQuestion {questionExamples} bind:showAllQuestionExamples/>
           </div>
           <AnalysisBrief {activeSport} {analysisOptions} {subjectType} {selectedPlayer} {resolvedTeam} {teamInput} {headToHead}
                          {compareSubjectLabel} {periodBrief} {analysisDomain} {availableMetrics} {selectedMetrics} {selectedSplits}
-                         {readiness} {firstBlocker} {canRun} {displayDomain} {focusSection} {runAnalysis}/>
+                         {readiness} {firstBlocker} {canRun} {runBlocker} {dataStatusLabel} {displayDomain} {focusSection} {openLibrary} {runAnalysis}/>
         </div>
       </section>
-    {:else if busy}
-      <AnalysisProgress {activeSport} {syncing} {stage} {progress} {runningInvestigationId} {cancelling} {cancelRun}
-                        bind:progressHeading/>
     {:else if active}
       {#key active.run.investigation_id}
         <ReportView {active} {conversationThread} {activeSport} {playerNamesById} bind:followup {followupBusy} {pendingFollowup}
                     {stage} {runningInvestigationId} {cancelling} {metricDirections} {firstEvidence} {seasonLabel} {datasetLabel}
                     {displayDomain} {investigationSubject} {subjectName} {investigationWindow} {focusSection} {openInvestigation}
-                    {startNewAnalysis} {cancelRun} {sendFollowup}/>
+                    {startNewAnalysis} {cancelRun} {sendFollowup} {editReport} runInProgress={busy}/>
       {/key}
     {/if}
   </main>
   <div class="completion-notifications" role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions">
     {#each completionNotifications as notification (notification.id)}
-      <CompletionToast title={notification.title} message={notification.message}
+      <CompletionToast title={notification.title} message={notification.message} action={notification.action}
                        ondismiss={() => dismissCompletion(notification.id)}/>
     {/each}
   </div>
@@ -2249,7 +2438,7 @@
       <div class="desktop-startup-track" aria-hidden="true"><span></span></div>
       {#if initialWorkspaceError}
         <p class="desktop-startup-error">We couldn't finish opening your workspace. {initialWorkspaceError}</p>
-        <button type="button" on:click={() => { initialWorkspaceError = ''; void refresh(); }}>Try Again</button>
+        <button type="button" on:click={() => { initialWorkspaceError = ''; void refresh(); }}>Try again</button>
       {:else}
         <p class="desktop-startup-status">{startupStatus}</p>
       {/if}

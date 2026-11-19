@@ -1,32 +1,25 @@
 :root {
     color-scheme: dark;
 
-    /* Typography */
-    --font-sans: "Aptos", "Manrope", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+    /* Typography: one family, bundled with the app (main.ts), so it renders the same on every machine and offline.
+       Its width axis gives the slightly condensed display style and the condensed figures in the stat sheet. */
+    --font-sans: "Archivo Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    /* Code only: the SQL and parameters listed under Method. */
+    --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
     --font-weight-strong: 600;
+    --font-width-display: 87.5%;
+    --font-width-figures: 75%;
 
-    /* Dark palette primitives */
-    --navy-1000: #00050f;
-    --navy-975: #000f1e;
-    --navy-950: #041423;
-    --navy-925: #071428;
-    --navy-900: #091521;
-    --navy-875: #0a1932;
-    --navy-850: #0a192d;
-    --navy-825: #0f1e32;
-    --navy-800: #101f2d;
-    --navy-775: #10202e;
-    --navy-750: #102232;
-    --navy-725: #102638;
-    --navy-700: #122233;
-    --navy-650: #172b3e;
-    --navy-600: #1c3041;
-    --navy-550: #203142;
-    --navy-500: #263d50;
-    --navy-450: #28445a;
-    --navy-400: #294053;
-    --navy-350: #31506a;
+    /* Surfaces: four roles, two interaction shades and three line weights. Each sport theme below fills the same roles. */
+    --navy-background: #000a14;
+    --navy-recessed: #050f1c;
+    --navy-panel: #0a192d;
+    --navy-raised: #122233;
+    --navy-control: #172b3e;
+    --navy-hover: #1c3041;
+    --navy-line: #203142;
+    --navy-line-strong: #294053;
+    --navy-line-interactive: #31506a;
     --navy-glow: #05233c;
 
     --slate-700: #597283;
@@ -52,27 +45,27 @@
     --red-700: #a0141e;
 
     /* Semantic colors: components consume these, not palette values. */
-    --color-canvas: #000a14;
+    --color-canvas: var(--navy-background);
     --color-canvas-glow: #000f1e;
-    --color-sidebar: var(--navy-975);
-    --color-surface-low: var(--navy-950);
-    --color-surface: var(--navy-925);
-    --color-surface-raised: var(--navy-900);
-    --color-surface-input: var(--navy-875);
-    --color-surface-panel: var(--navy-850);
-    --color-surface-panel-alt: var(--navy-825);
-    --color-surface-chip: var(--navy-800);
-    --color-surface-hover: var(--navy-775);
-    --color-surface-evidence: var(--navy-750);
-    --color-surface-accented: var(--navy-725);
-    --color-surface-active: var(--navy-700);
-    --color-surface-control: var(--navy-650);
-    --color-progress-track: var(--navy-600);
-    --color-border-subtle: var(--navy-550);
-    --color-border-strong: var(--navy-500);
-    --color-border-accent: var(--navy-450);
-    --color-border-control: var(--navy-400);
-    --color-border-interactive: var(--navy-350);
+    --color-sidebar: var(--navy-recessed);
+    --color-surface-low: var(--navy-recessed);
+    --color-surface: var(--navy-panel);
+    --color-surface-raised: var(--navy-raised);
+    --color-surface-input: var(--navy-recessed);
+    --color-surface-panel: var(--navy-panel);
+    --color-surface-panel-alt: var(--navy-panel);
+    --color-surface-chip: var(--navy-raised);
+    --color-surface-hover: var(--navy-hover);
+    --color-surface-evidence: var(--navy-raised);
+    --color-surface-accented: var(--navy-raised);
+    --color-surface-active: var(--navy-hover);
+    --color-surface-control: var(--navy-control);
+    --color-progress-track: var(--navy-line-strong);
+    --color-border-subtle: var(--navy-line);
+    --color-border-strong: var(--navy-line-strong);
+    --color-border-accent: var(--navy-line-strong);
+    --color-border-control: var(--navy-line-strong);
+    --color-border-interactive: var(--navy-line-interactive);
     --color-text-primary: var(--slate-100);
     --color-text-secondary: var(--slate-400);
     --color-text-tertiary: var(--slate-550);
@@ -108,16 +101,18 @@
     --space-12: 48px;
     --space-16: 64px;
 
-    /* Type scale. Schematic and field labels below 11px stay in their own SVG units. */
+    /* Type scale. The larger steps follow the classic sequence (18, 21, 24, 30, 36); the small steps stay dense for
+       labels and chips. Schematic and field labels below 11px stay in their own SVG units. */
     --text-2xs: 11px;
     --text-xs: 12px;
     --text-sm: 13px;
     --text-md: 14px;
     --text-base: 16px;
     --text-lg: 18px;
-    --text-xl: 20px;
+    --text-xl: 21px;
     --text-2xl: 24px;
-    --text-3xl: 28px;
+    --text-3xl: 30px;
+    --text-4xl: 36px;
 
     --radius-xs: 3px;
     --radius-sm: 6px;
@@ -150,26 +145,26 @@
     -webkit-text-size-adjust: 100%;
 }
 
-/* Basketball uses the exported artwork's #FF8D28 orange as its visual anchor. */
+/* Basketball uses the exported artwork's #FF8D28 orange as its visual anchor, on green-grey surfaces. */
 .app-shell.nba-theme {
     --color-canvas-glow: #0a0500;
-    --color-sidebar: #0d1016;
-    --color-surface-low: #140f0e;
-    --color-surface: #140a01;
-    --color-surface-raised: #281401;
-    --color-surface-input: #202723;
+    --color-sidebar: #151a17;
+    --color-surface-low: #151a17;
+    --color-surface: #1c221f;
+    --color-surface-raised: #28302c;
+    --color-surface-input: #151a17;
     --color-surface-panel: #1c221f;
-    --color-surface-panel-alt: #222b26;
+    --color-surface-panel-alt: #1c221f;
     --color-surface-chip: #28302c;
-    --color-surface-hover: #2a342e;
-    --color-surface-evidence: #2d3731;
-    --color-surface-accented: #303a34;
-    --color-surface-active: #23382f;
+    --color-surface-hover: #2d3731;
+    --color-surface-evidence: #28302c;
+    --color-surface-accented: #28302c;
+    --color-surface-active: #2d3731;
     --color-surface-control: #29352f;
-    --color-progress-track: #37433c;
+    --color-progress-track: #52675c;
     --color-border-subtle: #343b37;
-    --color-border-strong: #46534c;
-    --color-border-accent: #59685f;
+    --color-border-strong: #52675c;
+    --color-border-accent: #52675c;
     --color-border-control: #52675c;
     --color-border-interactive: #6f897a;
     --color-text-primary: #f1f4f5;
@@ -194,24 +189,24 @@
 /* Soccer draws from the artwork's #0BE200 ball linework, softened for legible UI accents. */
 .app-shell.soccer-theme {
     --color-canvas-glow: #071b0d;
-    --color-sidebar: #07130f;
+    --color-sidebar: #071812;
     --color-surface-low: #071812;
-    --color-surface: #091b14;
-    --color-surface-raised: #102319;
-    --color-surface-input: #14271d;
+    --color-surface: #172b20;
+    --color-surface-raised: #20362a;
+    --color-surface-input: #071812;
     --color-surface-panel: #172b20;
-    --color-surface-panel-alt: #1b3024;
+    --color-surface-panel-alt: #172b20;
     --color-surface-chip: #20362a;
-    --color-surface-hover: #253d2d;
-    --color-surface-evidence: #284130;
-    --color-surface-accented: #294634;
-    --color-surface-active: #1e4828;
+    --color-surface-hover: #284130;
+    --color-surface-evidence: #20362a;
+    --color-surface-accented: #20362a;
+    --color-surface-active: #284130;
     --color-surface-control: #294934;
-    --color-progress-track: #294433;
+    --color-progress-track: #43694d;
     --color-border-subtle: #294235;
-    --color-border-strong: #365441;
+    --color-border-strong: #43694d;
     --color-border-accent: #43694d;
-    --color-border-control: #4b6c53;
+    --color-border-control: #43694d;
     --color-border-interactive: #699978;
     --color-text-primary: #f0f7f0;
     --color-text-secondary: #bccfbe;
@@ -236,6 +231,11 @@
 
 h1, h2, h3, h4, strong, b {
     font-weight: var(--font-weight-strong);
+}
+
+/* Headings take the slightly condensed display width of the one type family. */
+h1, h2, h3 {
+    font-stretch: var(--font-width-display);
 }
 
 :focus-visible {

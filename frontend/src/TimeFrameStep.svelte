@@ -5,6 +5,8 @@
 
   type Segment = {value: string; label: string; description: string};
 
+  /** The step number shown on the card, such as "3". */
+  export let step: string;
   export let activeSport: string;
   export let analysisOptions: AnalysisOptions | null;
   export let subjectType: 'team' | 'player';
@@ -41,10 +43,9 @@
 
 <section class="scope-card" aria-labelledby="comparison-heading">
   <div class="scope-heading">
-    <div><span class="eyebrow">02 · {headToHead ? 'Seasons' : 'Time frame'}</span>
+    <div><span class="eyebrow step-label"><b class="step-number">{step}</b>{headToHead ? 'Seasons' : 'Time frame'}</span>
       <h3 id="comparison-heading" tabindex="-1">{headToHead ? 'Choose the seasons' : 'Choose the time frame'}</h3></div>
   </div>
-  {#if headToHead}<p>Both {subjectType === 'player' ? 'players' : 'teams'} are measured over the same seasons.</p>{/if}
   <div class="scope-controls">
     {#if !headToHead}<label>Compare
       <select bind:value={comparisonMode}>
@@ -78,8 +79,7 @@
           {/each}
         </select></label>
       </div>
-      <p class="section-help">Choose the same season twice to compare one season. A longer range, up to {MAX_HEAD_TO_HEAD_SEASONS} seasons,
-        compares the two side by side in each season.</p>
+      <p class="section-help">Choose one season, or a range of up to {MAX_HEAD_TO_HEAD_SEASONS}. Each season is compared on its own.</p>
       {#if periodBlocker}<p class="validation">{periodBlocker}</p>{/if}
     {:else if comparisonMode === 'season_vs_prior'}
       <div class="window-grid before-after">

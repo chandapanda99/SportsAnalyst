@@ -22,7 +22,6 @@
   export let syncSeasons: number[];
   export let syncDatasets: string[];
   export let downloadScope: DownloadSelection;
-  export let dataManagerOpen: boolean;
   export let customizeSources: boolean;
   export let syncComplete: boolean;
   export let busy: boolean;
@@ -30,8 +29,6 @@
   export let workspaceLoading: boolean;
   export let workspaceLoadError: string;
   export let serviceOffline: boolean;
-  export let scopeDataSynced: boolean;
-  export let dataStatusDetail: string;
   export let requiredSources: string[];
   export let visibleSyncDatasets: string[];
   export let sourceGaps: string[];
@@ -53,20 +50,15 @@
   export let syncData: () => Promise<void>;
   export let syncCFBConference: () => Promise<void>;
   export let clearDownloadedData: () => Promise<void>;
+  export let backToAnalysis: () => Promise<void>;
 </script>
 
-<details id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
-         bind:open={dataManagerOpen}>
-  <summary>
-    <span>
-      <strong>{scopeDataSynced ? 'Data Ready · Manage Data' : 'Sync Data'}</strong><small>{dataStatusDetail}</small></span><b>{workspaceLoading ? 'Loading data…' : `${activeSport === 'cfb' && resolvedTeam ? datasets.filter(item => item.sport === 'cfb' && item.partition_key === `team:${resolvedTeam}`).length : datasets.length} local files`}
-    <i>
-      <Icon name="chevron-down" size={16}/>
-    </i></b></summary>
+<section id="data-setup" tabindex="-1" class="data-manager" class:quick-setup={!customizeSources} class:nba-data-manager={activeSport === 'nba'}
+         aria-labelledby="data-setup-heading">
   <div class="onboarding">
     <div class="data-setup-header">
       <div class="sync-guidance">
-        <strong>{setup?.label ?? 'Recommended Data'}</strong><span>{setup?.description ?? 'Choose seasons and download their recorded plays to begin.'}</span>
+        <h2 id="data-setup-heading">{setup?.label ?? 'Recommended data'}</h2><span>{setup?.description ?? 'Choose seasons and download their recorded plays to begin.'}</span>
         {#if activeSport === 'nba' && sports.find(sport => sport.value === 'nba')?.live_available}
           <span class="nba-additional-data-note">Additional NBA Stats data available. Optional sources can add detail to your downloaded datasets; availability depends on the selected source.</span>
         {/if}
@@ -83,11 +75,11 @@
     {#if activeSport === 'cfb'}
       <div class="cfb-data-scope" aria-live="polite">
         <div>
-          <strong>{resolvedTeam ? `Selected School · ${cfbTeams.find(option => option.value === resolvedTeam)?.label ?? resolvedTeam}` : 'Choose a School First'}</strong>
-          <p>{resolvedTeam ? 'The main download prepares only this school for your selected seasons and sources, including its nonconference games.' : 'Select a school in Choose Your Subject above to scope your download. Browsing a conference does not sync its teams.'}</p>
+          <strong>{resolvedTeam ? `Downloading for ${cfbTeams.find(option => option.value === resolvedTeam)?.label ?? resolvedTeam}` : 'Choose a school first'}</strong>
+          <p>{resolvedTeam ? 'Downloads cover this school for the seasons and sources below, including its nonconference games.' : 'Choose a school above. Browsing a conference does not download its schools.'}</p>
         </div>
         {#if !resolvedTeam}
-          <button type="button" on:click={() => focusSection('scope-heading')}>Choose a School</button>
+          <button type="button" on:click={() => focusSection('library-school-heading')}>Choose a school</button>
         {/if}
       </div>
     {/if}
@@ -101,7 +93,7 @@
     {#if workspaceLoading}
       <div class="library-loading" role="status" aria-live="polite">
         <span class="library-spinner" aria-hidden="true"></span>
-        <span><strong>Loading Data Catalog</strong><small>{workspaceLoadError || 'Checking available seasons, packages, and local file coverage…'}</small></span>
+        <span><strong>Loading data catalog</strong><small>{workspaceLoadError || 'Checking available seasons, packages, and local file coverage…'}</small></span>
       </div>
       <div class="library-skeleton" aria-hidden="true">
         <div><span class="skeleton-label"></span><span class="skeleton-block"></span></div>
@@ -115,11 +107,8 @@
     {:else}
       {#if syncComplete}
         <div class="sync-success" role="status"><strong>Download finished</strong>
-          <p>Your data library has been refreshed. Check any missing sources below before running.</p>
-          <button type="button"
-                  on:click={() => { dataManagerOpen = false; void focusSection(activeSport === 'cfb' ? 'comparison-heading' : 'scope-heading'); }}>Continue
-            building analysis
-          </button>
+          <p>Your Data library is up to date. Check any missing sources below before running.</p>
+          <button type="button" on:click={backToAnalysis}>Back to your analysis</button>
         </div>
       {/if}
       {#if sourceGaps.length}
@@ -128,7 +117,7 @@
       <div class="sync-fields">
         <fieldset class="season-picker">
           <legend>Seasons</legend>
-          <div class="season-options" role="group" aria-label="Seasons to sync">
+          <div class="season-options" role="group" aria-label="Seasons to download">
             {#each analysisOptions?.syncable_seasons ?? [] as season}
               <label class:selected={syncSeasons.includes(season)}>
                 <input type="checkbox" aria-label={`${season} season`} checked={syncSeasons.includes(season)}
@@ -143,7 +132,7 @@
           <legend><span>Packages</span>
             <button class="package-toggle" type="button" disabled={!eligibleSyncDatasets.length}
                     on:click={() => { customizeSources = true; toggleAllSyncDatasets(); }}>
-              {allEligibleSyncDatasetsSelected ? 'Deselect All' : 'Select All'}
+              {allEligibleSyncDatasetsSelected ? 'Deselect all' : 'Select all'}
             </button>
           </legend>
           <div class="dataset-options">
@@ -177,33 +166,32 @@
           results are published.{activeSport === 'nfl' ? ' For like-for-like comparisons, select matching week ranges.' : ''}</p>
       {/if}
       <button class="download-data-button"
-              disabled={!syncSeasons.length || !syncDatasets.length || (activeSport !== 'cfb' && !downloadScope.ready) || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
+              disabled={busy || !syncSeasons.length || !syncDatasets.length || (activeSport !== 'cfb' && !downloadScope.ready) || (activeSport === 'cfb' && (!resolvedTeam || cfbLoading || Boolean(cfbError)))}
               on:click={syncData}>
-        {currentSeason != null && syncSeasons.includes(currentSeason) ? 'Download or Refresh' : 'Download'} {syncDatasets.filter(source => visibleSyncDatasets.includes(source) && packageEligible(source)).length}
+        {currentSeason != null && syncSeasons.includes(currentSeason) ? 'Download or refresh' : 'Download'} {syncDatasets.filter(source => visibleSyncDatasets.includes(source) && packageEligible(source)).length}
         sources for {syncSeasons.length} seasons
         {#if activeSport !== 'cfb' && downloadScope.kind !== 'league'} · {downloadScope.label}{/if}
         <Icon name="database-import" size={20}/>
       </button>
       {#if activeSport === 'cfb'}
         <div class="cfb-conference-download">
-          <p><strong>Optional · Entire
-            Conference</strong><span>{cfbConference && !cfbLoading ? `${cfbConferenceLabel} · ${cfbTeams.length} schools. Uses the seasons and sources selected above; this is a larger download.` : 'Choose a conference above to enable a broader download. This is not required for a team or player investigation.'}</span>
+          <p><strong>Optional: a whole conference</strong><span>{cfbConference && !cfbLoading ? `${cfbConferenceLabel}, ${cfbTeams.length} schools. Uses the seasons and sources above; this is a larger download.` : 'Choose a conference above to download all of its schools. A team or player report does not need this.'}</span>
           </p>
           <button type="button"
-                  disabled={!cfbConference || !cfbTeams.length || cfbLoading || Boolean(cfbError) || !syncSeasons.length || !syncDatasets.length}
-                  on:click={() => void syncCFBConference()}>Download Entire Conference
+                  disabled={busy || !cfbConference || !cfbTeams.length || cfbLoading || Boolean(cfbError) || !syncSeasons.length || !syncDatasets.length}
+                  on:click={() => void syncCFBConference()}>Download entire conference
           </button>
         </div>
       {/if}
       {#if datasets.length}
         <div class="reset-data-zone">
-          <p><strong>Reset synced data</strong><span>Removes every downloaded file for this {activeSport === 'soccer' ? 'competition' : 'sport'}. Saved analyses stay.</span></p>
+          <p><strong>Clear downloaded data</strong><span>Removes every downloaded file for this {activeSport === 'soccer' ? 'competition' : 'sport'}. Saved reports stay.</span></p>
           <button type="button" class="reset-synced-data-button" disabled={busy} on:click={clearDownloadedData}>
             <Icon name="trash" size={16}/>
-            {busy && stage === 'Clearing downloaded data' ? 'Resetting Synced Data…' : 'Reset Synced Data'}
+            {busy && stage === 'Clearing downloaded data' ? 'Clearing downloaded data…' : 'Clear downloaded data'}
           </button>
         </div>
       {/if}
     {/if}
   </div>
-</details>
+</section>

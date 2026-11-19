@@ -21,6 +21,11 @@
   export let readiness: ReadinessItem[];
   export let firstBlocker: ReadinessItem | undefined;
   export let canRun: boolean;
+  /** Why Run waits while another analysis, download or follow-up is running; empty otherwise. */
+  export let runBlocker = '';
+  /** What this analysis has downloaded, or what it will download when it runs. */
+  export let dataStatusLabel: string;
+  export let openLibrary: () => Promise<void>;
   export let displayDomain: (domain?: string) => string;
   export let focusSection: (id: string) => Promise<void>;
   export let runAnalysis: () => Promise<void>;
@@ -43,6 +48,9 @@
       <dd>{availableMetrics.filter(metric => selectedMetrics.includes(metric.value)).map(metric => metric.label).join(', ') || 'Choose metrics'}</dd>
       <dt>Breakdowns</dt>
       <dd>{selectedSplits.length ? selectedSplits.map(value => analysisOptions?.split_dimensions.find(item => item.value === value)?.label ?? value).join(', ') : 'Recommended automatically'}</dd>
+      <dt>Data</dt>
+      <dd>{dataStatusLabel}
+        <button class="text-button brief-data-link" type="button" on:click={openLibrary}>Open data library</button></dd>
     </dl>
     <h4>Ready to run?</h4>
     <ul class="readiness">
@@ -56,7 +64,7 @@
   </div>
   <div class="brief-run">
     <p class="readiness-message"
-       aria-live="polite">{firstBlocker ? firstBlocker.label : 'Everything is ready. Your analysis will include supporting evidence.'}</p>
+       aria-live="polite">{runBlocker || (firstBlocker ? firstBlocker.label : 'Everything is ready. Your analysis will include supporting evidence.')}</p>
     <button class="primary" disabled={!canRun} on:click={runAnalysis}>Run analysis
       <Icon name="player-play" size={19}/>
     </button>
